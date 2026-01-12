@@ -1,0 +1,1 @@
+Follow along directory for starting in Rust with tutorials, etc.

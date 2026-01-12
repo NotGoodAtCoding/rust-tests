@@ -1,0 +1,3 @@
+mod hcg {
+    mod main {}
+}

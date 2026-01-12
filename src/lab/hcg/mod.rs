@@ -2,7 +2,7 @@ use std::io;
 
 use rand::Rng;
 
-fn main() {
+pub fn main() {
     println!("Guess the number!");
 
     let secret_number = rand::rng().random_range(1..=100);

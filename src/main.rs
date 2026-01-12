@@ -1,7 +1,8 @@
-use crate::lab::hcg;
-
 pub mod lab;
+// use crate::lab::hcg;
+use rust_tests::bevy_2d_render;
 
 fn main() {
-    println!("Hello, world!");
+    // hcg::main();
+    bevy_2d_render::main();
 }

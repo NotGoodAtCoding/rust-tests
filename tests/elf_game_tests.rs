@@ -618,3 +618,201 @@ fn test_moose_window_shutters_rotate_inward_on_peek() {
         assert!(right_yaw >= 1.8, "Right shutter blown wide open during breach, got {}", right_yaw);
     }
 }
+
+#[test]
+fn test_floaty_hands_physics_momentum_and_sway() {
+    use rust_tests::elf_game::player::controller::{FloatyHand, floaty_hands_system, ElfPlayer};
+    use rust_tests::elf_game::player::ElfMovement;
+    use bevy::input::mouse::AccumulatedMouseMotion;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_secs_f32(0.016));
+    app.insert_resource(time);
+    app.insert_resource(AccumulatedMouseMotion {
+        delta: Vec2::new(50.0, 0.0), // Quick mouse flick to the right
+    });
+
+    // Player with ElfPlayer component and zero velocity initially
+    let player_e = app.world_mut().spawn((ElfMovement::default(), ElfPlayer)).id();
+
+    // Floaty hand entity
+    let rest_pos = Vec3::new(-0.35, -0.3, -0.6);
+    let hand_e = app.world_mut().spawn((
+        FloatyHand::new(rest_pos, 0.0),
+        Transform::from_translation(rest_pos),
+    )).id();
+
+    app.add_systems(Update, floaty_hands_system);
+
+    // Frame 1: Hand should lag to the left (-X) due to opposite inertial sway impulse
+    app.update();
+    {
+        let hand = app.world().get::<FloatyHand>(hand_e).unwrap();
+        assert!(
+            hand.velocity.x < -0.5,
+            "Hand should develop negative X velocity from rightward camera flick, got {}",
+            hand.velocity.x
+        );
+        assert!(
+            hand.current_offset.x < 0.0,
+            "Hand should sway leftward (negative X offset), got {}",
+            hand.current_offset.x
+        );
+    }
+
+    // Frame 2: Upward player jump velocity causes hand to dip downward (-Y)
+    {
+        let mut mouse = app.world_mut().resource_mut::<AccumulatedMouseMotion>();
+        mouse.delta = Vec2::ZERO;
+        let mut movement = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+        movement.velocity.y = 8.0; // Jump upward
+    }
+    app.update();
+    {
+        let hand = app.world().get::<FloatyHand>(hand_e).unwrap();
+        assert!(
+            hand.velocity.y < 0.0,
+            "Hand should dip downward with negative Y velocity upon player jump, got {}",
+            hand.velocity.y
+        );
+    }
+
+    // Advance 60 frames (1 second) of rest: damped spring brings hand back near rest position
+    {
+        let mut movement = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+        movement.velocity = Vec3::ZERO;
+    }
+    for _ in 0..60 {
+        app.update();
+    }
+    {
+        let hand = app.world().get::<FloatyHand>(hand_e).unwrap();
+        assert!(
+            hand.current_offset.length() < 0.05,
+            "Floaty hand should settle back near rest position under damping, offset length was {}",
+            hand.current_offset.length()
+        );
+    }
+}
+
+#[test]
+fn test_toggle_grab_set_down_and_mouse1_throw() {
+    use rust_tests::elf_game::player::hands::{Grabbable, dual_hand_interaction_system};
+    use rust_tests::elf_game::player::controller::{LeftHandVisual, RightHandVisual, FirstPersonCamera};
+    use rust_tests::elf_game::player::ElfHands;
+    use bevy_rapier3d::prelude::Velocity;
+
+    let mut app = App::new();
+    app.insert_resource(ButtonInput::<KeyCode>::default());
+    app.insert_resource(ButtonInput::<MouseButton>::default());
+    app.add_message::<rust_tests::elf_game::wrapping::UseToolOnPresentMessage>();
+    app.add_systems(Update, dual_hand_interaction_system);
+
+    let player_e = app.world_mut().spawn((
+        ElfHands::default(),
+        Transform::from_xyz(0.0, 1.0, 0.0),
+    )).id();
+
+    // Camera pointing forward (-Z)
+    app.world_mut().spawn((
+        FirstPersonCamera,
+        GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0)),
+    ));
+
+    // Left and Right hand positions
+    app.world_mut().spawn((
+        LeftHandVisual,
+        GlobalTransform::from(Transform::from_xyz(-0.35, 1.0, -0.6)),
+    ));
+    app.world_mut().spawn((
+        RightHandVisual,
+        GlobalTransform::from(Transform::from_xyz(0.35, 1.0, -0.6)),
+    ));
+
+    // Grabbable physics cube near left hand
+    let cube_entity = app.world_mut().spawn((
+        Grabbable,
+        Transform::from_xyz(-0.35, 1.0, -0.7),
+        Velocity::zero(),
+    )).id();
+
+    // 1. Press KeyQ once -> Toggle GRAB object
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::KeyQ);
+    }
+    app.update();
+    {
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.left_grabbed, Some(cube_entity), "KeyQ toggle should grab nearby object");
+    }
+
+    // 2. Release key input (no keys pressed) -> Object remains held in hand (TOGGLE, not hold!)
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(KeyCode::KeyQ);
+        keys.reset(KeyCode::KeyQ);
+    }
+    app.update();
+    {
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.left_grabbed, Some(cube_entity), "Object must stay grabbed without holding KeyQ");
+    }
+
+    // 3. Press KeyQ again -> Toggle SET DOWN object
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::KeyQ);
+    }
+    app.update();
+    {
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.left_grabbed, None, "Pressing KeyQ again must set the object down");
+        let vel = app.world().get::<Velocity>(cube_entity).unwrap();
+        assert_eq!(vel.linear, Vec3::ZERO, "Set down object must rest with zero velocity");
+    }
+
+    // 4. Press KeyE -> Right hand grabs object
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(KeyCode::KeyQ);
+        keys.reset(KeyCode::KeyQ);
+        keys.press(KeyCode::KeyE);
+    }
+    app.update();
+    {
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.right_grabbed, Some(cube_entity), "KeyE toggle should grab into right hand");
+    }
+
+    // 5. Click Mouse 1 (Left button) -> THROW object with physical impulse
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(KeyCode::KeyE);
+        keys.reset(KeyCode::KeyE);
+        let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        mouse.press(MouseButton::Left);
+    }
+    app.update();
+    {
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.right_grabbed, None, "Mouse 1 must release thrown object from right hand");
+        let vel = app.world().get::<Velocity>(cube_entity).unwrap();
+        assert!(
+            vel.linear.length() >= 9.0,
+            "Thrown object must have strong launch velocity (>= 9.0 m/s), got {}",
+            vel.linear.length()
+        );
+        assert!(
+            vel.linear.z < -8.0,
+            "Object should be launched forward in camera direction (-Z), got vz = {}",
+            vel.linear.z
+        );
+        assert!(
+            vel.linear.y > 1.0,
+            "Object should have upward throwing arc (vy > 1.0), got vy = {}",
+            vel.linear.y
+        );
+    }
+}

@@ -27,6 +27,29 @@ pub struct LeftHandVisual;
 #[derive(Component)]
 pub struct RightHandVisual;
 
+#[derive(Component, Debug, Clone)]
+pub struct FloatyHand {
+    pub rest_position: Vec3,
+    pub current_offset: Vec3,
+    pub velocity: Vec3,
+    pub spring_stiffness: f32,
+    pub damping: f32,
+    pub phase: f32,
+}
+
+impl FloatyHand {
+    pub fn new(rest_position: Vec3, phase: f32) -> Self {
+        Self {
+            rest_position,
+            current_offset: Vec3::ZERO,
+            velocity: Vec3::ZERO,
+            spring_stiffness: 28.0,
+            damping: 8.5,
+            phase,
+        }
+    }
+}
+
 #[derive(Component)]
 pub struct ViewModelRoot;
 
@@ -111,6 +134,7 @@ pub fn spawn_elf_player(
                             MeshMaterial3d(hand_material.clone()),
                             Transform::from_xyz(-0.35, -0.3, -0.6),
                             LeftHandVisual,
+                            FloatyHand::new(Vec3::new(-0.35, -0.3, -0.6), 0.0),
                             Name::new("LeftHandGlove"),
                         ));
 
@@ -120,6 +144,7 @@ pub fn spawn_elf_player(
                             MeshMaterial3d(hand_material.clone()),
                             Transform::from_xyz(0.35, -0.3, -0.6),
                             RightHandVisual,
+                            FloatyHand::new(Vec3::new(0.35, -0.3, -0.6), std::f32::consts::PI),
                             Name::new("RightHandGlove"),
                         ));
                     });
@@ -289,5 +314,68 @@ pub fn viewmodel_bob(
         vm_tf.translation = Vec3::new(bob_x, -bob_y, 0.0);
     } else {
         vm_tf.translation = vm_tf.translation.lerp(Vec3::ZERO, time.delta_secs() * 10.0);
+    }
+}
+
+/// Dynamic floaty hands with physics momentum, viewmodel sway, and spring-damped inertia
+pub fn floaty_hands_system(
+    time: Option<Res<Time>>,
+    mouse_motion: Option<Res<AccumulatedMouseMotion>>,
+    menu_state: Option<Res<MenuState>>,
+    q_player: Query<&ElfMovement, With<ElfPlayer>>,
+    mut q_hands: Query<(&mut Transform, &mut FloatyHand)>,
+) {
+    let Some(time) = time else {
+        return;
+    };
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+
+    if let Some(ref menu) = menu_state {
+        if menu.is_open {
+            return;
+        }
+    }
+
+    // Camera turning inertial sway: opposite direction to view rotation
+    let mouse_delta = mouse_motion.map(|m| m.delta).unwrap_or(Vec2::ZERO);
+    let sway_impulse = Vec3::new(
+        -mouse_delta.x * 0.0012,
+        mouse_delta.y * 0.0012,
+        0.0,
+    );
+
+    // Player vertical momentum: dipping downward on jump, compression on landing
+    let player_vel = q_player.single().map(|m| m.velocity).unwrap_or(Vec3::ZERO);
+    let vert_dip = (-player_vel.y * 0.015).clamp(-0.08, 0.08);
+
+    let t = time.elapsed_secs();
+
+    for (mut tf, mut hand) in &mut q_hands {
+        // Apply impulses into velocity
+        hand.velocity += sway_impulse * 30.0;
+        hand.velocity.y += vert_dip * 5.0;
+
+        // Damped harmonic oscillator: F_spring = -k * x, F_damping = -c * v
+        let spring_force = -hand.spring_stiffness * hand.current_offset;
+        let damping_force = -hand.damping * hand.velocity;
+        let accel = spring_force + damping_force;
+
+        hand.velocity += accel * dt;
+        let v = hand.velocity;
+        hand.current_offset += v * dt;
+
+        // Safety clamp on offset
+        hand.current_offset.x = hand.current_offset.x.clamp(-0.16, 0.16);
+        hand.current_offset.y = hand.current_offset.y.clamp(-0.14, 0.14);
+        hand.current_offset.z = hand.current_offset.z.clamp(-0.12, 0.12);
+
+        // Floaty idle breathing motion
+        let idle_x = (t * 2.0 + hand.phase).sin() * 0.004;
+        let idle_y = (t * 3.0 + hand.phase).cos() * 0.005;
+
+        tf.translation = hand.rest_position + hand.current_offset + Vec3::new(idle_x, idle_y, 0.0);
     }
 }

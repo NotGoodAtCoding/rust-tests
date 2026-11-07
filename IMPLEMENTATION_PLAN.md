@@ -84,6 +84,9 @@ This document tracks the short-form task breakdown for each section of [`PLAN.md
 | Task Description | Status | Reference Files |
 |---|:---:|---|
 | Independent dual-hand grab controls: Left Hand (`KeyQ`) and Right Hand (`KeyE`) | **DONE** | [`hands.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/hands.rs) |
+| **Floaty Hands & Physics Momentum**: Player hands are slightly floaty with spring-damped momentum, dynamically lagging and swaying with camera turning and movement inertia | **DONE** | [`controller.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/controller.rs) |
+| **Toggle Grab Controls (Q & E)**: Grab keys toggle grab on/off rather than requiring continuous hold | **DONE** | [`hands.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/hands.rs) |
+| **Set Down & Mouse 1 Throwing**: Pressing grab key again gracefully sets down held item; clicking Mouse 1 throws held item forward with physical impulse ($10\,\text{m/s}$) | **DONE** | [`hands.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/hands.rs) |
 | Kinematic object holding and follow for grabbed tools and presents | **DONE** | [`hands.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/hands.rs) |
 | Viewmodel glove visuals parented to camera pivot with vertical pitch look | **DONE** | [`controller.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/controller.rs) |
 | Procedural viewmodel hand bobbing while walking/grounded | **DONE** | [`controller.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/controller.rs) |

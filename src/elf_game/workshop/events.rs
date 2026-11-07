@@ -88,7 +88,7 @@ pub fn handle_moose_window_breach(
 
         // Screen knockback impulse on player
         for mut movement in &mut q_player {
-            movement.velocity.y = 6.0;
+            movement.velocity.y = 3.0;
         }
     }
 }

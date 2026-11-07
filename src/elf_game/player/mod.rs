@@ -230,6 +230,7 @@ impl Plugin for PlayerPlugin {
                     controller::elf_look_system,
                     controller::elf_player_controller_system,
                     controller::viewmodel_bob,
+                    controller::floaty_hands_system,
                     hands::dual_hand_interaction_system,
                 ),
             );

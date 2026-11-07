@@ -135,9 +135,26 @@ In this 3D first-person / third-person simulation game built with **Bevy 0.20** 
 ### 2.5 Dual-Hand Player Control & Physics Interaction
 * **Dual-Hand Input Architecture**:
   * The player has two independent physical hands:
-    * **Left Hand**: Controlled by `KeyQ` (hold to grab, release to drop).
-    * **Right Hand**: Controlled by `KeyE` (hold to grab, release to drop).
-  * Raycast / sphere-cast detection at each hand's position determines nearby grabbable objects, physics handles, or tools.
+    * **Left Hand**: Controlled by `KeyQ` (toggle to grab or set down).
+    * **Right Hand**: Controlled by `KeyE` (toggle to grab or set down).
+  * Raycast / proximity detection at each hand's position determines nearby grabbable objects, physics handles, or tools.
+  * **Toggle Grab & Gentle Set Down**:
+    * Pressing `KeyQ` or `KeyE` (`just_pressed`) toggles grab state.
+    * If a hand is empty, it grabs the nearest grabbable object within reach ($1.8\,\text{m}$).
+    * If already holding an object, pressing the same grab key again releases the object gently at its current hand position with zero initial launch speed, setting it down stably on a workbench, sill, or floor.
+  * **Mouse 1 Throwing**:
+    * Clicking **Mouse 1** (`MouseButton::Left`) throws the currently held object forward along the camera's sightline with a lively upward arc:
+      $$\vec{v}_{\text{throw}} = 10.0 \cdot \frac{\vec{u}_{\text{camera}} + 0.15 \hat{j}}{\|\vec{u}_{\text{camera}} + 0.15 \hat{j}\|} + 0.5 \vec{v}_{\text{player}}$$
+    * Imparts randomized angular tumble velocity ($\vec{\omega} \sim \mathcal{U}(-3, 3)\,\text{rad/s}$) so thrown presents and tools spin and tumble satisfyingly in flight.
+    * Throws the Right Hand item first; if empty, throws the Left Hand item.
+* **Floaty Hands & Physics Momentum**:
+  * Hands are modeled with dynamic physical inertia and a damped spring follow model in viewmodel space:
+    $$\vec{F}_{\text{spring}} = -k_{\text{spring}} (\vec{x} - \vec{x}_{\text{rest}})$$
+    $$\vec{F}_{\text{damping}} = -c_{\text{damping}} \vec{v}_{\text{hand}}$$
+    $$\vec{F}_{\text{inertia}} = -m_{\text{hand}} (\vec{a}_{\text{camera\_sway}} + \vec{a}_{\text{player\_accel}})$$
+  * When turning the camera quickly, hands sway and lag slightly behind the view direction before smoothly catching up.
+  * Walking, jumping, and landing introduce vertical and horizontal inertial displacement (compression on landing, dipping on jump).
+  * Breathing and idle micro-motions provide a floaty, organic, alive feel to the gloves.
 * **Two-Handed Physical Gestures & Interactions**:
   * **Violent Ribbon Shaking (Bow Creation)**:
     * Grabbing the same ribbon with both hands (`Q` + `E`) enters a tension/knotting state.

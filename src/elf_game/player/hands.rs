@@ -109,16 +109,27 @@ pub fn spawn_workshop_tools_and_materials(
     ));
 }
 
-/// Handles Left Hand (Q) and Right Hand (E) grabbing, holding, and tool triggering
+/// Handles Left Hand (Q) and Right Hand (E) toggle grabbing, setting down, and Mouse 1 throwing
 pub fn dual_hand_interaction_system(
-    keys: Res<ButtonInput<KeyCode>>,
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
+    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     mut q_player: Query<(&Transform, &mut ElfHands)>,
+    q_camera: Query<&GlobalTransform, With<crate::elf_game::player::controller::FirstPersonCamera>>,
     q_left_visual: Query<&GlobalTransform, With<LeftHandVisual>>,
     q_right_visual: Query<&GlobalTransform, With<RightHandVisual>>,
     mut q_grabbables: Query<(Entity, &mut Transform, Option<&ToolItem>), (With<Grabbable>, Without<ElfHands>)>,
+    mut q_velocities: Query<&mut Velocity, With<Grabbable>>,
     q_presents: Query<Entity, With<Present>>,
     mut tool_messages: MessageWriter<UseToolOnPresentMessage>,
+    mut commands: Commands,
 ) {
+    if let Some(ref menu) = menu_state {
+        if menu.is_open {
+            return;
+        }
+    }
+
     let Ok((_player_tf, mut hands)) = q_player.single_mut() else {
         return;
     };
@@ -126,15 +137,55 @@ pub fn dual_hand_interaction_system(
     let left_hand_pos = q_left_visual.single().map(|gt| gt.translation()).unwrap_or(Vec3::ZERO);
     let right_hand_pos = q_right_visual.single().map(|gt| gt.translation()).unwrap_or(Vec3::ZERO);
 
-    let left_grab_pressed = keys.pressed(KeyCode::KeyQ);
-    let right_grab_pressed = keys.pressed(KeyCode::KeyE);
+    let left_toggle = keys.as_ref().map(|k| k.just_pressed(KeyCode::KeyQ)).unwrap_or(false);
+    let right_toggle = keys.as_ref().map(|k| k.just_pressed(KeyCode::KeyE)).unwrap_or(false);
+    let throw_clicked = mouse_buttons.as_ref().map(|m| m.just_pressed(MouseButton::Left)).unwrap_or(false);
 
-    // Left hand grab management
-    if left_grab_pressed {
-        if hands.left_grabbed.is_none() {
-            // Find closest grabbable within reach (1.8m)
+    // 1. Mouse 1 Throwing: Throws held object forward along camera look vector
+    if throw_clicked {
+        let thrown_entity_opt = if hands.right_grabbed.is_some() {
+            hands.right_grabbed.take()
+        } else if hands.left_grabbed.is_some() {
+            hands.left_grabbed.take()
+        } else {
+            None
+        };
+
+        if let Some(thrown_e) = thrown_entity_opt {
+            let camera_fwd = q_camera.single().map(|gt| gt.forward().into()).unwrap_or(Vec3::NEG_Z);
+            let throw_dir = (camera_fwd + Vec3::Y * 0.15).normalize();
+            let throw_speed = 10.0;
+            let throw_vel = throw_dir * throw_speed;
+            let tumble = Vec3::new(2.5, 1.2, -1.8);
+
+            if let Ok(mut vel) = q_velocities.get_mut(thrown_e) {
+                vel.linear = throw_vel;
+                vel.angular = tumble;
+            } else {
+                commands.entity(thrown_e).insert(Velocity {
+                    linear: throw_vel,
+                    angular: tumble,
+                });
+            }
+        }
+    }
+
+    // 2. Left Hand Toggle Grab & Set Down (KeyQ)
+    if left_toggle {
+        if let Some(held_e) = hands.left_grabbed {
+            // Setting down: release gently with zero velocity at hand location
+            hands.left_grabbed = None;
+            if let Ok(mut vel) = q_velocities.get_mut(held_e) {
+                vel.linear = Vec3::ZERO;
+                vel.angular = Vec3::ZERO;
+            }
+        } else {
+            // Find closest grabbable within reach (1.8m) not held by right hand
             let mut closest: Option<(Entity, f32)> = None;
             for (entity, tf, _) in &q_grabbables {
+                if Some(entity) == hands.right_grabbed {
+                    continue;
+                }
                 let dist = tf.translation.distance(left_hand_pos);
                 if dist < 1.8 && (closest.is_none() || dist < closest.unwrap().1) {
                     closest = Some((entity, dist));
@@ -142,17 +193,30 @@ pub fn dual_hand_interaction_system(
             }
             if let Some((e, _)) = closest {
                 hands.left_grabbed = Some(e);
+                if let Ok(mut vel) = q_velocities.get_mut(e) {
+                    vel.linear = Vec3::ZERO;
+                    vel.angular = Vec3::ZERO;
+                }
             }
         }
-    } else {
-        hands.left_grabbed = None;
     }
 
-    // Right hand grab management
-    if right_grab_pressed {
-        if hands.right_grabbed.is_none() {
+    // 3. Right Hand Toggle Grab & Set Down (KeyE)
+    if right_toggle {
+        if let Some(held_e) = hands.right_grabbed {
+            // Setting down: release gently with zero velocity at hand location
+            hands.right_grabbed = None;
+            if let Ok(mut vel) = q_velocities.get_mut(held_e) {
+                vel.linear = Vec3::ZERO;
+                vel.angular = Vec3::ZERO;
+            }
+        } else {
+            // Find closest grabbable within reach (1.8m) not held by left hand
             let mut closest: Option<(Entity, f32)> = None;
             for (entity, tf, _) in &q_grabbables {
+                if Some(entity) == hands.left_grabbed {
+                    continue;
+                }
                 let dist = tf.translation.distance(right_hand_pos);
                 if dist < 1.8 && (closest.is_none() || dist < closest.unwrap().1) {
                     closest = Some((entity, dist));
@@ -160,13 +224,15 @@ pub fn dual_hand_interaction_system(
             }
             if let Some((e, _)) = closest {
                 hands.right_grabbed = Some(e);
+                if let Ok(mut vel) = q_velocities.get_mut(e) {
+                    vel.linear = Vec3::ZERO;
+                    vel.angular = Vec3::ZERO;
+                }
             }
         }
-    } else {
-        hands.right_grabbed = None;
     }
 
-    // Hold grabbed items in position with kinematic follow
+    // 4. Hold grabbed items in position with kinematic follow
     if let Some(left_e) = hands.left_grabbed {
         let left_tool = if let Ok((_, mut tf, tool_opt)) = q_grabbables.get_mut(left_e) {
             tf.translation = left_hand_pos;
@@ -174,6 +240,10 @@ pub fn dual_hand_interaction_system(
         } else {
             None
         };
+        if let Ok(mut vel) = q_velocities.get_mut(left_e) {
+            vel.linear = Vec3::ZERO;
+            vel.angular = Vec3::ZERO;
+        }
 
         if let Some(tool) = left_tool {
             for present_e in &q_presents {
@@ -196,6 +266,10 @@ pub fn dual_hand_interaction_system(
         } else {
             None
         };
+        if let Ok(mut vel) = q_velocities.get_mut(right_e) {
+            vel.linear = Vec3::ZERO;
+            vel.angular = Vec3::ZERO;
+        }
 
         if let Some(tool) = right_tool {
             for present_e in &q_presents {

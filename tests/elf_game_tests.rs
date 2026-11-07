@@ -4,7 +4,7 @@ use rust_tests::elf_game::wrapping::{
     WrappingPlugin, Present, WrappingFeature, WrappingSpecification, WrappingTool, UseToolOnPresentMessage,
 };
 use rust_tests::elf_game::moose::{
-    MoosePlugin, MooseHunger, MooseSnack, FeedMooseMessage,
+    MoosePlugin, MooseHunger, MooseHungerStage, MooseSnack, FeedMooseMessage,
 };
 use rust_tests::elf_game::player::{
     BhopConfig, BhopWindow, ElfMovement, ElfHands, update_elf_physics,
@@ -111,57 +111,96 @@ fn test_forbidden_plasma_instant_wrap() {
 }
 
 #[test]
-fn test_moose_hunger_drain_and_feeding() {
+fn test_moose_hunger_progression_stages() {
     let mut app = App::new();
-    app.add_plugins(bevy::time::TimePlugin);
     app.add_plugins(MoosePlugin);
 
-    // Initial hunger is 90.0
+    // Initial state: hunger = 0.0 -> BehindShutters
     {
         let hunger = app.world().resource::<MooseHunger>();
-        assert_eq!(hunger.current, 90.0);
-        assert!(!hunger.is_breached);
+        assert_eq!(hunger.value, 0.0);
+        assert_eq!(hunger.stage, MooseHungerStage::BehindShutters);
     }
 
-    // Spawn a snack
-    let snack_entity = app.world_mut().spawn(MooseSnack {
-        nutrition_value: 45.0,
-    }).id();
-
-    // Simulate hunger drop by manually editing resource to 30.0
+    // Advance 30 seconds -> PeekingThrough (20..50)
     {
-        let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
-        hunger.current = 30.0;
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(30));
+        app.insert_resource(time);
+    }
+    app.update();
+    {
+        let hunger = app.world().resource::<MooseHunger>();
+        assert_eq!(hunger.stage, MooseHungerStage::PeekingThrough);
+        assert_eq!(hunger.value, 30.0);
     }
 
-    // Feed the moose
-    app.world_mut().write_message(FeedMooseMessage { snack_entity });
+    // Advance another 25 seconds -> AgitatedHuffing (50..60)
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(25));
+        app.insert_resource(time);
+    }
     app.update();
+    {
+        let hunger = app.world().resource::<MooseHunger>();
+        assert_eq!(hunger.stage, MooseHungerStage::AgitatedHuffing);
+        assert_eq!(hunger.value, 55.0);
+    }
 
-    // Check hunger restored (30 + 45 = 75)
-    let hunger = app.world().resource::<MooseHunger>();
-    assert_eq!(hunger.current, 75.0);
+    // Advance 10 seconds -> WindowSlammed (60.0 reached, starts breach countdown)
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(10));
+        app.insert_resource(time);
+    }
+    app.update();
+    {
+        let hunger = app.world().resource::<MooseHunger>();
+        assert_eq!(hunger.stage, MooseHungerStage::WindowSlammed);
+        assert_eq!(hunger.value, 60.0);
+        assert!(hunger.breach_delay_remaining.is_some());
+    }
 
-    // Verify snack entity was consumed / despawned
-    assert!(app.world().get_entity(snack_entity).is_err());
+    // Advance remaining breach delay (e.g. 7s) -> Smashes through into BreachedRampage
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(7));
+        app.insert_resource(time);
+    }
+    app.update();
+    {
+        let hunger = app.world().resource::<MooseHunger>();
+        assert!(hunger.is_breached);
+        assert_eq!(hunger.stage, MooseHungerStage::BreachedRampage);
+    }
 }
 
 #[test]
-fn test_moose_breach_when_starved() {
+fn test_moose_hunger_feeding_reduces_value() {
     let mut app = App::new();
     app.add_plugins(MoosePlugin);
 
-    // Initial hunger is 90.0, drain rate is 1.0.
-    // Insert a mock Time<()> resource with 100 seconds delta so it drains 100 points
-    let mut time = Time::<()>::default();
-    time.advance_by(std::time::Duration::from_secs(100));
-    app.insert_resource(time);
+    // Set hunger to 45.0 (Peeking stage)
+    {
+        let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
+        hunger.value = 45.0;
+        hunger.stage = MooseHungerStage::PeekingThrough;
+    }
 
+    // Spawn snack (30 nutrition)
+    let snack_entity = app.world_mut().spawn(MooseSnack {
+        nutrition_value: 30.0,
+    }).id();
+
+    // Feed moose
+    app.world_mut().write_message(FeedMooseMessage { snack_entity });
     app.update();
 
     let hunger = app.world().resource::<MooseHunger>();
-    assert!(hunger.is_breached, "Moose must breach when hunger drops to 0");
-    assert_eq!(hunger.current, 0.0);
+    assert_eq!(hunger.value, 15.0, "Hunger reduced by 30 to 15.0");
+    assert_eq!(hunger.stage, MooseHungerStage::BehindShutters, "Moose retreats behind shutters");
+    assert!(app.world().get_entity(snack_entity).is_err(), "Snack consumed");
 }
 
 #[test]
@@ -323,4 +362,259 @@ fn test_dual_hands_ribbon_shake_to_form_bow() {
     // Violent shake impulse: crosses goal threshold (1.0) and creates a bow
     assert!(hands.add_shake_energy(0.3));
     assert_eq!(hands.ribbon_shake_energy, 0.0, "Energy resets after forming bow");
+}
+
+#[test]
+fn test_bhop_timing_window_cycling_and_debug_options() {
+    let mut config = BhopConfig::default();
+    assert_eq!(config.window, BhopWindow::Sixtieth);
+    assert_eq!(config.window.label(), "1/60s (Strict)");
+    assert!((config.window.duration_secs() - 1.0 / 60.0).abs() < 0.0001);
+
+    // Cycle to 1/30s
+    config.window = config.window.next();
+    assert_eq!(config.window, BhopWindow::Thirtieth);
+    assert_eq!(config.window.label(), "1/30s (Medium)");
+    assert!((config.window.duration_secs() - 1.0 / 30.0).abs() < 0.0001);
+
+    // Cycle to 1/10s
+    config.window = config.window.next();
+    assert_eq!(config.window, BhopWindow::Tenth);
+    assert_eq!(config.window.label(), "1/10s (Forgiving)");
+    assert!((config.window.duration_secs() - 1.0 / 10.0).abs() < 0.0001);
+
+    // Cycle back to 1/60s
+    config.window = config.window.next();
+    assert_eq!(config.window, BhopWindow::Sixtieth);
+}
+
+#[test]
+fn test_conveyor_despawn_chute() {
+    use rust_tests::elf_game::workshop::room::{ConveyorDespawnChute, conveyor_despawn_chute_system};
+
+    let mut app = App::new();
+    app.add_systems(Update, conveyor_despawn_chute_system);
+
+    app.world_mut().spawn((
+        ConveyorDespawnChute,
+        Transform::from_xyz(9.6, 0.45, 3.0),
+    ));
+
+    // Present cube that reached the end of the conveyor
+    let cube_entity = app.world_mut().spawn((
+        Present::default(),
+        Transform::from_xyz(9.2, 0.5, 3.0),
+    )).id();
+
+    // Present cube still in the middle of the conveyor
+    let safe_cube = app.world_mut().spawn((
+        Present::default(),
+        Transform::from_xyz(0.0, 0.5, 3.0),
+    )).id();
+
+    app.update();
+
+    assert!(app.world().get_entity(cube_entity).is_err(), "Present at end of belt should be despawned by chute");
+    assert!(app.world().get_entity(safe_cube).is_ok(), "Present in middle of belt must remain active");
+}
+
+#[test]
+fn test_moose_rampage_retreat_and_reset() {
+    use rust_tests::elf_game::workshop::events::{MooseRampageTracker, moose_rampage_path_and_physics_impulse_system};
+    use rust_tests::elf_game::moose::toy_model::MrMoose;
+
+    let mut app = App::new();
+    app.insert_resource(Time::<()>::default());
+    app.insert_resource(MooseHunger {
+        value: 60.0,
+        stage: MooseHungerStage::BreachedRampage,
+        is_breached: true,
+        ..default()
+    });
+    app.add_systems(Update, moose_rampage_path_and_physics_impulse_system);
+
+    // Moose with tracker at last waypoint index
+    let moose_entity = app.world_mut().spawn((
+        MrMoose,
+        MooseRampageTracker {
+            current_waypoint_index: 8,
+            speed: 8.5,
+            waypoints: vec![Vec3::ZERO; 8],
+        },
+        Transform::from_xyz(-6.5, 1.8, -17.0),
+    )).id();
+
+    app.update();
+
+    let hunger = app.world().resource::<MooseHunger>();
+    assert_eq!(hunger.stage, MooseHungerStage::BehindShutters);
+    assert_eq!(hunger.value, 0.0);
+    assert!(!hunger.is_breached);
+    assert!(app.world().get::<MooseRampageTracker>(moose_entity).is_none(), "Tracker should be removed on retreat");
+}
+
+#[test]
+fn test_player_launched_on_contact_with_rampaging_moose() {
+    use rust_tests::elf_game::workshop::events::{MooseRampageTracker, moose_rampage_path_and_physics_impulse_system};
+    use rust_tests::elf_game::moose::toy_model::MrMoose;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_secs_f32(0.016));
+    app.insert_resource(time);
+    app.insert_resource(MooseHunger {
+        value: 60.0,
+        stage: MooseHungerStage::BreachedRampage,
+        is_breached: true,
+        ..default()
+    });
+    app.add_systems(Update, moose_rampage_path_and_physics_impulse_system);
+
+    // Moose rampaging at (0.0, 1.4, -4.0) towards next waypoint (5.0, 1.4, 3.0)
+    app.world_mut().spawn((
+        MrMoose,
+        MooseRampageTracker {
+            current_waypoint_index: 0,
+            speed: 8.5,
+            waypoints: vec![Vec3::new(5.0, 1.4, 3.0)],
+        },
+        Transform::from_xyz(0.0, 1.4, -4.0),
+    ));
+
+    // Player standing within contact distance (0.5m from Moose)
+    let player_entity = app.world_mut().spawn((
+        ElfMovement {
+            velocity: Vec3::ZERO,
+            is_grounded: true,
+            ..default()
+        },
+        Transform::from_xyz(0.5, 1.2, -4.0),
+    )).id();
+
+    app.update();
+
+    let movement = app.world().get::<ElfMovement>(player_entity).unwrap();
+    assert!(
+        movement.velocity.y >= 10.0,
+        "Player should be launched upwards with high vertical speed (>= 10.0), got {}",
+        movement.velocity.y
+    );
+    assert!(!movement.is_grounded, "Player must become airborne upon being launched");
+    let h_speed = Vec2::new(movement.velocity.x, movement.velocity.z).length();
+    assert!(
+        h_speed >= 5.0,
+        "Player should have strong horizontal momentum, got {}",
+        h_speed
+    );
+}
+
+#[test]
+fn test_moose_window_shutters_rotate_inward_on_peek() {
+    use rust_tests::elf_game::moose::toy_model::{
+        LeftWindowShutter, RightWindowShutter, MrMoose, MooseHead, animate_mr_moose_peeking_system,
+    };
+
+    let mut app = App::new();
+    app.insert_resource(MooseHunger {
+        value: 10.0,
+        stage: MooseHungerStage::BehindShutters,
+        is_breached: false,
+        ..default()
+    });
+    app.add_systems(Update, animate_mr_moose_peeking_system);
+
+    let left_shutter_entity = app.world_mut().spawn((
+        LeftWindowShutter,
+        Transform::from_xyz(-7.4, 2.9, -13.0),
+    )).id();
+
+    let right_shutter_entity = app.world_mut().spawn((
+        RightWindowShutter,
+        Transform::from_xyz(-5.6, 2.9, -13.0),
+    )).id();
+
+    let _moose_entity = app.world_mut().spawn((
+        MrMoose,
+        Transform::from_xyz(-6.5, 1.8, -17.0),
+    )).id();
+
+    let head_entity = app.world_mut().spawn((
+        MooseHead,
+        Transform::from_xyz(0.0, 1.1, 1.6),
+    )).id();
+
+    // 1. Stage 1: BehindShutters (hunger 10.0) -> Shutters completely closed (Quat::IDENTITY)
+    app.update();
+    {
+        let left_tf = app.world().get::<Transform>(left_shutter_entity).unwrap();
+        let right_tf = app.world().get::<Transform>(right_shutter_entity).unwrap();
+        assert_eq!(left_tf.rotation, Quat::IDENTITY, "Left shutter must be shut at hunger 10");
+        assert_eq!(right_tf.rotation, Quat::IDENTITY, "Right shutter must be shut at hunger 10");
+    }
+
+    // 2. Stage 2: PeekingThrough (hunger 35.0, progress = 0.5)
+    // Shutters must rotate inward into the room (+Z direction) as head pokes forward
+    {
+        let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
+        hunger.value = 35.0;
+        hunger.stage = MooseHungerStage::PeekingThrough;
+    }
+    app.update();
+    {
+        let left_tf = app.world().get::<Transform>(left_shutter_entity).unwrap();
+        let right_tf = app.world().get::<Transform>(right_shutter_entity).unwrap();
+
+        let (left_yaw, _, _) = left_tf.rotation.to_euler(EulerRot::YXZ);
+        let (right_yaw, _, _) = right_tf.rotation.to_euler(EulerRot::YXZ);
+
+        assert!(left_yaw < -0.3, "Left shutter rotates inward around Y with negative yaw, got {}", left_yaw);
+        assert!(right_yaw > 0.3, "Right shutter rotates inward around Y with positive yaw, got {}", right_yaw);
+
+        // Verify the shutter tips move into +Z (into the workshop interior from Z = -13.0)
+        let left_tip_local = left_tf.rotation * Vec3::new(0.88, 0.0, 0.0);
+        let right_tip_local = right_tf.rotation * Vec3::new(-0.88, 0.0, 0.0);
+        assert!(
+            left_tip_local.z > 0.2,
+            "Left shutter tip must protrude into +Z interior of workshop, got {}",
+            left_tip_local.z
+        );
+        assert!(
+            right_tip_local.z > 0.2,
+            "Right shutter tip must protrude into +Z interior of workshop, got {}",
+            right_tip_local.z
+        );
+
+        let head_tf = app.world().get::<Transform>(head_entity).unwrap();
+        assert!(head_tf.translation.z > 2.0, "Moose head pokes forward into the room");
+    }
+
+    // 3. Stage 4: WindowSlammed (hunger 60.0) -> Shutters slam shut
+    {
+        let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
+        hunger.value = 60.0;
+        hunger.stage = MooseHungerStage::WindowSlammed;
+    }
+    app.update();
+    {
+        let left_tf = app.world().get::<Transform>(left_shutter_entity).unwrap();
+        let right_tf = app.world().get::<Transform>(right_shutter_entity).unwrap();
+        assert_eq!(left_tf.rotation, Quat::IDENTITY, "Left shutter slams shut at hunger 60");
+        assert_eq!(right_tf.rotation, Quat::IDENTITY, "Right shutter slams shut at hunger 60");
+    }
+
+    // 4. Stage 5: BreachedRampage -> Shutters blown wide open
+    {
+        let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
+        hunger.stage = MooseHungerStage::BreachedRampage;
+        hunger.is_breached = true;
+    }
+    app.update();
+    {
+        let left_tf = app.world().get::<Transform>(left_shutter_entity).unwrap();
+        let right_tf = app.world().get::<Transform>(right_shutter_entity).unwrap();
+        let (left_yaw, _, _) = left_tf.rotation.to_euler(EulerRot::YXZ);
+        let (right_yaw, _, _) = right_tf.rotation.to_euler(EulerRot::YXZ);
+        assert!(left_yaw <= -1.8, "Left shutter blown wide open during breach, got {}", left_yaw);
+        assert!(right_yaw >= 1.8, "Right shutter blown wide open during breach, got {}", right_yaw);
+    }
 }

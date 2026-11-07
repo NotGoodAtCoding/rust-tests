@@ -1,18 +1,12 @@
 use bevy::prelude::*;
 
-#[derive(Component, Debug, Clone)]
-pub struct DiegeticMonitor {
-    pub display_id: String,
-    pub current_text: String,
-}
-
-#[derive(Component, Debug, Clone)]
-pub struct DiegeticSign {
-    pub message: String,
-}
+pub mod monitor;
 
 pub struct DiegeticUiPlugin;
 
 impl Plugin for DiegeticUiPlugin {
-    fn build(&self, _app: &mut App) {}
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, monitor::spawn_diegetic_screens_and_signs)
+            .add_systems(Update, monitor::update_diegetic_monitor_text);
+    }
 }

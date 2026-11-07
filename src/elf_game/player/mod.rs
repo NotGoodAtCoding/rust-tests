@@ -1,5 +1,8 @@
 use bevy::prelude::*;
 
+pub mod controller;
+pub mod hands;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BhopWindow {
     Sixtieth,   // 1/60s (~16.6ms)
@@ -13,6 +16,22 @@ impl BhopWindow {
             Self::Sixtieth => 1.0 / 60.0,
             Self::Thirtieth => 1.0 / 30.0,
             Self::Tenth => 1.0 / 10.0,
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Sixtieth => Self::Thirtieth,
+            Self::Thirtieth => Self::Tenth,
+            Self::Tenth => Self::Sixtieth,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Sixtieth => "1/60s (Strict)",
+            Self::Thirtieth => "1/30s (Medium)",
+            Self::Tenth => "1/10s (Forgiving)",
         }
     }
 }
@@ -202,6 +221,17 @@ pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<BhopConfig>();
+        app.init_resource::<BhopConfig>()
+            .init_resource::<controller::ElfInputSettings>()
+            .add_systems(Startup, (controller::spawn_elf_player, hands::spawn_workshop_tools_and_materials))
+            .add_systems(
+                Update,
+                (
+                    controller::elf_look_system,
+                    controller::elf_player_controller_system,
+                    controller::viewmodel_bob,
+                    hands::dual_hand_interaction_system,
+                ),
+            );
     }
 }

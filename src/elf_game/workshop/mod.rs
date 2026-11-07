@@ -2,6 +2,9 @@ use bevy::prelude::*;
 use bevy::ecs::message::{Message, MessageWriter};
 use crate::elf_game::core::WorkshopQuota;
 
+pub mod room;
+pub mod events;
+
 #[derive(Message, Debug, Clone)]
 pub struct UnlockDoorMessage {
     pub door_id: String,
@@ -35,7 +38,20 @@ pub struct WorkshopPlugin;
 
 impl Plugin for WorkshopPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<UnlockDoorMessage>()
-            .add_systems(Update, check_workshop_progression);
+        app.init_resource::<room::ConveyorSpawnerTimer>()
+            .add_message::<UnlockDoorMessage>()
+            .add_systems(Startup, room::setup_workshop_scene)
+            .add_systems(
+                Update,
+                (
+                    check_workshop_progression,
+                    room::conveyor_cube_spawner_system,
+                    room::conveyor_belt_physics_system,
+                    room::conveyor_despawn_chute_system,
+                    events::monitor_present_delivery,
+                    events::handle_moose_window_breach,
+                    events::moose_rampage_path_and_physics_impulse_system,
+                ),
+            );
     }
 }

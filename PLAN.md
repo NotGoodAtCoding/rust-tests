@@ -49,9 +49,61 @@ In this 3D first-person / third-person simulation game built with **Bevy 0.20** 
     * **Gift Tag Pen**: Writes recipient tag.
     * **Forbidden Tools**: Applies volatile instant seals.
 
-### 2.2 Evolving Scene & Workshop Progression
+### 2.2 Main Room Layout, Cabin Architecture & Pneumatics
+* **Cabin Atmosphere & Architectural Layout**:
+  * **Rustic Alpine Cabin Aesthetic**:
+    * Warm timber plank and log wall construction replacing flat monochromatic walls, featuring rich cedar/pine wood tones (`perceptual_roughness: 0.85`), dark wood corner posts, and stone/brick floor trim.
+  * **High Vaulted Ceiling & Structural Cross Beams**:
+    * Roof geometry pitched into a high A-frame vault rising from $5.0\,\text{m}$ side walls to an $8.5\,\text{m}$ central ridge.
+    * Heavy exposed timber cross-beams (tie beams and king post trusses) span across the room width at $Y = 5.2\,\text{m}$, creating structural anchor points for suspended lighting and pneumatic pipework.
+  * **Dynamic Candle Chandeliers**:
+    * Two large rustic wrought-iron chandeliers suspended by chains from the wooden cross-beams:
+      * **North Chandelier**: Positioned at $(0.0, 5.2, -4.5)$.
+      * **South Chandelier**: Positioned at $(0.0, 5.2, 4.5)$.
+    * Each chandelier mounts a ring of 6–8 tallow candles with warm point light emitters (`Color::srgb(1.0, 0.76, 0.42)`, $\approx 2200\,\text{K}$).
+    * Procedural flame flicker system (`intensity = base + A * sin(omega_1 * t) + B * sin(omega_2 * t)`) casting dancing dynamic shadows across the log walls, wooden cross beams, and workshop floor.
+
+* **Conveyor Belt & Recessed Despawn Chute**:
+  * Stretches along the room from $X = -8.5\,\text{m}$ to $X = 9.5\,\text{m}$ at $Z = 3.0\,\text{m}$, elevated at $Y = 0.75\,\text{m}$.
+  * Carries raw toy cubes continuously from the spawner toward the dispatch end at $2.0\,\text{m/s}$.
+  * **Floor-Recessed Collection Chute**:
+    * Located directly below the discharge end of the conveyor belt at $(9.6, 0.0, 3.0)$.
+    * Features a raised, beveled funnel lip/rim ($0.15\,\text{m}$ above floor) that catches falling presents as they tumble off the edge of the belt under gravity.
+    * The chute shaft drops down into a recessed sub-floor collector pit ($Y \in [-1.5, 0.0]\,\text{m}$).
+    * **No-Pop Sub-Floor Despawn Zone**: The despawn sensor volume is positioned at $Y \le -0.8\,\text{m}$ deep inside the recessed shaft. Presents completely disappear from view into the dark chute before despawning, eliminating visible popping.
+
+* **Present Sending Platform & Pneumatic Vacuum System**:
+  * **Present Sending Platform**:
+    * A dedicated circular/hexagonal dispatch platform located adjacent to the main workbench table (e.g. at $X = 5.0, Z = -4.0$).
+    * Features clearly marked hazard stripes and present alignment guides where the player deposits completed, wrapped, and inspected gifts.
+    * Physical interactive **Send Button** (large red industrial plunger/button on a control pedestal beside the platform).
+  * **Suction Cone & Overhead Funnel**:
+    * A circular intake funnel positioned overhead at $Y = 4.0\,\text{m}$ directly above the platform center.
+    * When the player presses the Send Button, a pneumatic turbine spools up with an audible acoustic rev and activates an upward conical suction field:
+      $$\vec{F}_{\text{suction}}(\vec{x}) = k_{\text{lift}} \frac{Y_{\text{funnel}} - y}{H} \hat{j} + k_{\text{inward}} \frac{\vec{x}_{\text{center}} - \vec{x}_{\text{h}}}{\|\vec{x}_{\text{center}} - \vec{x}_{\text{h}}\|}$$
+      where items located within the cone of opening angle $\alpha \approx 30^\circ$ below the funnel are pulled upward and focused inward toward the mouth.
+  * **Physics Soft-Body Transport Tube**:
+    * Continuous translucent/metallic pneumatic transport tube extending from the intake funnel ($Y = 4.0\,\text{m}$), routing up through the rafters, twisting through sweeping curved bends and a dramatic $360^\circ$ loop across the ceiling vault before terminating at the Santa Sorting Depot.
+    * Modeled as a physics spline / soft-body lattice chain: each segment has radial and axial spring stiffness and damping.
+  * **Dynamic Travelling "Lump" & Reaction Impulses**:
+    * Upon entering the intake funnel, the physics gift is ingested and converted into an active pneumatic transit packet characterized by its physical properties:
+      * Mass $m$ (from gift weight)
+      * Geometric radius $r_{\text{pack}}$ (from gift bounds)
+      * Transit velocity $v(s)$ along the 3D spline arc length $s$
+    * **Visual Lump Deformation**: As the packet travels through the tube at high pneumatic speed ($12\text{--}18\,\text{m/s}$), adjacent tube vertices undergo local radial dilation (bulging outwards by $\Delta R \propto r_{\text{pack}}$), visually revealing the packet moving along the tube.
+    * **Centrifugal & Directional Reaction Impulses**:
+      * As the lump speeds through curves and the loop (with local curvature $\kappa = \frac{1}{R}$ and principal normal $\hat{N}$), it exerts an outward centrifugal force:
+        $$\vec{F}_{\text{centrifugal}} = \frac{m v^2}{R} \hat{N}$$
+      * Along bends and tangential transitions, the momentum change exerts reaction impulses directly onto the tube segments:
+        $$\vec{J}_{\text{tube}} = -m \Delta \vec{v}$$
+      * Heavy, bulky gifts (large trains, robots) cause the tube to violently jerk, sway, and oscillate on its rafters mounts, rattling hanging lamps and nearby workshop props in satisfying slapstick fashion!
+
+* **Observation Window & Shutters**:
+  * Positioned off-center on the North wall ($X = -6.5, Z = -13.0$) overlooking the snowy hill.
+  * Head-sized opening ($1.8\,\text{m} \times 1.8\,\text{m}$) fitted with dual hinged wooden shutters that swing inward into the workshop as Mr. Moose pokes his head inside.
+
 * **Progression Tiers**:
-  * **Tier 1 (Main Workshop)**: Basic manual workbench, paper rack, tape dispenser, delivery chute, Mr. Moose snack feeder.
+  * **Tier 1 (Main Workshop)**: Basic manual workbench, conveyor belt with raw cube spawner, paper rack, tape dispenser, delivery chute, Mr. Moose snack feeder.
   * **Tier 2 (Storage Wing Unlocked)**: Reached after $N$ successful presents. Unlocks bulk tape dispensers, motorized wrapping turntables, and elf assistants (NPCs).
   * **Tier 3 (The Forbidden Back Workshop)**:
     * Hidden behind a locked reinforced door.
@@ -61,17 +113,24 @@ In this 3D first-person / third-person simulation game built with **Bevy 0.20** 
   * Trigger-based barriers opening new doors via Rapier kinematic rigidbodies or sensor volumes.
   * NPC Elves roaming and delivering supplies or panicking during catastrophic events.
 
-### 2.3 Mr. Moose Mechanics
+### 2.3 Mr. Moose Mechanics (Stages 0–60 & Rampage Path)
 * **Visual Style**: Completely unshaded brown plastic material (`StandardMaterial { base_color: Color::srgb(0.35, 0.20, 0.10), unlit: true, ..default() }`), rigid toy geometry, low-poly or stylized antlers.
-* **Hunger & Feeding Loop**:
-  * Mr. Moose sits outside on a snowy hill, visible through a large glass window pane with a dedicated feeding chute / trough.
-  * **Moose Hunger Meter**: Slowly depletes over time (e.g. 90-second cycle).
-  * **Moose Snacks**: Spawn in the pantry; player must physically carry a snack canister and drop it into the feeding bowl.
-* **Breach Event (Window Destruction)**:
-  * If the hunger meter reaches zero:
-    * Alarm sound / rumbling screen shake.
-    * Mr. Moose leaps through the window, breaking glass (procedural fracture / physics shards).
-    * Rampages through the workshop, knocking over wrapping tables, scattering presents, and causing an immediate emergency lockdown until lured back with a mega-snack.
+* **Hunger Value Progression (0 to 60, +1/sec default)**:
+  * **Stage 1 (Hunger 0–20, Calm)**:
+    * Mr. Moose is resting behind closed window shutters outside. The workshop is calm.
+  * **Stage 2 (Hunger 20–50, Peeking)**:
+    * Shutters slide open. Mr. Moose slowly pokes his plastic head through the window into the workshop, tracking inward as hunger increases.
+  * **Stage 3 (Hunger 50–60, Agitated Huffing)**:
+    * Mr. Moose stops advancing and waits with his head inside the room. Emits ominous audible huffs, grunts, or mechanical moose clicks alerting the player.
+  * **Stage 4 (Hunger = 60, Slam & Impending Breach)**:
+    * At hunger 60, Mr. Moose violently pulls back and slams the window shut with a loud acoustic thud.
+    * An ominous countdown timer triggers with a randomized delay of **3 to 12 seconds**.
+  * **Stage 5 (Breach & Rampage Along Set Path)**:
+    * After the 3–12s delay expires, Mr. Moose smashes through the glass into the workshop!
+    * Follows a deterministic waypoint path through the workshop (e.g. charging past the workbench, crashing into the conveyor belt, knocking over storage crates).
+    * **Extreme Impulses**: Any physics objects (presents, tools, snack cans, elf ragdolls) interacting with Mr. Moose receive exaggerated impact impulse forces ($3\times\text{--}5\times$ normal collision impulses), sending them flying across the room in slapstick fashion.
+* **Feeding & Reset Loop**:
+  * Depositing Moose Snacks into the feeding trough resets the hunger timer backwards, causing Mr. Moose to retreat back behind the window shutters.
 
 ### 2.5 Dual-Hand Player Control & Physics Interaction
 * **Dual-Hand Input Architecture**:

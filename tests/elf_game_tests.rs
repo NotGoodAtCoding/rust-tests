@@ -6036,6 +6036,9 @@ fn test_pantry_storage_wing_geometry_and_shelving() {
     assert!(names.contains(&"PantryNorthWall".to_string()), "Must spawn PantryNorthWall");
     assert!(names.contains(&"PantrySouthWall".to_string()), "Must spawn PantrySouthWall");
     assert!(names.contains(&"PantryWestWall".to_string()), "Must spawn PantryWestWall");
+    assert!(names.contains(&"PantryEastWallNorth".to_string()), "Must spawn PantryEastWallNorth");
+    assert!(names.contains(&"PantryEastWallSouth".to_string()), "Must spawn PantryEastWallSouth");
+    assert!(names.contains(&"WallWestMidSouth".to_string()), "Must spawn WallWestMidSouth");
     assert!(names.contains(&"PantryDoorHeaderLintel".to_string()), "Must spawn PantryDoorHeaderLintel");
     assert!(names.contains(&"PantryCeilingLantern".to_string()), "Must spawn warm ambient ceiling lantern");
 
@@ -6058,6 +6061,75 @@ fn test_pantry_storage_wing_geometry_and_shelving() {
     // 4. Verify Pantry Door & Tracker resource
     assert!(app.world_mut().query::<&PantryDoor>().iter(app.world()).next().is_some());
     assert!(app.world().get_resource::<PantryRestockTracker>().is_some());
+}
+
+#[test]
+fn test_pantry_fully_enclosed_without_holes() {
+    use rust_tests::elf_game::workshop::room::setup_workshop_scene;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_systems(Startup, setup_workshop_scene);
+    app.update();
+
+    // Query colliders and transforms
+    let mut wall_colliders: Vec<(String, Vec3, Vec3)> = Vec::new();
+    for (name, tf, collider) in app.world_mut().query::<(&Name, &Transform, &Collider)>().iter(app.world()) {
+        let name_str = name.to_string();
+        if name_str.starts_with("Pantry") || name_str.starts_with("WallWest") {
+            let half_extents = match collider.as_cuboid() {
+                Some(c) => Vec3::new(c.raw.half_extents.x, c.raw.half_extents.y, c.raw.half_extents.z),
+                None => Vec3::ZERO,
+            };
+            wall_colliders.push((name_str, tf.translation, half_extents));
+        }
+    }
+
+    // Verify East dividing walls North and South of the door
+    let east_north = wall_colliders.iter().find(|(n, _, _)| n == "PantryEastWallNorth").expect("PantryEastWallNorth must exist");
+    assert_eq!(east_north.1.x, -13.0);
+    assert!(east_north.2.y >= 1.74, "East dividing wall North must reach full 3.5m height (half_extent >= 1.74)");
+    // Z range must cover Z from 3.5 to 4.75
+    let z_min_north = east_north.1.z - east_north.2.z;
+    let z_max_north = east_north.1.z + east_north.2.z;
+    assert!(z_min_north <= 3.55 && z_max_north >= 4.70, "PantryEastWallNorth must span Z in [3.5, 4.75]");
+
+    let east_south = wall_colliders.iter().find(|(n, _, _)| n == "PantryEastWallSouth").expect("PantryEastWallSouth must exist");
+    assert_eq!(east_south.1.x, -13.0);
+    assert!(east_south.2.y >= 1.74, "East dividing wall South must reach full 3.5m height (half_extent >= 1.74)");
+    // Z range must cover Z from 6.23 to 7.5
+    let z_min_south = east_south.1.z - east_south.2.z;
+    let z_max_south = east_south.1.z + east_south.2.z;
+    assert!(z_min_south <= 6.25 && z_max_south >= 7.45, "PantryEastWallSouth must span Z in [6.23, 7.5]");
+
+    // Verify WallWestMidSouth seals the middle height along South West wall
+    let mid_south = wall_colliders.iter().find(|(n, _, _)| n == "WallWestMidSouth").expect("WallWestMidSouth must exist");
+    assert_eq!(mid_south.1.x, -13.0);
+    assert!(mid_south.2.y >= 1.35, "WallWestMidSouth must cover height Y in [1.2, 4.0]");
+
+    // Verify that at player waist/eye height Y = 1.6, along X = -13.0 for all Z in [3.5, 7.5],
+    // every point is covered by either PantryEastWallNorth, PantryEastWallSouth, or PantryDoor
+    for z_idx in 0..40 {
+        let z = 3.55 + (z_idx as f32) * 0.10; // 3.55 to 7.45
+        let point = Vec3::new(-13.0, 1.6, z);
+
+        let inside_north = (point.x - east_north.1.x).abs() <= east_north.2.x + 0.05
+            && (point.y - east_north.1.y).abs() <= east_north.2.y
+            && (point.z - east_north.1.z).abs() <= east_north.2.z + 0.01;
+
+        let inside_south = (point.x - east_south.1.x).abs() <= east_south.2.x + 0.05
+            && (point.y - east_south.1.y).abs() <= east_south.2.y
+            && (point.z - east_south.1.z).abs() <= east_south.2.z + 0.01;
+
+        let in_doorway = z >= 4.70 && z <= 6.25;
+
+        assert!(
+            inside_north || inside_south || in_doorway,
+            "Point at Z = {z:.2} must be blocked by North wall, South wall, or Door! No holes allowed.",
+        );
+    }
 }
 
 #[test]

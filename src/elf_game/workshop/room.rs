@@ -441,12 +441,21 @@ pub fn setup_workshop_scene(
         RigidBody::Fixed,
         Name::new("WallWestLowerSouth"),
     ));
+    // South section of middle wall (Z in [6.3, 13.0])
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(0.4, 2.8, 6.7))),
+        MeshMaterial3d(wall_material.clone()),
+        Transform::from_xyz(-13.0, 2.6, 9.65),
+        Collider::cuboid(0.2, 1.4, 3.35),
+        RigidBody::Fixed,
+        Name::new("WallWestMidSouth"),
+    ));
     // West Windows along North section
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.1, 2.8, 14.0))),
+        Mesh3d(meshes.add(Cuboid::new(0.1, 2.8, 16.5))),
         MeshMaterial3d(window_glass_material.clone()),
-        Transform::from_xyz(-13.0, 2.6, -4.0),
-        Collider::cuboid(0.1, 1.4, 7.0),
+        Transform::from_xyz(-13.0, 2.6, -4.75),
+        Collider::cuboid(0.1, 1.4, 8.25),
         RigidBody::Fixed,
         Name::new("WestWindowGlass"),
     ));

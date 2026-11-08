@@ -422,6 +422,34 @@ pub fn spawn_pantry_storage_wing(
         ));
     }
 
+    // East Dividing Wall - North of doorway (X = -13.0, Z in [3.5, 4.75])
+    let mut east_wall_north = commands.spawn((
+        Transform::from_xyz(-13.0, 1.75, 4.125),
+        Collider::cuboid(0.15, 1.75, 0.625),
+        RigidBody::Fixed,
+        Name::new("PantryEastWallNorth"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        east_wall_north.insert((
+            Mesh3d(m.add(Cuboid::new(0.3, 3.5, 1.25))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // East Dividing Wall - South of doorway (X = -13.0, Z in [6.23, 7.5])
+    let mut east_wall_south = commands.spawn((
+        Transform::from_xyz(-13.0, 1.75, 6.865),
+        Collider::cuboid(0.15, 1.75, 0.635),
+        RigidBody::Fixed,
+        Name::new("PantryEastWallSouth"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        east_wall_south.insert((
+            Mesh3d(m.add(Cuboid::new(0.3, 3.5, 1.27))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
     // Doorway Frame on West Wall of main workshop (X = -13.0, doorway opening Z in [4.7, 6.3])
     // Door Header Lintel (Y in [2.7, 3.5] above opening)
     let mut header_cmd = commands.spawn((

@@ -69,6 +69,11 @@ pub struct PantryDoor {
     pub spring_stiffness: f32,
     pub spring_damping: f32,
     pub close_speed: f32,
+    pub is_grabbed: bool,
+    pub grab_reach: f32,
+    pub grab_release_distance: f32,
+    pub grab_offset_angle: f32,
+    pub grabbed_via_mouse: bool,
 }
 
 impl Default for PantryDoor {
@@ -84,6 +89,11 @@ impl Default for PantryDoor {
             spring_stiffness: 15.0,
             spring_damping: 4.0,
             close_speed: 0.75,
+            is_grabbed: false,
+            grab_reach: 2.5,
+            grab_release_distance: 2.8,
+            grab_offset_angle: 0.0,
+            grabbed_via_mouse: false,
         }
     }
 }
@@ -616,25 +626,36 @@ pub fn pantry_door_spring_system(
             vel.angular.y = vel.angular.y.min(0.0);
         }
 
-        // Auto-close behavior:
-        // "slowly close itself if less than 1/4 rad closed and flush with the wall"
-        if yaw > 0.0 && yaw < door.close_snap_threshold {
-            // Only auto-close if not actively being pushed open with strong positive torque
-            if ext_impulse.torque_impulse.y <= 0.5 {
-                let close_step = door.close_speed * dt;
-                if yaw <= close_step || yaw <= 0.015 {
-                    yaw = 0.0;
-                    vel.angular.y = 0.0;
-                    vel.linear = Vec3::ZERO;
-                } else {
-                    yaw -= close_step;
-                    vel.angular.y = -door.close_speed;
+        if door.is_grabbed {
+            // Player is holding and swinging the door!
+            let diff = door.target_angle - yaw;
+            let follow_speed = 12.0;
+            let max_step = follow_speed * dt;
+            let step = diff.clamp(-max_step, max_step);
+            yaw += step;
+            vel.angular.y = step / dt;
+            vel.linear = Vec3::ZERO;
+        } else {
+            // Auto-close behavior:
+            // "slowly close itself if less than 1/4 rad closed and flush with the wall"
+            if yaw > 0.0 && yaw < door.close_snap_threshold {
+                // Only auto-close if not actively being pushed open with strong positive torque
+                if ext_impulse.torque_impulse.y <= 0.5 {
+                    let close_step = door.close_speed * dt;
+                    if yaw <= close_step || yaw <= 0.015 {
+                        yaw = 0.0;
+                        vel.angular.y = 0.0;
+                        vel.linear = Vec3::ZERO;
+                    } else {
+                        yaw -= close_step;
+                        vel.angular.y = -door.close_speed;
+                    }
                 }
+            } else if yaw >= door.close_snap_threshold && door.target_angle > 0.0 {
+                let delta = door.target_angle - yaw;
+                let torque = door.spring_stiffness * delta - door.spring_damping * vel.angular.y;
+                ext_impulse.torque_impulse.y += torque * dt;
             }
-        } else if yaw >= door.close_snap_threshold && door.target_angle > 0.0 {
-            let delta = door.target_angle - yaw;
-            let torque = door.spring_stiffness * delta - door.spring_damping * vel.angular.y;
-            ext_impulse.torque_impulse.y += torque * dt;
         }
 
         door.current_angle = yaw;
@@ -723,14 +744,16 @@ pub fn pantry_door_restock_cycle_system(
     }
 }
 
-/// Allows the player to push or interactively toggle the pantry door open and closed
-/// via keyboard input (<kbd>E</kbd>/<kbd>Q</kbd>/<kbd>F</kbd>/<kbd>Left Click</kbd>) or messages.
+/// Allows the player to grab and swing the pantry door open and shut,
+/// rather than applying a static force.
+/// If the player moves away while grabbing, the grab is automatically released.
 pub fn pantry_door_interaction_system(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     mouse: Option<Res<ButtonInput<MouseButton>>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     q_player: Query<&Transform, With<crate::elf_game::player::controller::ElfPlayer>>,
+    q_camera: Query<&GlobalTransform, With<crate::elf_game::player::controller::FirstPersonCamera>>,
     mut q_door: Query<(&Transform, &mut ExternalImpulse, &mut PantryDoor)>,
     mut interact_messages: Option<MessageReader<PantryDoorInteractMessage>>,
 ) {
@@ -753,6 +776,8 @@ pub fn pantry_door_interaction_system(
     }
 
     if let Some(open) = open_command {
+        door.is_grabbed = false;
+        door.grabbed_via_mouse = false;
         if open {
             ext_impulse.torque_impulse.y = 8.0;
             door.target_angle = 1.40;
@@ -763,35 +788,93 @@ pub fn pantry_door_interaction_system(
         return;
     }
 
-    if !trigger {
-        let interact_pressed = keys
-            .as_ref()
-            .map(|k| {
-                k.just_pressed(KeyCode::KeyE)
-                    || k.just_pressed(KeyCode::KeyQ)
-                    || k.just_pressed(KeyCode::KeyF)
-            })
-            .unwrap_or(false)
-            || mouse
-                .as_ref()
-                .map(|m| m.just_pressed(MouseButton::Left))
-                .unwrap_or(false);
+    if trigger {
+        return;
+    }
 
-        if interact_pressed {
-            if let Ok(player_tf) = q_player.single() {
-                let dist = player_tf.translation.distance(door_tf.translation);
-                if dist <= 2.8 {
-                    let (_, yaw, _) = door_tf.rotation.to_euler(EulerRot::XYZ);
-                    if yaw < 0.25 {
-                        // Swing open into the workshop room
-                        ext_impulse.torque_impulse.y = 8.0;
-                        door.target_angle = 1.40;
-                    } else {
-                        // Swing closed toward the wall
-                        ext_impulse.torque_impulse.y = -8.0;
-                        door.target_angle = 0.0;
+    let key_interact = keys
+        .as_ref()
+        .map(|k| {
+            k.just_pressed(KeyCode::KeyE)
+                || k.just_pressed(KeyCode::KeyQ)
+                || k.just_pressed(KeyCode::KeyF)
+        })
+        .unwrap_or(false);
+
+    let mouse_just_pressed = mouse
+        .as_ref()
+        .map(|m| m.just_pressed(MouseButton::Left))
+        .unwrap_or(false);
+
+    let mouse_just_released = mouse
+        .as_ref()
+        .map(|m| m.just_released(MouseButton::Left))
+        .unwrap_or(false);
+
+    let interact_pressed = key_interact || mouse_just_pressed;
+
+    if let Ok(player_tf) = q_player.single() {
+        let player_pos = player_tf.translation;
+        let dist = player_pos.distance(door_tf.translation);
+
+        if door.is_grabbed {
+            // Requirement: "When grabbing the door, if the player moves away then the grab should be released."
+            if dist > door.grab_release_distance {
+                door.is_grabbed = false;
+                door.grabbed_via_mouse = false;
+            } else if interact_pressed {
+                // Toggling interact while holding releases the grab
+                door.is_grabbed = false;
+                door.grabbed_via_mouse = false;
+            } else if door.grabbed_via_mouse && mouse_just_released {
+                // Releasing mouse click releases the grab
+                door.is_grabbed = false;
+                door.grabbed_via_mouse = false;
+            } else {
+                // Player is actively holding and swinging the door!
+                let mut pull_pos = player_pos;
+                if let Some(cam_gt) = q_camera.iter().next() {
+                    let fwd: Vec3 = cam_gt.forward().into();
+                    let fwd_h = Vec3::new(fwd.x, 0.0, fwd.z);
+                    if fwd_h.length_squared() > 1e-4 {
+                        pull_pos += fwd_h.normalize() * 0.6;
                     }
                 }
+
+                let hinge = door.hinge_anchor_pos;
+                let delta_x = pull_pos.x - hinge.x;
+                let delta_z = pull_pos.z - hinge.z;
+                let player_angle = delta_x.atan2(delta_z);
+
+                let desired_angle = (player_angle + door.grab_offset_angle).clamp(0.0, 1.65);
+                door.target_angle = desired_angle;
+            }
+        } else {
+            // Not grabbed: player can grab if within reach
+            if interact_pressed && dist <= door.grab_reach {
+                door.is_grabbed = true;
+                door.grabbed_via_mouse = mouse_just_pressed;
+
+                let (_, yaw, _) = door_tf.rotation.to_euler(EulerRot::XYZ);
+                let current_yaw = yaw.clamp(0.0, 1.65);
+
+                let mut pull_pos = player_pos;
+                if let Some(cam_gt) = q_camera.iter().next() {
+                    let fwd: Vec3 = cam_gt.forward().into();
+                    let fwd_h = Vec3::new(fwd.x, 0.0, fwd.z);
+                    if fwd_h.length_squared() > 1e-4 {
+                        pull_pos += fwd_h.normalize() * 0.6;
+                    }
+                }
+
+                let hinge = door.hinge_anchor_pos;
+                let delta_x = pull_pos.x - hinge.x;
+                let delta_z = pull_pos.z - hinge.z;
+                let player_angle = delta_x.atan2(delta_z);
+
+                // Initialize offset so door angle does not jump upon grabbing
+                door.grab_offset_angle = current_yaw - player_angle;
+                door.target_angle = current_yaw;
             }
         }
     }

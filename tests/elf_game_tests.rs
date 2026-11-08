@@ -6226,6 +6226,137 @@ fn test_pantry_door_auto_close_and_fixed_hinge_alignment() {
 }
 
 #[test]
+fn test_pantry_door_grab_and_swing_open_and_shut() {
+    use rust_tests::elf_game::workshop::pantry::{
+        PantryDoor, PantryDoorHingePost, pantry_door_interaction_system, pantry_door_spring_system,
+    };
+    use rust_tests::elf_game::player::controller::ElfPlayer;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(16));
+    app.insert_resource(time);
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+
+    let hinge_post = app.world_mut().spawn((
+        Transform::from_xyz(-13.0, 1.35, 4.75),
+        RigidBody::Fixed,
+        PantryDoorHingePost,
+    )).id();
+
+    let joint = RevoluteJointBuilder::new(Vec3::Y)
+        .local_anchor1(Vec3::ZERO)
+        .local_anchor2(Vec3::new(0.0, 0.0, -0.73))
+        .limits([0.0, 1.65])
+        .contacts_enabled(false);
+
+    let door_entity = app.world_mut().spawn((
+        Transform::from_xyz(-13.0, 1.35, 5.48),
+        RigidBody::Dynamic,
+        Velocity::zero(),
+        ExternalImpulse::default(),
+        ImpulseJoint::new(hinge_post, joint),
+        PantryDoor::default(),
+    )).id();
+
+    // Spawn player standing near the closed door (dist ~ 1.0m)
+    let player_entity = app.world_mut().spawn((
+        Transform::from_xyz(-12.0, 1.35, 5.48),
+        ElfPlayer,
+    )).id();
+
+    app.add_systems(Update, (pantry_door_interaction_system, pantry_door_spring_system).chain());
+
+    // 1. Simulate pressing E to grab the door
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyE);
+    app.update();
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().clear();
+
+    let door = app.world().get::<PantryDoor>(door_entity).unwrap();
+    assert!(door.is_grabbed, "Player must grab the door when pressing interact near it");
+
+    // 2. Player moves back into the room to swing the door open
+    // Moving in +X from -12.0 to -10.5 pulls the door into the room
+    {
+        let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+        p_tf.translation = Vec3::new(-10.5, 1.35, 4.75);
+    }
+
+    for _ in 0..10 {
+        app.update();
+    }
+
+    let (swung_is_grabbed, swung_angle) = {
+        let door = app.world().get::<PantryDoor>(door_entity).unwrap();
+        (door.is_grabbed, door.current_angle)
+    };
+    assert!(swung_is_grabbed, "Door remains grabbed while player is within release distance");
+    assert!(
+        swung_angle > 0.30,
+        "Door must swing open as player pulls it into the room, got angle {}",
+        swung_angle
+    );
+
+    // 3. Player moves back toward the doorway to swing the door shut
+    {
+        let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+        p_tf.translation = Vec3::new(-12.5, 1.35, 5.80);
+    }
+
+    for _ in 0..10 {
+        app.update();
+    }
+
+    let closing_angle = app.world().get::<PantryDoor>(door_entity).unwrap().current_angle;
+    assert!(
+        closing_angle < swung_angle,
+        "Door must swing toward shut as player moves toward the doorway, was {}, now {}",
+        swung_angle,
+        closing_angle
+    );
+}
+
+#[test]
+fn test_pantry_door_grab_released_when_player_moves_away() {
+    use rust_tests::elf_game::workshop::pantry::{
+        PantryDoor, pantry_door_interaction_system,
+    };
+    use rust_tests::elf_game::player::controller::ElfPlayer;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+
+    let door_entity = app.world_mut().spawn((
+        Transform::from_xyz(-13.0, 1.35, 5.48),
+        ExternalImpulse::default(),
+        PantryDoor {
+            is_grabbed: true,
+            grab_release_distance: 2.8,
+            ..default()
+        },
+    )).id();
+
+    // Spawn player far away from door (dist > 2.8m, e.g. at -9.0, 1.35, 5.48 -> dist = 4.0m)
+    app.world_mut().spawn((
+        Transform::from_xyz(-9.0, 1.35, 5.48),
+        ElfPlayer,
+    ));
+
+    app.add_systems(Update, pantry_door_interaction_system);
+    app.update();
+
+    let door = app.world().get::<PantryDoor>(door_entity).unwrap();
+    assert!(
+        !door.is_grabbed,
+        "Grab must be released when the player moves away beyond release distance"
+    );
+}
+
+#[test]
 fn test_elf_nav_graph_pantry_node_and_purposes() {
     use rust_tests::elf_game::physics_sandbox::{ElfNavGraph, ElfNodePurpose};
 

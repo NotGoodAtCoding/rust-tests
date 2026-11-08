@@ -14,6 +14,7 @@ pub mod diegetic_ui;
 pub mod ui;
 pub mod audio;
 pub mod assets;
+pub mod dialogue;
 
 pub struct ElfGamePlugin;
 
@@ -39,6 +40,7 @@ impl Plugin for ElfGamePlugin {
             workshop::WorkshopPlugin,
             diegetic_ui::DiegeticUiPlugin,
             ui::ElfUiPlugin,
+            dialogue::ElfDialoguePlugin,
             audio::ElfAudioPlugin,
         ));
     }

@@ -23,7 +23,11 @@ Item Idea: Bunny ears. On equip, player viewmodel should show floppy bunny ears 
 
 The Moose Hunger meter is behind the wall, it needs to be brought forward into the room. Also, make it a physics object so it gets knocked off the wall if hit.
 
-If an elf is unable to navigate to its target node in 10 seconds, randomly choose a different node to navigate to, in order to prevent getting stuck.
+If an elf is unable to navigate to its target node in 10 seconds, randomly choose a different node to navigate to, in order to prevent getting stuck. If the elf fails to navigate to a node 3 times, respawn the elf from the present vaccuum and play the vaccuum animation in reverse.
+
+The Pantry Door should be able to be pushed by the player and elves if they run into it. If an elf navigates to the Pantry, it should check if the door is in the way and try to open the door by grabbing the door and pulling it open, then going to the node before the pantry door, then entering the Pantry. 
+
+Idea: Elf Mischief behavior: Philosopher. If an elf gains this Mischief trait, it will go to the Mirror Node and stay there. In order to get the elf back to work, the player needs to navigate through a deep dialogue tree. If left alone, eventually it will start recruiting other elves which will make them navigate to the Philosopher elf and then stay there with a "thinking" pose.
 
 Update the KleptoStash behavior to add leaf nodes with one edge back to the main graph that are in the corners of the main room. The elf should put the stolen item in front of them when stashing it, and remember the last item stashed and not target that item again to prevent getting stuck in a loop. There should also be a longer cooldown between stashing items, like 15 seconds.
 

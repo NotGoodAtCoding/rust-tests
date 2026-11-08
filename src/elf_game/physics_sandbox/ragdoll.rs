@@ -33,6 +33,8 @@ pub enum ElfNpcState {
     FetchingMooseTreat,
     /// Autonomous Moose Feeder holding a treat and moving towards the feeding trough.
     DeliveringMooseTreat,
+    /// Interacting with the player in dialogue: stopped walking and smoothly facing the player.
+    InDialogue,
 }
 
 /// Mischievous behavioral traits assigned to workshop elves.
@@ -322,6 +324,7 @@ pub struct ElfAssistant {
     pub id: u32,
     pub name: String,
     pub state: ElfNpcState,
+    pub previous_state: ElfNpcState,
     pub mischief_trait: ElfMischiefTrait,
     pub assigned_job: Option<ElfJob>,
     pub worn_hat_entity: Option<Entity>,
@@ -370,6 +373,7 @@ impl ElfAssistant {
             id,
             name: name.to_string(),
             state: ElfNpcState::Wandering,
+            previous_state: ElfNpcState::Wandering,
             mischief_trait,
             assigned_job: None,
             worn_hat_entity: None,
@@ -1737,6 +1741,26 @@ pub fn elf_assistant_ai_system(
                 }
             }
 
+            ElfNpcState::InDialogue => {
+                // Stop walking immediately
+                vel.linear.x = 0.0;
+                vel.linear.z = 0.0;
+
+                // Turn to face the player smoothly
+                if let Some((player_tf, _)) = q_player.iter().next() {
+                    let flat_diff = Vec3::new(
+                        player_tf.translation.x - elf_tf.translation.x,
+                        0.0,
+                        player_tf.translation.z - elf_tf.translation.z,
+                    );
+                    if flat_diff.length_squared() > 0.001 {
+                        let target_yaw = flat_diff.x.atan2(flat_diff.z);
+                        let target_rot = Quat::from_rotation_y(target_yaw);
+                        elf_tf.rotation = elf_tf.rotation.slerp(target_rot, (dt * 8.0).min(1.0));
+                    }
+                }
+            }
+
             ElfNpcState::RagdollTumble => {
                 elf.tumble_timer += dt;
 
@@ -1928,6 +1952,39 @@ pub fn elf_ragdoll_limb_animation_system(
                         limb_tf.rotation = Quat::from_rotation_x(panic_sin * 0.6);
                     }
                     _ => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = limb.rest_local_rotation;
+                    }
+                }
+            }
+
+            ElfNpcState::InDialogue => {
+                let breath = (total_time * 2.5).sin();
+                match limb.limb_type {
+                    ElfLimbType::Torso => {
+                        limb_tf.translation = limb.rest_local_translation + Vec3::Y * (breath * 0.008);
+                        limb_tf.rotation = limb.rest_local_rotation;
+                    }
+                    ElfLimbType::Head => {
+                        let nod = (total_time * 3.0).sin() * 0.04;
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::from_rotation_x(nod);
+                    }
+                    ElfLimbType::LeftArm => {
+                        let gesture = (total_time * 2.0).sin() * 0.12;
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::from_rotation_x(-0.3 + gesture) * Quat::from_rotation_z(0.15);
+                    }
+                    ElfLimbType::RightArm => {
+                        let gesture = (total_time * 2.0 + 1.0).sin() * 0.12;
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::from_rotation_x(-0.3 + gesture) * Quat::from_rotation_z(-0.15);
+                    }
+                    ElfLimbType::LeftLeg | ElfLimbType::RightLeg => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::IDENTITY;
+                    }
+                    ElfLimbType::ElfHat | ElfLimbType::HatPompom => {
                         limb_tf.translation = limb.rest_local_translation;
                         limb_tf.rotation = limb.rest_local_rotation;
                     }

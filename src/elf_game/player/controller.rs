@@ -163,6 +163,7 @@ pub fn spawn_elf_player(
 
 pub fn elf_look_system(
     menu_state: Option<Res<MenuState>>,
+    dialogue_state: Option<Res<crate::elf_game::dialogue::ActiveDialogue>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     accumulated_mouse_motion: Res<AccumulatedMouseMotion>,
     settings: Res<ElfInputSettings>,
@@ -170,6 +171,11 @@ pub fn elf_look_system(
     mut q_player: Query<&mut Transform, (With<ElfPlayer>, Without<CameraPivot>)>,
 ) {
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+
+    // Camera movement is locked while in dialogue so mouse pointer can select options
+    if dialogue_state.as_ref().map(|d| d.is_active).unwrap_or(false) {
         return;
     }
 
@@ -198,6 +204,7 @@ pub fn elf_look_system(
 
 pub fn elf_player_controller_system(
     menu_state: Option<Res<MenuState>>,
+    dialogue_state: Option<Res<crate::elf_game::dialogue::ActiveDialogue>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     time: Option<Res<Time>>,
     keys: Option<Res<ButtonInput<KeyCode>>>,
@@ -218,6 +225,16 @@ pub fn elf_player_controller_system(
         for (_, mut movement, mut controller, _) in &mut q_player {
             controller.translation = Some(Vec3::ZERO);
             movement.velocity = Vec3::ZERO;
+        }
+        return;
+    }
+
+    // Player walking movement is locked during dialogue so WASD navigates the dialogue wheel
+    if dialogue_state.as_ref().map(|d| d.is_active).unwrap_or(false) {
+        for (_, mut movement, mut controller, _) in &mut q_player {
+            controller.translation = Some(Vec3::ZERO);
+            movement.velocity.x = 0.0;
+            movement.velocity.z = 0.0;
         }
         return;
     }

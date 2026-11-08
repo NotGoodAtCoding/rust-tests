@@ -7168,3 +7168,430 @@ fn test_mouse_sensitivity_slider_activation_and_hit_filtering() {
         "PointerOut must restore thumb to CYAN_400"
     );
 }
+
+#[test]
+fn test_dialogue_wheel_layout_zero_options() {
+    use rust_tests::elf_game::dialogue::{compute_wheel_sections, DialogueAction, DialogueMenu};
+    use std::f32::consts::FRAC_PI_2;
+
+    let empty_menu = DialogueMenu {
+        title: "Empty Menu".to_string(),
+        prompt: "No options".to_string(),
+        options: vec![],
+    };
+
+    let sections = compute_wheel_sections(&empty_menu);
+    assert_eq!(sections.len(), 1, "Zero options must produce exactly 1 section (bottom half BACK)");
+    let back = &sections[0];
+    assert!(back.is_back);
+    assert_eq!(back.action, DialogueAction::Close);
+    // Centered at bottom: -PI/2
+    assert!((back.angle_center - (-FRAC_PI_2)).abs() < 1e-4, "BACK must be centered at bottom (-PI/2)");
+    // Spanning half circle: half span = PI/2
+    assert!((back.angle_half_span - FRAC_PI_2).abs() < 1e-4, "BACK must span the bottom half (half span PI/2)");
+}
+
+#[test]
+fn test_dialogue_wheel_layout_one_option() {
+    use rust_tests::elf_game::dialogue::{compute_wheel_sections, DialogueAction, DialogueMenu, DialogueOption};
+    use std::f32::consts::FRAC_PI_2;
+
+    let single_opt_menu = DialogueMenu {
+        title: "Single Option Menu".to_string(),
+        prompt: "One option available".to_string(),
+        options: vec![DialogueOption {
+            label: "Only Option".to_string(),
+            description: "A single choice".to_string(),
+            action: DialogueAction::Speak("Selected".to_string()),
+        }],
+    };
+
+    let sections = compute_wheel_sections(&single_opt_menu);
+    assert_eq!(sections.len(), 2, "One option must produce 2 sections (top half option, bottom half BACK)");
+
+    // Top half is the option (+PI/2)
+    let top_opt = &sections[0];
+    assert!(!top_opt.is_back);
+    assert_eq!(top_opt.label, "Only Option");
+    assert!((top_opt.angle_center - FRAC_PI_2).abs() < 1e-4, "Top option must be centered at top (+PI/2)");
+    assert!((top_opt.angle_half_span - FRAC_PI_2).abs() < 1e-4, "Top option must span top half (half span PI/2)");
+
+    // Bottom half is BACK (-PI/2)
+    let bottom_back = &sections[1];
+    assert!(bottom_back.is_back);
+    assert_eq!(bottom_back.action, DialogueAction::Close);
+    assert!((bottom_back.angle_center - (-FRAC_PI_2)).abs() < 1e-4, "BACK must be centered at bottom (-PI/2)");
+    assert!((bottom_back.angle_half_span - FRAC_PI_2).abs() < 1e-4, "BACK must span bottom half (half span PI/2)");
+}
+
+#[test]
+fn test_dialogue_wheel_layout_three_sections_thirds() {
+    use rust_tests::elf_game::dialogue::{compute_wheel_sections, DialogueAction, DialogueMenu, DialogueOption};
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    // 2 options + BACK = 3 sections total (thirds of the wheel)
+    let two_opt_menu = DialogueMenu {
+        title: "Two Options Menu".to_string(),
+        prompt: "Choose between two".to_string(),
+        options: vec![
+            DialogueOption {
+                label: "Option Alpha".to_string(),
+                description: "First".to_string(),
+                action: DialogueAction::Speak("A".to_string()),
+            },
+            DialogueOption {
+                label: "Option Beta".to_string(),
+                description: "Second".to_string(),
+                action: DialogueAction::Speak("B".to_string()),
+            },
+        ],
+    };
+
+    let sections = compute_wheel_sections(&two_opt_menu);
+    assert_eq!(sections.len(), 3, "2 options + BACK must produce 3 sections (thirds of the selection wheel)");
+
+    // Total angle span for each must be 2*PI / 3 (120 deg)
+    let expected_half_span = PI / 3.0;
+    for sec in &sections {
+        assert!((sec.angle_half_span - expected_half_span).abs() < 1e-4, "Each third must have half-span PI/3");
+    }
+
+    // BACK is always centered at the bottom (-FRAC_PI_2 = -90 deg / 270 deg)
+    let back = &sections[2];
+    assert!(back.is_back);
+    assert_eq!(back.action, DialogueAction::Close);
+    assert!((back.angle_center - (-FRAC_PI_2)).abs() < 1e-4, "BACK must be centered at bottom (-PI/2)");
+
+    // Option Alpha at top-right (30 deg = PI/6)
+    let opt_a = &sections[0];
+    assert!(!opt_a.is_back);
+    assert_eq!(opt_a.label, "Option Alpha");
+    assert!((opt_a.angle_center - (PI / 6.0)).abs() < 1e-4, "Option Alpha must be at PI/6 (30 deg)");
+
+    // Option Beta at top-left (150 deg = 5*PI/6)
+    let opt_b = &sections[1];
+    assert!(!opt_b.is_back);
+    assert_eq!(opt_b.label, "Option Beta");
+    assert!((opt_b.angle_center - (5.0 * PI / 6.0)).abs() < 1e-4, "Option Beta must be at 5*PI/6 (150 deg)");
+}
+
+#[test]
+fn test_dialogue_wheel_layout_four_sections_quarters() {
+    use rust_tests::elf_game::dialogue::{compute_wheel_sections, DialogueAction, DialogueMenu, DialogueOption};
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    let three_opt_menu = DialogueMenu {
+        title: "Three Options Menu".to_string(),
+        prompt: "Choose between three".to_string(),
+        options: vec![
+            DialogueOption {
+                label: "Right".to_string(),
+                description: "East".to_string(),
+                action: DialogueAction::Speak("1".to_string()),
+            },
+            DialogueOption {
+                label: "Top".to_string(),
+                description: "North".to_string(),
+                action: DialogueAction::Speak("2".to_string()),
+            },
+            DialogueOption {
+                label: "Left".to_string(),
+                description: "West".to_string(),
+                action: DialogueAction::Speak("3".to_string()),
+            },
+        ],
+    };
+
+    let sections = compute_wheel_sections(&three_opt_menu);
+    assert_eq!(sections.len(), 4, "3 options + BACK must produce 4 sections (quarters of the wheel)");
+
+    let expected_half_span = PI / 4.0;
+    for sec in &sections {
+        assert!((sec.angle_half_span - expected_half_span).abs() < 1e-4, "Each quarter must have half-span PI/4");
+    }
+
+    // BACK is centered at bottom (-FRAC_PI_2)
+    let back = &sections[3];
+    assert!(back.is_back);
+    assert!((back.angle_center - (-FRAC_PI_2)).abs() < 1e-4, "BACK must be centered at bottom (-PI/2)");
+
+    // Option 0 (Right: 0 rad)
+    assert!((sections[0].angle_center - 0.0).abs() < 1e-4, "Section 0 must be centered at 0 rad (East)");
+    // Option 1 (Top: PI/2 rad)
+    assert!((sections[1].angle_center - FRAC_PI_2).abs() < 1e-4, "Section 1 must be centered at PI/2 rad (North)");
+    // Option 2 (Left: PI rad)
+    assert!((sections[2].angle_center - PI).abs() < 1e-4, "Section 2 must be centered at PI rad (West)");
+}
+
+#[test]
+fn test_dialogue_mouse_angle_selection() {
+    use rust_tests::elf_game::dialogue::{compute_wheel_sections, find_section_for_angle, DialogueAction, DialogueMenu, DialogueOption};
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    let menu = DialogueMenu {
+        title: "Test".to_string(),
+        prompt: "Test".to_string(),
+        options: vec![
+            DialogueOption {
+                label: "Option 1".to_string(),
+                description: "".to_string(),
+                action: DialogueAction::Speak("1".to_string()),
+            },
+            DialogueOption {
+                label: "Option 2".to_string(),
+                description: "".to_string(),
+                action: DialogueAction::Speak("2".to_string()),
+            },
+        ],
+    };
+
+    let sections = compute_wheel_sections(&menu);
+    assert_eq!(sections.len(), 3);
+
+    // Aiming straight down: -PI/2 -> selects BACK (index 2)
+    let down_sec = find_section_for_angle(&sections, -FRAC_PI_2);
+    assert_eq!(down_sec, Some(2), "Aiming straight down must select BACK");
+
+    // Aiming top-right: PI/6 (30 deg) -> selects Option 1 (index 0)
+    let tr_sec = find_section_for_angle(&sections, PI / 6.0);
+    assert_eq!(tr_sec, Some(0), "Aiming top-right must select Option 1");
+
+    // Aiming top-left: 5*PI/6 (150 deg) -> selects Option 2 (index 1)
+    let tl_sec = find_section_for_angle(&sections, 5.0 * PI / 6.0);
+    assert_eq!(tl_sec, Some(1), "Aiming top-left must select Option 2");
+}
+
+#[test]
+fn test_dialogue_keyboard_wasd_navigation() {
+    use rust_tests::elf_game::dialogue::{compute_wheel_sections, find_section_for_wasd, DialogueAction, DialogueMenu, DialogueOption};
+
+    let menu = DialogueMenu {
+        title: "Test".to_string(),
+        prompt: "Test".to_string(),
+        options: vec![
+            DialogueOption {
+                label: "Right".to_string(),
+                description: "".to_string(),
+                action: DialogueAction::Speak("1".to_string()),
+            },
+            DialogueOption {
+                label: "Top".to_string(),
+                description: "".to_string(),
+                action: DialogueAction::Speak("2".to_string()),
+            },
+            DialogueOption {
+                label: "Left".to_string(),
+                description: "".to_string(),
+                action: DialogueAction::Speak("3".to_string()),
+            },
+        ],
+    };
+
+    let sections = compute_wheel_sections(&menu);
+    assert_eq!(sections.len(), 4);
+
+    // Pressing S: (0.0, -1.0) -> must select BACK (index 3 at bottom)
+    let s_sec = find_section_for_wasd(&sections, Vec2::new(0.0, -1.0));
+    assert_eq!(s_sec, Some(3), "S key must always select BACK at bottom");
+
+    // Pressing W: (0.0, 1.0) -> must select Top option (index 1)
+    let w_sec = find_section_for_wasd(&sections, Vec2::new(0.0, 1.0));
+    assert_eq!(w_sec, Some(1), "W key must select Top option");
+
+    // Pressing A: (-1.0, 0.0) -> must select Left option (index 2)
+    let a_sec = find_section_for_wasd(&sections, Vec2::new(-1.0, 0.0));
+    assert_eq!(a_sec, Some(2), "A key must select Left option");
+
+    // Pressing D: (1.0, 0.0) -> must select Right option (index 0)
+    let d_sec = find_section_for_wasd(&sections, Vec2::new(1.0, 0.0));
+    assert_eq!(d_sec, Some(0), "D key must select Right option");
+}
+
+#[test]
+fn test_dialogue_submenu_navigation_and_back_resume_elf() {
+    use rust_tests::elf_game::{
+        dialogue::{compute_wheel_sections, ActiveDialogue, DialogueAction, DialogueMenu, DialogueOption},
+        physics_sandbox::{ElfAssistant, ElfJob, ElfNpcState},
+    };
+
+    let mut active = ActiveDialogue::default();
+    let mut elf = ElfAssistant::new(1, "Sparky", vec![Vec3::ZERO]);
+    elf.state = ElfNpcState::Wandering;
+
+    let sub_menu = DialogueMenu {
+        title: "Submenu".to_string(),
+        prompt: "Sub prompt".to_string(),
+        options: vec![DialogueOption {
+            label: "Sub Option".to_string(),
+            description: "".to_string(),
+            action: DialogueAction::AssignJob(ElfJob::MooseFeeder),
+        }],
+    };
+
+    let top_menu = DialogueMenu {
+        title: "Top Menu".to_string(),
+        prompt: "Top prompt".to_string(),
+        options: vec![DialogueOption {
+            label: "Open Sub".to_string(),
+            description: "".to_string(),
+            action: DialogueAction::Submenu(sub_menu.clone()),
+        }],
+    };
+
+    let dummy_elf_entity = Entity::from_raw_u32(100).unwrap();
+    active.open_custom_menu(dummy_elf_entity, "Sparky", top_menu.clone());
+    elf.previous_state = elf.state;
+    elf.state = ElfNpcState::InDialogue;
+
+    assert!(active.is_active);
+    assert_eq!(elf.state, ElfNpcState::InDialogue);
+    assert_eq!(active.menu_stack.len(), 0);
+
+    // 1. Enter Submenu
+    if let Some(current) = active.current_menu.take() {
+        active.menu_stack.push(current);
+    }
+    active.sections_cache = compute_wheel_sections(&sub_menu);
+    active.current_menu = Some(sub_menu);
+    assert_eq!(active.menu_stack.len(), 1, "Submenu must push parent menu to stack");
+    assert_eq!(active.current_menu.as_ref().unwrap().title, "Submenu");
+
+    // 2. Select BACK in Submenu -> pops back to top menu
+    let parent = active.menu_stack.pop().expect("Must have parent in stack");
+    active.sections_cache = compute_wheel_sections(&parent);
+    active.current_menu = Some(parent);
+    assert_eq!(active.menu_stack.len(), 0);
+    assert_eq!(active.current_menu.as_ref().unwrap().title, "Top Menu");
+    assert!(active.is_active, "Selecting BACK in submenu must keep dialogue active");
+
+    // 3. Select BACK at top level menu -> closes dialogue and resumes elf moving
+    let parent_opt = active.menu_stack.pop();
+    assert!(parent_opt.is_none());
+    active.is_active = false;
+    active.current_menu = None;
+
+    // Elf resumes moving
+    if elf.state == ElfNpcState::InDialogue {
+        elf.state = elf.previous_state;
+    }
+    assert_eq!(elf.state, ElfNpcState::Wandering, "Pressing BACK at top level must resume elf wandering");
+}
+
+#[test]
+fn test_dialogue_camera_and_player_movement_locked() {
+    use rust_tests::elf_game::{
+        dialogue::ActiveDialogue,
+        player::{
+            controller::{elf_look_system, elf_player_controller_system, CameraPivot, ElfInputSettings, ElfPlayer},
+            BhopConfig, ElfMovement,
+        },
+    };
+    use bevy::input::mouse::AccumulatedMouseMotion;
+
+    let mut app = App::new();
+    app.init_resource::<ActiveDialogue>();
+    app.init_resource::<AccumulatedMouseMotion>();
+    app.init_resource::<ElfInputSettings>();
+    app.init_resource::<BhopConfig>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.add_systems(Update, (elf_look_system, elf_player_controller_system));
+
+    let player_e = app.world_mut().spawn((
+        ElfPlayer,
+        Transform::from_xyz(0.0, 1.0, 0.0),
+        ElfMovement::default(),
+        bevy_rapier3d::prelude::KinematicCharacterController::default(),
+    )).id();
+
+    let pivot_e = app.world_mut().spawn((
+        CameraPivot { pitch: 0.0 },
+        Transform::IDENTITY,
+    )).id();
+
+    // 1. When dialogue is INACTIVE: camera rotates with mouse motion
+    {
+        let mut mouse_motion = app.world_mut().resource_mut::<AccumulatedMouseMotion>();
+        mouse_motion.delta = Vec2::new(100.0, 50.0);
+    }
+    app.update();
+
+    let player_rot_unlocked = app.world().get::<Transform>(player_e).unwrap().rotation;
+    let pivot_unlocked = app.world().get::<CameraPivot>(pivot_e).unwrap().pitch;
+    assert_ne!(player_rot_unlocked, Quat::IDENTITY, "Unlocked camera must rotate player yaw");
+    assert_ne!(pivot_unlocked, 0.0, "Unlocked camera must rotate pitch");
+
+    // 2. When dialogue is ACTIVE: camera moves are completely locked
+    app.world_mut().resource_mut::<ActiveDialogue>().is_active = true;
+    let saved_yaw = app.world().get::<Transform>(player_e).unwrap().rotation;
+    let saved_pitch = app.world().get::<CameraPivot>(pivot_e).unwrap().pitch;
+
+    {
+        let mut mouse_motion = app.world_mut().resource_mut::<AccumulatedMouseMotion>();
+        mouse_motion.delta = Vec2::new(500.0, -300.0);
+    }
+    app.update();
+
+    let locked_yaw = app.world().get::<Transform>(player_e).unwrap().rotation;
+    let locked_pitch = app.world().get::<CameraPivot>(pivot_e).unwrap().pitch;
+    assert_eq!(locked_yaw, saved_yaw, "Camera yaw must be completely locked while in dialogue");
+    assert_eq!(locked_pitch, saved_pitch, "Camera pitch must be completely locked while in dialogue");
+}
+
+#[test]
+fn test_elf_in_dialogue_stops_and_faces_player_smoothly() {
+    use rust_tests::elf_game::{
+        physics_sandbox::{elf_assistant_ai_system, ElfAssistant, ElfNavGraph, ElfNpcState},
+        player::{controller::ElfPlayer, ElfMovement},
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.init_resource::<ElfNavGraph>();
+    app.add_systems(Update, elf_assistant_ai_system);
+
+    // Player standing North at (0.0, 0.45, -5.0)
+    app.world_mut().spawn((
+        ElfPlayer,
+        Transform::from_xyz(0.0, 0.45, -5.0),
+        ElfMovement::default(),
+    ));
+
+    // Elf initially standing at (0.0, 0.45, 0.0) facing East (Quat from Y 90 deg)
+    let elf_e = app.world_mut().spawn((
+        Transform::from_xyz(0.0, 0.45, 0.0).with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),
+        Velocity {
+            linear: Vec3::new(2.0, 0.0, 1.0),
+            angular: Vec3::ZERO,
+        },
+        ExternalImpulse::default(),
+        LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
+        ElfAssistant {
+            state: ElfNpcState::InDialogue,
+            ..ElfAssistant::new(1, "TestElf", vec![Vec3::ZERO])
+        },
+    )).id();
+
+    // Advance simulation frames with 100ms delta each
+    for _ in 0..10 {
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(100));
+        app.update();
+    }
+
+    let vel = app.world().get::<Velocity>(elf_e).unwrap();
+    let tf = app.world().get::<Transform>(elf_e).unwrap();
+
+    // 1. Must stop walking
+    assert_eq!(vel.linear.x, 0.0, "Elf in dialogue must have zero linear X velocity");
+    assert_eq!(vel.linear.z, 0.0, "Elf in dialogue must have zero linear Z velocity");
+
+    // 2. Must face towards player (North: flat_diff = (0, 0, -5), angle atan2 = PI or -PI)
+    // The elf initial facing was East (PI/2 = 1.57), facing North is ~PI.
+    // Transform.rotation must have slerped smoothly towards North.
+    let yaw = tf.rotation.to_euler(EulerRot::YXZ).0;
+    assert!(
+        yaw.abs() > 2.0,
+        "Elf must smoothly rotate towards player (expected yaw ~3.14 / -3.14, got {})",
+        yaw
+    );
+}

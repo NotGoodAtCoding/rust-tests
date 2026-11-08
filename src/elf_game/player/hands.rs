@@ -145,6 +145,7 @@ pub fn dual_hand_interaction_system(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
+    dialogue_state: Option<Res<crate::elf_game::dialogue::ActiveDialogue>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     mut q_player: Query<(&Transform, &mut ElfHands, Option<&ElfMovement>), Without<Grabbable>>,
     q_camera: Query<&GlobalTransform, With<crate::elf_game::player::controller::FirstPersonCamera>>,
@@ -157,6 +158,11 @@ pub fn dual_hand_interaction_system(
     mut commands: Commands,
 ) {
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+
+    // Suppress hands interaction during elf dialogue so Q, E, and Mouse1 select options
+    if dialogue_state.as_ref().map(|d| d.is_active).unwrap_or(false) {
         return;
     }
 

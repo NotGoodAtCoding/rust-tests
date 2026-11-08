@@ -19,6 +19,10 @@ In this 3D first-person / third-person simulation game built with **Bevy 0.20** 
    * While Santa's quota provides an overarching direction, how tasks are accomplished is left entirely to the player's discretion.
    * Multiple viable pathways: carefully follow textbook wrapping procedures, construct Rube Goldberg assembly lines using conveyor belts and physics ramps, or risk dangerous back-room overclocks.
    * The player decides when to bribe, distract, or barricade against Mr. Moose, or even deliberately trigger chaos events to bypass obstacles.
+4. **Visual Style (Minimal & Impressionist)**:
+   * Models and environment assets should be **minimal and impressionist**. They should not have extraneous detail.
+   * Visuals are defined by bold geometric silhouettes, distinctive primary masses, and clean readable palettes rather than fine-grained surface noise or micro-textures.
+   * Extraneous detail clutter impairs diegetic legibility during high-speed bunnyhopping and slapstick physics chaos; simplified impressionist forms maximize clarity, maintain peak physics simulation rates, and evoke a charming, chunky toy-workshop holiday feel.
 
 ---
 
@@ -186,6 +190,47 @@ In this 3D first-person / third-person simulation game built with **Bevy 0.20** 
     * `1/30 sec` ($\approx 33.3\,\text{ms}$, medium)
     * `1/10 sec` ($\approx 100\,\text{ms}$, forgiving / debug)
 
+### 2.7 Autonomous NPC Elf Assistants: Navigation Graph, Mischief Traits & Job Hats
+* **Topological Navigation Graph & Clearance Paths (`ElfNavGraph`)**:
+  * 15-node topological pathfinding graph (`ElfNavGraph`) that routes elves smoothly through workshop aisles while strictly providing geometric clearance around obstacles:
+    * Central Workbench ($X \in [-2.0, 2.0], Z \in [-4.9, -3.1]$)
+    * Main Conveyor Belt ($X \in [-8.5, 9.5], Z = 3.0$)
+    * Recessed Despawner & Vacuum Platform
+  * **Shortest Path Planning & Free Movement**:
+    * Breadth-first search / Dijkstra shortest path calculation (`find_path(start, goal) -> Option<Vec<usize>>`).
+    * When arriving at a node, elves can move freely within that node's designated radius (`radius: 0.8--1.2m`) before selecting a subsequent destination node.
+  * **Diegetic Debug Visualization**:
+    * Visible via Bevy `Gizmos` showing node center spheres, floor free-movement radius circles, and active edge connecting lines when wireframes/debug mode is enabled.
+* **Impressionist Grounded Visuals & Translation**:
+  * Capsule physics collider: `Collider::capsule_y(0.25, 0.20)` with base at local $Y = -0.45\,\text{m}$.
+  * Child articulated limb rest translations shifted down by $0.48\,\text{m}$ (Legs: $Y = -0.32\,\text{m}$, Torso: $Y = -0.10\,\text{m}$, Belt: $Y = -0.20\,\text{m}$, Head: $Y = 0.20\,\text{m}$, Hat: $Y = 0.32\,\text{m}$).
+  * Boot soles align directly with collider bottom ($-0.45\,\text{m}$), ensuring elves walk flush with the floor planks at $Y = 0.0\,\text{m}$ when standing at $Y = 0.45\,\text{m}$.
+* **Mischievous Behavioral Traits (`ElfMischiefTrait`)**:
+  * Elves spawn with distinct personality traits:
+    * **Lazy (`ElfMischiefTrait::Lazy`, e.g. "Elf Sparky")**:
+      * Periodically enters `ElfNpcState::Slacking` with slouching posture, drooping head, and limp arms.
+      * Refuses to perform work or follow patrol routes.
+      * Remains stubborn and motionless until knocked down into `ElfNpcState::RagdollTumble` by a dynamic physics object impact (thrown presents, sliding tools) or high-speed player BHOP tackle.
+      * Upon recovering balance, gets back to work with a refreshed slacking cooldown.
+    * **Klepto (`ElfMischiefTrait::Klepto`, e.g. "Elf Tinsel")**:
+      * Scours the workshop for unwrapped or wrapped presents.
+      * Snatches available presents (`carried_present`), transitions into `ElfNpcState::StashingPresent`, and navigates along the graph to the secluded Stash Node (Node 13 at $(-10.5, 0.45, 10.5)$) to hide them.
+    * **Pyro (`ElfMischiefTrait::Pyro`, e.g. "Elf Jingles")**:
+      * Tagged for future fiery expansion (will seek heat/spark sources to ignite flammable workshop items; currently passive/pathfinding).
+* **Hat Closet & Job Assignment (`ElfHatCloset`, `ElfJobHat`, `ElfJob`)**:
+  * **Diegetic Hat Closet**:
+    * Impressionist pine/cedar wardrobe located on the back wall ($X = -4.5, Y = 1.3, Z = 12.3$) with a countertop hat shelf and sign plaque.
+    * Interacting with the closet (<kbd>E</kbd>/<kbd>Q</kbd>/<kbd>F</kbd>/<kbd>Left Click</kbd>) dispenses three dynamic job hats simultaneously:
+      1. `Moose Feeder` Hat (hunter brown cap with accent band)
+      2. `Present Wrapper` Hat (festive red cone with gold ribbon ring)
+      3. `Workshop Maintenance` Hat (industrial blue cap with sheet metal visor)
+  * **Dynamic Interaction & Equipping**:
+    * Hats are dynamic `Grabbable` physics objects that the player can pick up in either hand.
+    * Approaching an elf while holding a hat and pressing interact assigns that hat to the elf:
+      * Removes hat from player's grasp.
+      * Disables hat dynamic physics and parents it to the elf root at head position ($Y = 0.32\,\text{m}$).
+      * Updates `elf.assigned_job = Some(job)`.
+
 ---
 
 ## 4. Architecture & Modular Structure
@@ -282,12 +327,12 @@ To keep the project continuously moving forward without exceeding your 5-hour qu
 
 ## 8. Iterative Roadmap
 
-| Milestone | Scope | Deliverables |
-|---|---|---|
-| **M1: Core Game Loop & Framework** | Architecture & Present State Machine | App scaffolding, Present wrapping state machine, headless unit tests. |
-| **M2: Advanced Movement & BHOP** | Air straining, Bunny-hopping & Debug Menu | Realistic air momentum, jump timing window (1/60, 1/30, 1/10s), 1.41x speed scaling, headless physics unit tests. |
-| **M3: Mr. Moose & Window Breach** | Moose Hunger & Physics Rampage | Hunger timer, feeding chute, unshaded toy moose model, window glass shatter event. |
-| **M4: Chaotic Physics & Soft-Body Sandbox** | Soft bodies, ragdolls & extreme forces | Spring-mass squishy presents, bouncy toys, ragdoll elves, chaotic impulse machines. |
-| **M5: In-World Diegetic Displays & Player Agency** | In-world monitors, signs & player choices | In-world CRT monitors, warning signs, physical scales, alternate wrapping pipelines. |
-| **M6: Progression & The Forbidden Workshop** | Multi-tier workshop expansion | Door unlocks, quota tracker, forbidden overpowered volatile tools, NPC elves. |
-| **M7: Visual Polish & Custom Assets** | Audio, AI textures & procedural models | AI/procedural festive textures, particles (wrapping paper confetti, glass shards), sound effects. |
+| Milestone | Scope | Deliverables | Status |
+|---|---|---|:---:|
+| **M1: Core Game Loop & Framework** | Architecture & Present State Machine | App scaffolding, Present wrapping state machine, headless unit tests. | **DONE** |
+| **M2: Advanced Movement & BHOP** | Air straining, Bunny-hopping & Debug Menu | Realistic air momentum, jump timing window (1/60, 1/30, 1/10s), 1.41x speed scaling, headless physics unit tests. | **DONE** |
+| **M3: Mr. Moose & Window Breach** | Moose Hunger & Physics Rampage | Hunger timer, feeding chute, unshaded toy moose model, window glass shatter event. | **DONE** |
+| **M4: Chaotic Physics & Soft-Body Sandbox** | Soft bodies, ragdolls & extreme forces | Spring-mass squishy presents, bouncy toys, ragdoll elves, chaotic impulse machines. | **DONE** |
+| **M5: In-World Diegetic Displays & Player Agency** | In-world monitors, signs & player choices | In-world CRT monitors, warning signs, physical scales, alternate wrapping pipelines. | **DONE** |
+| **M6: Progression & The Forbidden Workshop** | Multi-tier workshop expansion | Door unlocks, quota tracker, forbidden overpowered volatile tools (Instant Plasma Wrapper, Ribbon Cannon, Cursed Candy-Cane Overclocker), Storage Wing turntable, NPC elves. | **DONE** |
+| **M7: Visual Polish & Custom Assets** | Audio, AI textures & procedural models | AI/procedural festive textures, particles (wrapping paper confetti, glass shards), sound effects. | Planned |

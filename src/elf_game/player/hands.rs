@@ -1,12 +1,20 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use crate::elf_game::{
+    assets::{palette::*, WorkshopMaterials},
     player::{ElfHands, controller::{LeftHandVisual, RightHandVisual}},
+    physics_sandbox::{SoftBodyLattice, SoftBodyDeformableMesh},
     wrapping::{Present, WrappingSpecification, WrappingTool, UseToolOnPresentMessage},
 };
 
+pub const GROUP_PLAYER: Group = Group::GROUP_1;
+pub const GROUP_HELD_ITEM: Group = Group::GROUP_2;
+
 #[derive(Component)]
 pub struct Grabbable;
+
+#[derive(Component)]
+pub struct HeldByPlayer;
 
 #[derive(Component)]
 pub struct ToolItem {
@@ -17,28 +25,35 @@ pub fn spawn_workshop_tools_and_materials(
     mut commands: Commands,
     meshes: Option<ResMut<Assets<Mesh>>>,
     materials: Option<ResMut<Assets<StandardMaterial>>>,
+    workshop_mats: Option<Res<WorkshopMaterials>>,
 ) {
     let (Some(mut meshes), Some(mut materials)) = (meshes, materials) else {
         return;
     };
-    let metal_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.8, 0.8, 0.85),
-        metallic: 0.9,
-        perceptual_roughness: 0.2,
-        ..default()
+    let metal_mat = workshop_mats.as_ref().map(|wm| wm.sheet_metal.clone()).unwrap_or_else(|| {
+        materials.add(StandardMaterial {
+            base_color: SHEET_METAL,
+            metallic: 0.9,
+            perceptual_roughness: 0.2,
+            ..default()
+        })
     });
 
-    let paper_roll_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.9, 0.2, 0.2), // Red wrapping paper
-        perceptual_roughness: 0.5,
-        ..default()
+    let paper_roll_mat = workshop_mats.as_ref().map(|wm| wm.festive_red.clone()).unwrap_or_else(|| {
+        materials.add(StandardMaterial {
+            base_color: FESTIVE_RED,
+            perceptual_roughness: 0.5,
+            ..default()
+        })
     });
 
-    let bow_box_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.95, 0.8, 0.1), // Gold ribbon box
-        metallic: 0.5,
-        perceptual_roughness: 0.3,
-        ..default()
+    let bow_box_mat = workshop_mats.as_ref().map(|wm| wm.gold_ribbon.clone()).unwrap_or_else(|| {
+        materials.add(StandardMaterial {
+            base_color: GOLD_RIBBON,
+            metallic: 0.5,
+            perceptual_roughness: 0.3,
+            ..default()
+        })
     });
 
     // 1. Scissors on Workbench Table (X = -1.2, Y = 0.9, Z = -4.0)
@@ -48,6 +63,7 @@ pub fn spawn_workshop_tools_and_materials(
         Transform::from_xyz(-1.2, 0.9, -4.0),
         Collider::cuboid(0.15, 0.05, 0.3),
         RigidBody::Dynamic,
+        Velocity::default(),
         Grabbable,
         ToolItem { tool: WrappingTool::Scissors },
         Name::new("WorkbenchScissors"),
@@ -60,6 +76,7 @@ pub fn spawn_workshop_tools_and_materials(
         Transform::from_xyz(-0.5, 0.95, -4.0),
         Collider::cuboid(0.2, 0.12, 0.15),
         RigidBody::Dynamic,
+        Velocity::default(),
         Grabbable,
         ToolItem { tool: WrappingTool::TapeDispenser },
         Name::new("WorkbenchTapeDispenser"),
@@ -72,6 +89,7 @@ pub fn spawn_workshop_tools_and_materials(
         Transform::from_xyz(0.5, 0.95, -4.0).with_rotation(Quat::from_rotation_z(1.5708)),
         Collider::cylinder(0.6, 0.12),
         RigidBody::Dynamic,
+        Velocity::default(),
         Grabbable,
         ToolItem { tool: WrappingTool::WrappingPaperRoll },
         Name::new("WrappingPaperRoll"),
@@ -84,29 +102,42 @@ pub fn spawn_workshop_tools_and_materials(
         Transform::from_xyz(1.2, 0.95, -4.0),
         Collider::cuboid(0.17, 0.12, 0.17),
         RigidBody::Dynamic,
+        Velocity::default(),
         Grabbable,
         ToolItem { tool: WrappingTool::DecorativeBowBox },
         Name::new("DecorativeBowBox"),
     ));
 
     // 5. Initial Unwrapped Toy on Center Table (Wooden Train)
-    let toy_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.2, 0.5, 0.8), // Blue painted toy
-        perceptual_roughness: 0.4,
-        ..default()
+    let toy_mat = workshop_mats.as_ref().map(|wm| wm.toy_blue.clone()).unwrap_or_else(|| {
+        materials.add(StandardMaterial {
+            base_color: UNWRAPPED_TOY_BLUE,
+            perceptual_roughness: 0.4,
+            ..default()
+        })
     });
 
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.6, 0.4, 0.8))),
+    let raw_mesh = Mesh::from(Cuboid::new(0.6, 0.4, 0.8));
+    let deformable = SoftBodyDeformableMesh::from_mesh(&raw_mesh, Vec3::new(0.3, 0.2, 0.4));
+    let mesh_handle = meshes.add(raw_mesh);
+
+    let mut entity_cmds = commands.spawn((
+        Mesh3d(mesh_handle),
         MeshMaterial3d(toy_mat),
         Transform::from_xyz(0.0, 1.0, -3.8),
         Collider::cuboid(0.3, 0.2, 0.4),
         RigidBody::Dynamic,
+        Velocity::default(),
+        ExternalImpulse::default(),
+        SoftBodyLattice::new_cube(Vec3::new(0.3, 0.2, 0.4), 60.0, 6.0),
         Grabbable,
         Present::default(),
         WrappingSpecification::default(),
         Name::new("WorkbenchToyPresent"),
     ));
+    if let Some(def) = deformable {
+        entity_cmds.insert(def);
+    }
 }
 
 /// Handles Left Hand (Q) and Right Hand (E) toggle grabbing, setting down, and Mouse 1 throwing
@@ -114,6 +145,7 @@ pub fn dual_hand_interaction_system(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     mut q_player: Query<(&Transform, &mut ElfHands)>,
     q_camera: Query<&GlobalTransform, With<crate::elf_game::player::controller::FirstPersonCamera>>,
     q_left_visual: Query<&GlobalTransform, With<LeftHandVisual>>,
@@ -124,10 +156,8 @@ pub fn dual_hand_interaction_system(
     mut tool_messages: MessageWriter<UseToolOnPresentMessage>,
     mut commands: Commands,
 ) {
-    if let Some(ref menu) = menu_state {
-        if menu.is_open {
-            return;
-        }
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
     }
 
     let Ok((_player_tf, mut hands)) = q_player.single_mut() else {
@@ -152,6 +182,9 @@ pub fn dual_hand_interaction_system(
         };
 
         if let Some(thrown_e) = thrown_entity_opt {
+            commands.entity(thrown_e).remove::<(HeldByPlayer, Sensor)>();
+            commands.entity(thrown_e).insert(CollisionGroups::new(Group::ALL, Group::ALL));
+
             let camera_fwd = q_camera.single().map(|gt| gt.forward().into()).unwrap_or(Vec3::NEG_Z);
             let throw_dir = (camera_fwd + Vec3::Y * 0.15).normalize();
             let throw_speed = 10.0;
@@ -175,6 +208,8 @@ pub fn dual_hand_interaction_system(
         if let Some(held_e) = hands.left_grabbed {
             // Setting down: release gently with zero velocity at hand location
             hands.left_grabbed = None;
+            commands.entity(held_e).remove::<(HeldByPlayer, Sensor)>();
+            commands.entity(held_e).insert(CollisionGroups::new(Group::ALL, Group::ALL));
             if let Ok(mut vel) = q_velocities.get_mut(held_e) {
                 vel.linear = Vec3::ZERO;
                 vel.angular = Vec3::ZERO;
@@ -193,6 +228,11 @@ pub fn dual_hand_interaction_system(
             }
             if let Some((e, _)) = closest {
                 hands.left_grabbed = Some(e);
+                commands.entity(e).insert((
+                    HeldByPlayer,
+                    Sensor,
+                    CollisionGroups::new(GROUP_HELD_ITEM, !GROUP_PLAYER),
+                ));
                 if let Ok(mut vel) = q_velocities.get_mut(e) {
                     vel.linear = Vec3::ZERO;
                     vel.angular = Vec3::ZERO;
@@ -206,6 +246,8 @@ pub fn dual_hand_interaction_system(
         if let Some(held_e) = hands.right_grabbed {
             // Setting down: release gently with zero velocity at hand location
             hands.right_grabbed = None;
+            commands.entity(held_e).remove::<(HeldByPlayer, Sensor)>();
+            commands.entity(held_e).insert(CollisionGroups::new(Group::ALL, Group::ALL));
             if let Ok(mut vel) = q_velocities.get_mut(held_e) {
                 vel.linear = Vec3::ZERO;
                 vel.angular = Vec3::ZERO;
@@ -224,6 +266,11 @@ pub fn dual_hand_interaction_system(
             }
             if let Some((e, _)) = closest {
                 hands.right_grabbed = Some(e);
+                commands.entity(e).insert((
+                    HeldByPlayer,
+                    Sensor,
+                    CollisionGroups::new(GROUP_HELD_ITEM, !GROUP_PLAYER),
+                ));
                 if let Ok(mut vel) = q_velocities.get_mut(e) {
                     vel.linear = Vec3::ZERO;
                     vel.angular = Vec3::ZERO;
@@ -232,12 +279,21 @@ pub fn dual_hand_interaction_system(
         }
     }
 
-    // 4. Hold grabbed items in position with kinematic follow
+    // 4. Hold grabbed items in position with kinematic follow, pushed out forward in front of hands
+    let camera_fwd = q_camera.single().map(|gt| gt.forward().into()).unwrap_or(Vec3::NEG_Z);
+    let camera_rot = q_camera.single().map(|gt| gt.to_scale_rotation_translation().1).unwrap_or(Quat::IDENTITY);
+
+    let hold_forward_offset = 0.45;
+    let left_hold_pos = left_hand_pos + camera_fwd * hold_forward_offset;
+    let right_hold_pos = right_hand_pos + camera_fwd * hold_forward_offset;
+
     if let Some(left_e) = hands.left_grabbed {
         let left_tool = if let Ok((_, mut tf, tool_opt)) = q_grabbables.get_mut(left_e) {
-            tf.translation = left_hand_pos;
+            tf.translation = left_hold_pos;
+            tf.rotation = camera_rot;
             tool_opt.map(|t| t.tool)
         } else {
+            hands.left_grabbed = None;
             None
         };
         if let Ok(mut vel) = q_velocities.get_mut(left_e) {
@@ -248,7 +304,7 @@ pub fn dual_hand_interaction_system(
         if let Some(tool) = left_tool {
             for present_e in &q_presents {
                 if let Ok((_, p_tf, _)) = q_grabbables.get(present_e) {
-                    if p_tf.translation.distance(left_hand_pos) < 0.8 {
+                    if p_tf.translation.distance(left_hold_pos) < 1.0 {
                         tool_messages.write(UseToolOnPresentMessage {
                             tool,
                             present_entity: present_e,
@@ -261,9 +317,11 @@ pub fn dual_hand_interaction_system(
 
     if let Some(right_e) = hands.right_grabbed {
         let right_tool = if let Ok((_, mut tf, tool_opt)) = q_grabbables.get_mut(right_e) {
-            tf.translation = right_hand_pos;
+            tf.translation = right_hold_pos;
+            tf.rotation = camera_rot;
             tool_opt.map(|t| t.tool)
         } else {
+            hands.right_grabbed = None;
             None
         };
         if let Ok(mut vel) = q_velocities.get_mut(right_e) {
@@ -274,7 +332,7 @@ pub fn dual_hand_interaction_system(
         if let Some(tool) = right_tool {
             for present_e in &q_presents {
                 if let Ok((_, p_tf, _)) = q_grabbables.get(present_e) {
-                    if p_tf.translation.distance(right_hand_pos) < 0.8 {
+                    if p_tf.translation.distance(right_hold_pos) < 1.0 {
                         tool_messages.write(UseToolOnPresentMessage {
                             tool,
                             present_entity: present_e,

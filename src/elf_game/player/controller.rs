@@ -5,6 +5,7 @@ use bevy::{
 };
 use bevy_rapier3d::prelude::*;
 use crate::elf_game::{
+    assets::{palette::*, WorkshopMaterials},
     player::{BhopConfig, ElfHands, ElfMovement, update_elf_physics},
     ui::MenuState,
     workshop::room::ConveyorBelt,
@@ -70,14 +71,17 @@ pub fn spawn_elf_player(
     mut commands: Commands,
     meshes: Option<ResMut<Assets<Mesh>>>,
     materials: Option<ResMut<Assets<StandardMaterial>>>,
+    workshop_mats: Option<Res<WorkshopMaterials>>,
 ) {
     let (Some(mut meshes), Some(mut materials)) = (meshes, materials) else {
         return;
     };
-    let hand_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.2, 0.7, 0.3), // Elf green glove
-        perceptual_roughness: 0.7,
-        ..default()
+    let hand_material = workshop_mats.as_ref().map(|wm| wm.pine_green.clone()).unwrap_or_else(|| {
+        materials.add(StandardMaterial {
+            base_color: PINE_GREEN,
+            perceptual_roughness: 0.7,
+            ..default()
+        })
     });
 
     // Player entity with Rapier character controller
@@ -90,7 +94,12 @@ pub fn spawn_elf_player(
             Visibility::default(),
             RigidBody::KinematicPositionBased,
             Collider::capsule_y(0.5, 0.3),
+            CollisionGroups::new(crate::elf_game::player::hands::GROUP_PLAYER, !crate::elf_game::player::hands::GROUP_HELD_ITEM),
             KinematicCharacterController {
+                filter_groups: Some(CollisionGroups::new(
+                    crate::elf_game::player::hands::GROUP_PLAYER,
+                    !crate::elf_game::player::hands::GROUP_HELD_ITEM,
+                )),
                 offset: CharacterLength::Absolute(0.01),
                 slide: true,
                 autostep: Some(CharacterAutostep {
@@ -154,15 +163,14 @@ pub fn spawn_elf_player(
 
 pub fn elf_look_system(
     menu_state: Option<Res<MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     accumulated_mouse_motion: Res<AccumulatedMouseMotion>,
     settings: Res<ElfInputSettings>,
     mut q_pivot: Query<(&mut Transform, &mut CameraPivot)>,
     mut q_player: Query<&mut Transform, (With<ElfPlayer>, Without<CameraPivot>)>,
 ) {
-    if let Some(ref menu) = menu_state {
-        if menu.is_open {
-            return;
-        }
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
     }
 
     let delta = accumulated_mouse_motion.delta;
@@ -190,6 +198,7 @@ pub fn elf_look_system(
 
 pub fn elf_player_controller_system(
     menu_state: Option<Res<MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     time: Option<Res<Time>>,
     keys: Option<Res<ButtonInput<KeyCode>>>,
     bhop_config: Res<BhopConfig>,
@@ -204,14 +213,12 @@ pub fn elf_player_controller_system(
         With<ElfPlayer>,
     >,
 ) {
-    if let Some(ref menu) = menu_state {
-        if menu.is_open {
-            for (_, mut movement, mut controller, _) in &mut q_player {
-                controller.translation = Some(Vec3::ZERO);
-                movement.velocity = Vec3::ZERO;
-            }
-            return;
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        for (_, mut movement, mut controller, _) in &mut q_player {
+            controller.translation = Some(Vec3::ZERO);
+            movement.velocity = Vec3::ZERO;
         }
+        return;
     }
 
     let Some(time) = time else {
@@ -286,6 +293,7 @@ pub fn elf_player_controller_system(
 
 pub fn viewmodel_bob(
     menu_state: Option<Res<MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     time: Option<Res<Time>>,
     movement_query: Query<&ElfMovement, With<ElfPlayer>>,
     mut vm_query: Query<&mut Transform, With<ViewModelRoot>>,
@@ -298,11 +306,8 @@ pub fn viewmodel_bob(
         return;
     };
 
-    if let Some(ref menu) = menu_state {
-        if menu.is_open {
-            vm_tf.translation = vm_tf.translation.lerp(Vec3::ZERO, time.delta_secs() * 10.0);
-            return;
-        }
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
     }
 
     let h_vel = Vec2::new(movement.velocity.x, movement.velocity.z).length();
@@ -322,21 +327,19 @@ pub fn floaty_hands_system(
     time: Option<Res<Time>>,
     mouse_motion: Option<Res<AccumulatedMouseMotion>>,
     menu_state: Option<Res<MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     q_player: Query<&ElfMovement, With<ElfPlayer>>,
     mut q_hands: Query<(&mut Transform, &mut FloatyHand)>,
 ) {
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
     let Some(time) = time else {
         return;
     };
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
-    }
-
-    if let Some(ref menu) = menu_state {
-        if menu.is_open {
-            return;
-        }
     }
 
     // Camera turning inertial sway: opposite direction to view rotation

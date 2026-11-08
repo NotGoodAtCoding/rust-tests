@@ -12,6 +12,8 @@ pub mod physics_sandbox;
 pub mod workshop;
 pub mod diegetic_ui;
 pub mod ui;
+pub mod audio;
+pub mod assets;
 
 pub struct ElfGamePlugin;
 
@@ -25,6 +27,7 @@ impl Plugin for ElfGamePlugin {
         }
 
         app.add_plugins((
+            assets::AssetsPlugin,
             core::CorePlugin,
             player::PlayerPlugin,
             wrapping::WrappingPlugin,
@@ -33,19 +36,27 @@ impl Plugin for ElfGamePlugin {
             workshop::WorkshopPlugin,
             diegetic_ui::DiegeticUiPlugin,
             ui::ElfUiPlugin,
+            audio::ElfAudioPlugin,
         ));
     }
 }
 
 pub fn main() {
+    audio::configure_alsa_environment();
+
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Santa's Workshop: Elf Simulator".into(),
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Santa's Workshop: Elf Simulator".into(),
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .build()
+                .disable::<bevy::audio::AudioPlugin>(),
+        )
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(ElfGamePlugin)
         .run();

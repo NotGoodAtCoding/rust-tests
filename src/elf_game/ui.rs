@@ -322,7 +322,7 @@ pub fn spawn_ui(mut commands: Commands) {
         Visibility::Hidden,
         children![
             (
-                Text::new("OPTIONS & DEBUG MENU"),
+                Text::new("PAUSED - OPTIONS & MENU"),
                 TextFont {
                     font_size: FontSize::Px(20.0),
                     ..default()
@@ -330,7 +330,7 @@ pub fn spawn_ui(mut commands: Commands) {
                 TextColor(Color::from(tailwind::AMBER_400)),
             ),
             (
-                Text::new("Press [TAB] or click Resume to return to workshop"),
+                Text::new("Press [ESC], [P], [TAB], or click Resume to return to workshop"),
                 TextFont {
                     font_size: FontSize::Px(12.0),
                     ..default()
@@ -517,7 +517,7 @@ pub fn toggle_menu(
     let Some(keys) = keyboard_input else {
         return;
     };
-    if keys.just_pressed(KeyCode::Tab) {
+    if keys.any_just_pressed([KeyCode::Tab, KeyCode::Escape, KeyCode::KeyP, KeyCode::Pause]) {
         menu_state.is_open = !menu_state.is_open;
 
         for mut cursor in &mut cursor_query {
@@ -529,6 +529,40 @@ pub fn toggle_menu(
                 cursor.grab_mode = CursorGrabMode::Locked;
             }
         }
+    }
+}
+
+/// Synchronizes the menu open / pause state with virtual time, Rapier physics, and GameState.
+pub fn sync_pause_state_system(
+    menu_state: Res<MenuState>,
+    mut next_game_state: Option<ResMut<NextState<crate::elf_game::core::GameState>>>,
+    mut virtual_time: Option<ResMut<Time<Virtual>>>,
+    mut rapier_configs: Query<&mut RapierConfiguration>,
+) {
+    if !menu_state.is_changed() {
+        return;
+    }
+
+    let is_paused = menu_state.is_open;
+
+    if let Some(ref mut next_state) = next_game_state {
+        if is_paused {
+            next_state.set(crate::elf_game::core::GameState::Paused);
+        } else {
+            next_state.set(crate::elf_game::core::GameState::InWorkshop);
+        }
+    }
+
+    if let Some(ref mut time) = virtual_time {
+        if is_paused {
+            time.pause();
+        } else {
+            time.unpause();
+        }
+    }
+
+    for mut config in &mut rapier_configs {
+        config.physics_pipeline_active = !is_paused;
     }
 }
 
@@ -814,6 +848,7 @@ impl Plugin for ElfUiPlugin {
                 Update,
                 (
                     toggle_menu,
+                    sync_pause_state_system,
                     handle_mouse_grab,
                     update_button_visuals,
                     update_menu_button_labels,

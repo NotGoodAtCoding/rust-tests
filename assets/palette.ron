@@ -1,0 +1,71 @@
+// =============================================================================
+// Santa's Workshop: Minimal & Impressionist Color Palette & Material Constants
+// PLAN.md Principle 4: Minimal & Impressionist Visual Style
+// =============================================================================
+
+(
+    palette: (
+        // --- Festive Core ---
+        festive_red: (r: 0.88, g: 0.12, b: 0.14, a: 1.0, hex: "#E01F24", desc: "Primary holiday red for caps, ribbon, and buttons"),
+        pine_green: (r: 0.12, g: 0.42, b: 0.20, a: 1.0, hex: "#1F6B33", desc: "Evergreen foliage and elf tunic green"),
+        snow_white: (r: 0.96, g: 0.96, b: 0.98, a: 1.0, hex: "#F5F5FA", desc: "Fluffy wool pom-poms, scarf trim, and snow"),
+        gold_ribbon: (r: 0.95, g: 0.80, b: 0.15, a: 1.0, hex: "#F2CC26", desc: "Present ribbon bows and star accents"),
+        hazard_yellow: (r: 0.92, g: 0.78, b: 0.12, a: 1.0, hex: "#EBC71F", desc: "Dispatch platform hazard border"),
+        candy_cane_red: (r: 0.85, g: 0.12, b: 0.12, a: 1.0, hex: "#D91F1F", desc: "Candy cane striped stockings"),
+
+        // --- Woods, Bark & Organic ---
+        cabin_log: (r: 0.40, g: 0.25, b: 0.16, a: 1.0, hex: "#664029", desc: "Rustic timber log cabin exterior walls"),
+        timber_beam: (r: 0.26, g: 0.16, b: 0.10, a: 1.0, hex: "#42291A", desc: "Heavy vaulted tie beams and rafters"),
+        weathered_post: (r: 0.22, g: 0.14, b: 0.08, a: 1.0, hex: "#382414", desc: "Exposed vertical corner posts"),
+        rustic_planks: (r: 0.48, g: 0.30, b: 0.18, a: 1.0, hex: "#7A4D2E", desc: "Worn workshop timber floor planks"),
+        workbench_wood: (r: 0.40, g: 0.25, b: 0.15, a: 1.0, hex: "#664026", desc: "Central wrapping workbench tabletop"),
+        birch_wood: (r: 0.92, g: 0.76, b: 0.62, a: 1.0, hex: "#EBC29E", desc: "Turned wood elf head beads"),
+        walnut_leather: (r: 0.24, g: 0.16, b: 0.10, a: 1.0, hex: "#3D291A", desc: "Elf belts, straps, and wooden clog shoes"),
+        pine_sign_board: (r: 0.55, g: 0.36, b: 0.18, a: 1.0, hex: "#8C5C2E", desc: "In-world directional signs and plaques"),
+        tree_bark: (r: 0.30, g: 0.18, b: 0.10, a: 1.0, hex: "#4D2E1A", desc: "Outdoor snow pine tree trunks"),
+
+        // --- Metals & Hardware ---
+        polished_brass: (r: 0.82, g: 0.68, b: 0.24, a: 1.0, hex: "#D1AD3D", desc: "Plaques, clockwork bezels, funnels, and buckles"),
+        cast_iron: (r: 0.18, g: 0.18, b: 0.20, a: 1.0, hex: "#2E2E33", desc: "Hunger dial casing and feeding trough scale"),
+        wrought_iron: (r: 0.12, g: 0.12, b: 0.14, a: 1.0, hex: "#1F1F24", desc: "Suspended candle chandeliers and window hinges"),
+        sheet_metal: (r: 0.68, g: 0.72, b: 0.76, a: 1.0, hex: "#ADB8C2", desc: "Curved spawner/despawner conveyor ducts"),
+        platform_metal: (r: 0.25, g: 0.25, b: 0.30, a: 1.0, hex: "#40404D", desc: "Present sending circular pad"),
+        chute_void: (r: 0.06, g: 0.06, b: 0.08, a: 1.0, hex: "#0F0F14", desc: "Sub-floor recessed despawn darkness"),
+
+        // --- Moose Anatomy ---
+        moose_fur: (r: 0.24, g: 0.16, b: 0.10, a: 1.0, hex: "#3D291A", desc: "Rich woodland brown torso and cranium"),
+        moose_muzzle: (r: 0.36, g: 0.26, b: 0.18, a: 1.0, hex: "#5C422E", desc: "Warm tan Roman snout bridge"),
+        moose_nose: (r: 0.12, g: 0.10, b: 0.09, a: 1.0, hex: "#1F1A17", desc: "Dark prehensile nose pad"),
+        moose_antler: (r: 0.78, g: 0.72, b: 0.60, a: 1.0, hex: "#C7B899", desc: "Ivory palmated antler tines"),
+        moose_hoof: (r: 0.10, g: 0.08, b: 0.07, a: 1.0, hex: "#1A1412", desc: "Stilt leg cloven hooves"),
+        moose_eye: (r: 0.04, g: 0.04, b: 0.05, a: 1.0, hex: "#0A0A0D", desc: "Glossy obsidian eyes"),
+
+        // --- Diegetic UI, Gauges & CRT Displays ---
+        gauge_green: (r: 0.15, g: 0.72, b: 0.25, a: 1.0, hex: "#26B840", desc: "Dial safe 0..20 sector"),
+        gauge_yellow: (r: 0.95, g: 0.82, b: 0.15, a: 1.0, hex: "#F2D126", desc: "Dial caution 20..50 sector"),
+        gauge_orange: (r: 0.95, g: 0.48, b: 0.10, a: 1.0, hex: "#F27A1A", desc: "Dial warning 50..58 sector"),
+        gauge_red: (r: 0.90, g: 0.12, b: 0.14, a: 1.0, hex: "#E61F24", desc: "Dial breach 58..60 sector"),
+        ivory_enamel: (r: 0.96, g: 0.94, b: 0.88, a: 1.0, hex: "#F5F0E0", desc: "Clockwork dial enamel face"),
+        crt_phosphor: (r: 0.20, g: 1.00, b: 0.40, a: 1.0, hex: "#33FF66", desc: "Green monitor text and instruction vector glow"),
+        crt_background: (r: 0.03, g: 0.12, b: 0.05, a: 1.0, hex: "#081F0D", desc: "Convex glass CRT dark phosphorescent backing"),
+
+        // --- Glass, Illumination & Lighting ---
+        window_glass: (r: 0.85, g: 0.92, b: 1.00, a: 0.35, hex: "#D9EBFF59", desc: "Observation window translucent glass"),
+        tractor_beam: (r: 0.35, g: 0.85, b: 1.00, a: 0.18, hex: "#59D9FF2E", desc: "Active vacuum suction tractor beam glow"),
+        vacuum_tube_glass: (r: 0.85, g: 0.92, b: 1.00, a: 0.55, hex: "#D9EBFF8C", desc: "Pneumatic transport tube glass segments"),
+        warning_lantern: (r: 1.00, g: 0.25, b: 0.15, a: 0.80, hex: "#FF4026CC", desc: "Pulsating ruby alert beacon dome"),
+        candle_tallow: (r: 0.94, g: 0.92, b: 0.82, a: 1.0, hex: "#F0EBD1", desc: "Chandelier tallow wax candles"),
+        candle_flame: (r: 1.00, g: 0.82, b: 0.25, a: 1.0, hex: "#FFD140", desc: "Procedural candle flame tips"),
+        candle_glow: (r: 1.00, g: 0.78, b: 0.46, a: 1.0, hex: "#FFC775", desc: "Warm 2200K dynamic point light emission"),
+        candle_smoke: (r: 0.85, g: 0.85, b: 0.88, a: 0.35, hex: "#D9D9E059", desc: "Wisps of fading light candle smoke"),
+        candle_spark: (r: 1.00, g: 0.72, b: 0.15, a: 1.0, hex: "#FFB826", desc: "Ascending golden ember sparks from crackling wicks"),
+        winter_sunlight: (r: 0.92, g: 0.96, b: 1.00, a: 1.0, hex: "#EBF5FF", desc: "Directional sunlight through observation window"),
+
+        // --- Toys & Props ---
+        toy_blue: (r: 0.20, g: 0.50, b: 0.80, a: 1.0, hex: "#3380CC", desc: "Raw un-wrapped toy cube blue"),
+        terracotta_pot: (r: 0.72, g: 0.36, b: 0.20, a: 1.0, hex: "#B85C33", desc: "Windowsill ceramic flowerpot"),
+        cocoa_red: (r: 0.85, g: 0.15, b: 0.15, a: 1.0, hex: "#D92626", desc: "Festive cocoa mug ceramic"),
+        hot_cocoa_liquid: (r: 0.22, g: 0.12, b: 0.08, a: 1.0, hex: "#381F14", desc: "Dark hot chocolate liquid"),
+        moose_snack_oat: (r: 0.85, g: 0.55, b: 0.15, a: 1.0, hex: "#D98C26", desc: "Golden honey oat snack can food"),
+    ),
+)

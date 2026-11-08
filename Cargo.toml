@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-rand = "0.10.0"
+rand = "0.10.3"
 bevy = "0.20.1"
 bevy_rapier3d = "0.37"
+cpal = "0.18.2"
+ab_glyph = "0.2"

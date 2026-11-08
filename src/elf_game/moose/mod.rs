@@ -9,6 +9,8 @@ pub enum MooseHungerStage {
     PeekingThrough,    // 20..50
     AgitatedHuffing,   // 50..60
     WindowSlammed,     // 60 (waiting 3..12s before smash)
+    DeliberatingLateTreat, // Peeking back in after window was shut, deciding accept/reject (1-2s)
+    EatingTreat,       // Reaching down into trough to eat (gentle or fast)
     BreachedRampage,   // Smashed through window and moving on path
 }
 
@@ -21,6 +23,16 @@ pub struct MooseHunger {
     pub breach_delay_remaining: Option<f32>, // 3.0 to 12.0s
     pub huff_sound_timer: f32,
     pub is_breached: bool,
+
+    // Deliberation and eating animation tracking:
+    pub deliberation_timer: f32,
+    pub deliberation_duration: f32,
+    pub eating_timer: f32,
+    pub eating_duration: f32,
+    pub is_eating_fast: bool,
+    pub active_snack_entity: Option<Entity>,
+    pub late_treat_decision_override: Option<bool>, // Some(true) = accept, Some(false) = reject, None = default
+    pub late_treat_rejected: bool,
 }
 
 impl Default for MooseHunger {
@@ -33,6 +45,14 @@ impl Default for MooseHunger {
             breach_delay_remaining: None,
             huff_sound_timer: 0.0,
             is_breached: false,
+            deliberation_timer: 0.0,
+            deliberation_duration: 1.5,
+            eating_timer: 0.0,
+            eating_duration: 2.2,
+            is_eating_fast: false,
+            active_snack_entity: None,
+            late_treat_decision_override: None,
+            late_treat_rejected: false,
         }
     }
 }
@@ -69,14 +89,27 @@ pub struct FeedMooseMessage {
 
 pub fn update_moose_hunger_system(
     time: Option<Res<Time>>,
+    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     mut hunger: ResMut<MooseHunger>,
     mut slam_events: Option<MessageWriter<MooseWindowSlamEvent>>,
     mut breach_messages: Option<MessageWriter<MooseBreachMessage>>,
     mut huff_events: Option<MessageWriter<MooseHuffEvent>>,
 ) {
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+
     let dt = time.map(|t| t.delta_secs()).unwrap_or(0.0);
 
     if hunger.is_breached {
+        return;
+    }
+
+    // Deliberation or active eating pauses hunger accumulation and breach countdown!
+    if hunger.stage == MooseHungerStage::DeliberatingLateTreat
+        || hunger.stage == MooseHungerStage::EatingTreat
+    {
         return;
     }
 
@@ -112,11 +145,16 @@ pub fn update_moose_hunger_system(
         }
     } else {
         // Reached 60! Slam window and start 3-12s breach delay
+        let was_already_slammed = hunger.stage == MooseHungerStage::WindowSlammed;
         hunger.stage = MooseHungerStage::WindowSlammed;
-        // Default deterministic midpoint for delay if random not seeded: 6.0 seconds
-        hunger.breach_delay_remaining = Some(6.0);
-        if let Some(ref mut writer) = slam_events {
-            writer.write(MooseWindowSlamEvent);
+        if hunger.breach_delay_remaining.is_none() {
+            // Default deterministic midpoint for delay if random not seeded: 6.0 seconds
+            hunger.breach_delay_remaining = Some(6.0);
+        }
+        if !was_already_slammed {
+            if let Some(ref mut writer) = slam_events {
+                writer.write(MooseWindowSlamEvent);
+            }
         }
     }
 }
@@ -164,10 +202,13 @@ impl Plugin for MoosePlugin {
             .add_systems(
                 Update,
                 (
+                    toy_model::moose_feeding_trough_system,
                     update_moose_hunger_system,
                     handle_moose_feeding,
                     toy_model::animate_mr_moose_peeking_system,
-                ),
+                    toy_model::moose_eating_and_deliberation_system,
+                    toy_model::moose_scarf_physics_system,
+                ).chain(),
             );
     }
 }

@@ -4,6 +4,10 @@ use crate::elf_game::core::WorkshopQuota;
 
 pub mod room;
 pub mod events;
+pub mod progression;
+
+pub use room::VacuumTractorBeamCone;
+pub use progression::*;
 
 #[derive(Message, Debug, Clone)]
 pub struct UnlockDoorMessage {
@@ -40,14 +44,29 @@ impl Plugin for WorkshopPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<room::ConveyorSpawnerTimer>()
             .add_message::<UnlockDoorMessage>()
+            .add_message::<progression::PlasmaExplosionEvent>()
+            .add_message::<progression::TriggerPlasmaWrapperMessage>()
+            .add_message::<progression::FireRibbonCannonMessage>()
+            .add_message::<progression::ToggleOverclockerMessage>()
             .add_systems(Startup, room::setup_workshop_scene)
             .add_systems(
                 Update,
                 (
-                    check_workshop_progression,
+                    (check_workshop_progression, progression::handle_door_unlock_messages).chain(),
+                    progression::animate_workshop_doors_system,
+                    progression::motorized_turntable_system,
+                    progression::plasma_shrink_wrapper_system,
+                    progression::ribbon_cannon_system,
+                    progression::candy_cane_overclocker_system,
                     room::conveyor_cube_spawner_system,
                     room::conveyor_belt_physics_system,
                     room::conveyor_despawn_chute_system,
+                    room::chandelier_candle_flicker_system,
+                    room::chandelier_physics_interaction_system,
+                    room::candle_particle_emitter_system,
+                    room::candle_particle_system,
+                    room::present_sending_platform_system,
+                    room::tube_travelling_lump_system,
                     events::monitor_present_delivery,
                     events::handle_moose_window_breach,
                     events::moose_rampage_path_and_physics_impulse_system,

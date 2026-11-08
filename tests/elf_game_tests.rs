@@ -8034,7 +8034,7 @@ fn test_gas_leak_flame_explosion() {
 
     let nozzle_pos = Vec3::new(-10.0, 0.12, -12.0);
 
-    // Spawn hose in Neither (loose nozzle)
+    // Spawn hose in Neither (loose nozzle) with 30s accumulated disconnected time
     app.world_mut().spawn(GasHose {
         attached_to: HoseAttachment::Neither,
         wall_inlet_pos: Vec3::new(-10.0, 0.85, -12.85),
@@ -8044,6 +8044,8 @@ fn test_gas_leak_flame_explosion() {
         is_venting_gas: true,
         snap_distance: 0.22,
         nozzle_entity: None,
+        disconnected_timer: 30.0,
+        ..default()
     });
 
     // Spawn Player nearby
@@ -8166,6 +8168,8 @@ fn test_gas_hose_snap_to_connect_mechanics() {
         is_venting_gas: true,
         snap_distance: 0.22,
         nozzle_entity: Some(nozzle_e),
+        disconnected_timer: 0.0,
+        ..default()
     });
 
     // Player holding nozzle in left hand
@@ -8589,4 +8593,111 @@ fn test_taller_stable_door_feeding_bucket_and_gas_hose_visual_indicators() {
     let updated_h = check_q.single(auto_app.world()).unwrap();
     assert_eq!(updated_h.attached_to, HoseAttachment::Oven, "Hose must automatically attach to the Oven anchor player is facing");
     assert!(auto_app.world().get::<HeldByPlayer>(nozzle_e).is_none(), "Player hold must be released upon automatic attachment");
+}
+
+#[test]
+fn test_gas_leak_flame_explosion_scaling_and_reconnect_tick_down() {
+    use rust_tests::elf_game::workshop::stove::{
+        gas_leak_flame_explosion_system, FieryExplosionEvent, FlameSource, GasHose,
+        HoseAttachment, WorkshopGasLine,
+    };
+
+    // 1. Verify GasHose::explosion_scaling unit calculations
+    assert_eq!(GasHose::explosion_scaling(0.0), None);
+    assert_eq!(GasHose::explosion_scaling(4.99), None);
+    assert_eq!(GasHose::explosion_scaling(5.0), None);
+
+    // At 5.01s: explosion starts with minimal impulse and radius
+    let (imp_start, rad_start) = GasHose::explosion_scaling(5.01).unwrap();
+    assert!((imp_start - 5.01).abs() < 0.05);
+    assert!(rad_start > 0.0 && rad_start < 0.01);
+
+    // At 10.0s: factor = 5/25 = 0.20 -> impulse = 10.0, radius = 0.8m
+    let (imp_10, rad_10) = GasHose::explosion_scaling(10.0).unwrap();
+    assert!((imp_10 - 10.0).abs() < 0.01);
+    assert!((rad_10 - 0.80).abs() < 0.01);
+
+    // At 17.5s (midpoint): factor = 12.5/25 = 0.50 -> impulse = 17.5, radius = 2.0m
+    let (imp_17_5, rad_17_5) = GasHose::explosion_scaling(17.5).unwrap();
+    assert!((imp_17_5 - 17.5).abs() < 0.01);
+    assert!((rad_17_5 - 2.0).abs() < 0.01);
+
+    // At 30.0s: factor = 1.0 -> impulse = 30.0, radius = 4.0m
+    let (imp_30, rad_30) = GasHose::explosion_scaling(30.0).unwrap();
+    assert!((imp_30 - 30.0).abs() < 0.01);
+    assert!((rad_30 - 4.0).abs() < 0.01);
+
+    // At 45.0s (30 seconds or more): maxed at 30 seconds
+    let (imp_45, rad_45) = GasHose::explosion_scaling(45.0).unwrap();
+    assert_eq!(imp_45, 30.0, "Impulse must be maxed at 30");
+    assert_eq!(rad_45, 4.0, "Blast radius must be maxed at 4.0 meters");
+
+    // 2. Integration simulation: 0-5 seconds has no explosion even with flame nearby
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_secs_f32(4.0));
+    app.insert_resource(time);
+    app.insert_resource(WorkshopGasLine {
+        pressure_psi: 50.0,
+        ..default()
+    });
+    app.add_message::<FieryExplosionEvent>();
+    app.add_systems(Update, gas_leak_flame_explosion_system);
+
+    let nozzle_pos = Vec3::new(-10.0, 0.1, -12.0);
+    let hose_e = app.world_mut().spawn(GasHose {
+        attached_to: HoseAttachment::Neither,
+        loose_nozzle_pos: nozzle_pos,
+        disconnected_timer: 0.0,
+        ..default()
+    }).id();
+
+    // Flame source within 0.4m of nozzle (< 1.0m threshold)
+    app.world_mut().spawn((
+        FlameSource,
+        GlobalTransform::from_translation(nozzle_pos + Vec3::new(0.2, 0.1, 0.2)),
+    ));
+
+    app.update();
+
+    let events = app.world().resource::<bevy::ecs::message::Messages<FieryExplosionEvent>>();
+    assert!(events.is_empty(), "From 0-5 seconds, no explosion must occur");
+
+    let hose = app.world().get::<GasHose>(hose_e).unwrap();
+    assert!((hose.disconnected_timer - 4.0).abs() < 0.1, "Disconnected timer must tick up to 4.0s");
+
+    // 3. Reconnect hose: timer ticks back down, doesn't reset to 0 immediately
+    {
+        let mut hose_mut = app.world_mut().get_mut::<GasHose>(hose_e).unwrap();
+        hose_mut.attached_to = HoseAttachment::Stove;
+    }
+    app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs_f32(2.5));
+    app.update();
+
+    let hose = app.world().get::<GasHose>(hose_e).unwrap();
+    assert!((hose.disconnected_timer - 1.5).abs() < 0.1, "Reconnecting hose must tick timer down from 4.0 to 1.5s");
+
+    // Tick down past 0 clamps at 0.0
+    app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs_f32(3.0));
+    app.update();
+    let hose = app.world().get::<GasHose>(hose_e).unwrap();
+    assert_eq!(hose.disconnected_timer, 0.0, "Timer must clamp at 0.0 when ticking down");
+
+    // 4. Disconnect hose again and advance to 10 seconds: explosion fires with scaled values
+    {
+        let mut hose_mut = app.world_mut().get_mut::<GasHose>(hose_e).unwrap();
+        hose_mut.attached_to = HoseAttachment::Neither;
+        hose_mut.disconnected_timer = 10.0;
+    }
+    app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs_f32(0.0));
+    app.update();
+
+    let events = app.world().resource::<bevy::ecs::message::Messages<FieryExplosionEvent>>();
+    assert_eq!(events.len(), 1, "FieryExplosionEvent must fire when timer > 5.0 and flame is nearby");
+    let ev = events.iter_current_update_messages().next().unwrap();
+    assert!((ev.blast_radius - 0.8).abs() < 0.05, "Blast radius at 10s should be ~0.8m");
+    assert!((ev.blast_impulse - 10.0).abs() < 0.05, "Blast impulse at 10s should be ~10.0");
+
+    let hose = app.world().get::<GasHose>(hose_e).unwrap();
+    assert_eq!(hose.disconnected_timer, 0.0, "Explosion consumes gas and resets disconnected timer to 0.0");
 }

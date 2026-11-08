@@ -83,6 +83,26 @@ pub struct GasHose {
     pub is_venting_gas: bool,
     pub snap_distance: f32,
     pub nozzle_entity: Option<Entity>,
+    /// Accumulated time in seconds that the hose has been disconnected and venting gas (maxed at 30.0s).
+    pub disconnected_timer: f32,
+}
+
+impl GasHose {
+    /// Computes (blast_impulse, blast_radius) based on accumulated disconnected_timer in seconds.
+    /// - 0 to 5 seconds: returns None (no explosion).
+    /// - 5 to 30 seconds (or more, maxed at 30 seconds):
+    ///   - blast_radius: scales linearly from 0.0 to 4.0 meters.
+    ///   - blast_impulse: scales linearly from 5.0 to 30.0 (maxed at 30, the same as the timer).
+    pub fn explosion_scaling(timer: f32) -> Option<(f32, f32)> {
+        if timer <= 5.0 {
+            return None;
+        }
+        let t_effective = timer.min(30.0);
+        let factor = (t_effective - 5.0) / 25.0;
+        let blast_radius = factor * 4.0;
+        let blast_impulse = 5.0 + factor * 25.0; // identically equal to t_effective
+        Some((blast_impulse, blast_radius))
+    }
 }
 
 impl Default for GasHose {
@@ -96,6 +116,7 @@ impl Default for GasHose {
             is_venting_gas: false,
             snap_distance: 0.85,
             nozzle_entity: None,
+            disconnected_timer: 0.0,
         }
     }
 }
@@ -507,8 +528,9 @@ pub fn spawn_oven_stove_and_propane_scene(
             oven_anchor_pos,
             loose_nozzle_pos: stove_anchor_pos,
             is_venting_gas: false,
-            snap_distance: 0.22,
+            snap_distance: 0.85,
             nozzle_entity: Some(nozzle_e),
+            disconnected_timer: 0.0,
         },
         Transform::from_translation(wall_inlet_pos),
         Visibility::default(),
@@ -1325,27 +1347,60 @@ pub fn propane_tank_refill_and_holder_system(
     }
 }
 
-/// Checks if the gas hose is attached to Neither and gas is flowing. If any FLAME source gets
-/// within 1 meter of the loose venting hose nozzle, triggers a catastrophic fiery explosion!
+/// Checks if the gas hose is attached to Neither and gas is flowing.
+/// Scales the impulse and blast radius with the amount of time that the hose has been disconnected:
+/// - From 0-5 seconds: no explosion.
+/// - 5 seconds to 30 seconds or more (maxed at 30 seconds):
+///   - Blast radius scales linearly from 0 to 4 meters.
+///   - Impulse scales linearly from 5 to 30 (maxed at 30, the same as the timer).
+/// - If the hose is reconnected, ticks the counter back down (does not reset to 0 immediately).
 pub fn gas_leak_flame_explosion_system(
+    time: Option<Res<Time>>,
+    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     mut commands: Commands,
     gas_line: Option<Res<WorkshopGasLine>>,
     mut explosion_events: MessageWriter<FieryExplosionEvent>,
-    q_hose: Query<&GasHose>,
+    mut q_hose: Query<&mut GasHose>,
     q_flames: Query<(&GlobalTransform, Option<&CandleParticle>), With<FlameSource>>,
     mut q_player: Query<(&Transform, &mut ElfMovement), With<ElfPlayer>>,
     mut q_elves: Query<(&Transform, &mut Velocity, &mut ElfAssistant), Without<ElfPlayer>>,
     mut q_dynamics: Query<(&Transform, &mut Velocity), (With<Grabbable>, Without<ElfPlayer>, Without<ElfAssistant>)>,
 ) {
-    let gas_pressure = gas_line.as_ref().map(|g| g.pressure_psi).unwrap_or(0.0);
-    if gas_pressure <= 0.0 {
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
         return;
     }
 
-    for hose in &q_hose {
-        if hose.attached_to != HoseAttachment::Neither {
+    let dt = time.as_ref().map(|t| t.delta_secs()).unwrap_or(0.016);
+    let gas_pressure = gas_line.as_ref().map(|g| g.pressure_psi).unwrap_or(100.0);
+
+    for mut hose in &mut q_hose {
+        // Disconnected timer tracking:
+        if hose.attached_to == HoseAttachment::Neither {
+            if gas_pressure > 0.0 && dt > 0.0 {
+                // Disconnected and venting: tick counter up, maxed at 30 seconds
+                hose.disconnected_timer = (hose.disconnected_timer + dt).min(30.0);
+            } else if dt > 0.0 {
+                // Disconnected but no gas pressure: leaked gas dissipates over time
+                hose.disconnected_timer = (hose.disconnected_timer - dt).max(0.0);
+            }
+        } else {
+            // If the hose is reconnected, tick the counter back down, don't reset to 0 immediately
+            if dt > 0.0 {
+                hose.disconnected_timer = (hose.disconnected_timer - dt).max(0.0);
+            }
+        }
+
+        // Only an actively venting disconnected hose can ignite
+        if hose.attached_to != HoseAttachment::Neither || gas_pressure <= 0.0 {
             continue;
         }
+
+        // 0-5 seconds: no explosion.
+        // 5-30+ seconds: impulse 5 to 30, blast radius 0 to 4 meters.
+        let Some((blast_impulse, blast_radius)) = GasHose::explosion_scaling(hose.disconnected_timer) else {
+            continue;
+        };
 
         let nozzle_pos = hose.loose_nozzle_pos;
 
@@ -1361,9 +1416,6 @@ pub fn gas_leak_flame_explosion_system(
 
         if flame_nearby {
             // BOOM! Fiery gas explosion!
-            let blast_radius = 5.5;
-            let blast_impulse = 32.0;
-
             explosion_events.write(FieryExplosionEvent {
                 origin: nozzle_pos,
                 blast_radius,
@@ -1374,8 +1426,8 @@ pub fn gas_leak_flame_explosion_system(
             commands.spawn((
                 PointLight {
                     color: Color::srgb(1.0, 0.45, 0.08),
-                    intensity: 35000.0,
-                    radius: 8.0,
+                    intensity: (35000.0 * (blast_impulse / 30.0)).max(5000.0),
+                    radius: (blast_radius * 1.5).max(2.0),
                     shadow_maps_enabled: false,
                     ..default()
                 },
@@ -1385,41 +1437,45 @@ pub fn gas_leak_flame_explosion_system(
             ));
 
             // 2. Push player back with blast velocity
-            for (p_tf, mut movement) in &mut q_player {
-                let diff = p_tf.translation - nozzle_pos;
-                let dist = diff.length().max(0.1);
-                if dist < blast_radius {
-                    let dir = diff / dist;
-                    let force = (1.0 - dist / blast_radius) * blast_impulse;
-                    movement.velocity += dir * force + Vec3::Y * 6.0;
+            if blast_radius > 0.0 {
+                for (p_tf, mut movement) in &mut q_player {
+                    let diff = p_tf.translation - nozzle_pos;
+                    let dist = diff.length().max(0.1);
+                    if dist < blast_radius {
+                        let dir = diff / dist;
+                        let force = (1.0 - dist / blast_radius) * blast_impulse;
+                        movement.velocity += dir * force + Vec3::Y * (blast_impulse * 0.2).min(6.0);
+                    }
+                }
+
+                // 3. Knock elves into RagdollTumble
+                for (e_tf, mut vel, mut elf) in &mut q_elves {
+                    let diff = e_tf.translation - nozzle_pos;
+                    let dist = diff.length().max(0.1);
+                    if dist < blast_radius {
+                        let dir = diff / dist;
+                        let force = (1.0 - dist / blast_radius) * blast_impulse;
+                        vel.linear += dir * force + Vec3::Y * (blast_impulse * 0.16).min(5.0);
+                        vel.angular = Vec3::new(8.0, 4.0, -6.0);
+                        elf.state = ElfNpcState::RagdollTumble;
+                        elf.tumble_timer = 0.0;
+                    }
+                }
+
+                // 4. Scatter dynamic physics props
+                for (d_tf, mut vel) in &mut q_dynamics {
+                    let diff = d_tf.translation - nozzle_pos;
+                    let dist = diff.length().max(0.1);
+                    if dist < blast_radius {
+                        let dir = diff / dist;
+                        let force = (1.0 - dist / blast_radius) * (blast_impulse * 1.2);
+                        vel.linear += dir * force + Vec3::Y * 4.0;
+                    }
                 }
             }
 
-            // 3. Knock elves into RagdollTumble
-            for (e_tf, mut vel, mut elf) in &mut q_elves {
-                let diff = e_tf.translation - nozzle_pos;
-                let dist = diff.length().max(0.1);
-                if dist < blast_radius {
-                    let dir = diff / dist;
-                    let force = (1.0 - dist / blast_radius) * blast_impulse;
-                    vel.linear += dir * force + Vec3::Y * 5.0;
-                    vel.angular = Vec3::new(8.0, 4.0, -6.0);
-                    elf.state = ElfNpcState::RagdollTumble;
-                    elf.tumble_timer = 0.0;
-                }
-            }
-
-            // 4. Scatter dynamic physics props
-            for (d_tf, mut vel) in &mut q_dynamics {
-                let diff = d_tf.translation - nozzle_pos;
-                let dist = diff.length().max(0.1);
-                if dist < blast_radius {
-                    let dir = diff / dist;
-                    let force = (1.0 - dist / blast_radius) * (blast_impulse * 1.2);
-                    vel.linear += dir * force + Vec3::Y * 4.0;
-                }
-            }
-
+            // Gas burned off in explosion: reset disconnected_timer so gas must accumulate again
+            hose.disconnected_timer = 0.0;
             break;
         }
     }

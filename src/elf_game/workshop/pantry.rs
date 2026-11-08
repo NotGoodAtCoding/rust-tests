@@ -14,6 +14,18 @@ pub struct PantryWing {
     pub bounds_max: Vec3,
 }
 
+impl PantryWing {
+    pub fn contains_point(&self, point: Vec3) -> bool {
+        point.x >= self.bounds_min.x && point.x <= self.bounds_max.x
+            && point.y >= self.bounds_min.y && point.y <= self.bounds_max.y
+            && point.z >= self.bounds_min.z && point.z <= self.bounds_max.z
+    }
+}
+
+/// Marker component for supplies spawned inside or belonging to the Pantry.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PantrySupply;
+
 /// Marker component for perimeter shelving units in the pantry.
 #[derive(Component, Debug, Clone)]
 pub struct PantryShelvingUnit {
@@ -39,12 +51,7 @@ impl Default for PantryRestockTracker {
     fn default() -> Self {
         Self {
             slots: vec![
-                Vec3::new(-16.0, 0.98, 3.80),
-                Vec3::new(-15.3, 0.98, 3.80),
-                Vec3::new(-14.7, 0.98, 3.80),
-                Vec3::new(-14.0, 0.98, 3.80),
-                Vec3::new(-15.6, 1.73, 3.80),
-                Vec3::new(-14.4, 1.73, 3.80),
+                Vec3::new(-15.0, 0.98, 3.80),
             ],
             restock_cycle_count: 0,
             total_restocked_jars: 0,
@@ -191,6 +198,7 @@ pub fn spawn_moose_treat_jar(
         Grabbable,
         MooseTreatJar::default(),
         MooseSnackJar,
+        PantrySupply,
         Name::new("PantryMooseTreatJar"),
     ));
 
@@ -227,6 +235,7 @@ pub fn spawn_moose_treat_jar(
             MooseSnack {
                 nutrition_value: 60.0,
             },
+            PantrySupply,
             Name::new("PantrySmallMooseSnack"),
         ));
         if let (Some(m), Some(mat)) = (meshes.as_mut(), snack_cookie_mat.clone()) {
@@ -701,15 +710,17 @@ pub fn pantry_door_spring_system(
 }
 
 /// Tracks the door closure cycle (`Closed -> Opened` state transition).
-/// Whenever the player completely closes the door and reopens it, any depleted
-/// shelf slots on the pantry shelves automatically restock with fresh Moose Treat jars.
+/// Whenever the door transitions Closed -> Opened, if the Moose Treat jar was removed from the pantry,
+/// all pantry supplies are reset to the default initialized state (exactly 1 jar at the designated shelf slot).
 pub fn pantry_door_restock_cycle_system(
     mut commands: Commands,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     tracker: Option<ResMut<PantryRestockTracker>>,
+    pantry_wing: Option<Query<&PantryWing>>,
     mut q_door: Query<(&Transform, &mut PantryDoor)>,
     q_jars: Query<&Transform, (Or<(With<MooseTreatJar>, With<MooseSnackJar>)>, Without<PantryDoor>)>,
+    q_pantry_supplies: Query<(Entity, &Transform), (With<PantrySupply>, Without<PantryDoor>)>,
     mut restock_events: Option<MessageWriter<PantryRestockEvent>>,
     mut meshes: Option<ResMut<Assets<Mesh>>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
@@ -735,35 +746,47 @@ pub fn pantry_door_restock_cycle_system(
     } else if door.was_closed && abs_angle >= door.open_threshold {
         // Transition: Closed -> Opened!
         door.was_closed = false;
-        tracker.restock_cycle_count += 1;
 
-        // Check each designated shelf slot
-        let mut restocked_this_cycle = 0;
-        let jar_positions: Vec<Vec3> = q_jars.iter().map(|tf| tf.translation).collect();
+        let pantry_bounds = pantry_wing
+            .and_then(|q| q.iter().next().map(|w| (w.bounds_min, w.bounds_max)))
+            .unwrap_or((Vec3::new(-17.0, 0.0, 3.5), Vec3::new(-13.0, 3.5, 7.5)));
 
-        for slot_pos in tracker.slots.clone() {
-            let is_occupied = jar_positions
-                .iter()
-                .any(|pos| pos.distance(slot_pos) < tracker.slot_radius);
+        let is_in_pantry = |pos: Vec3| {
+            pos.x >= pantry_bounds.0.x && pos.x <= pantry_bounds.1.x
+                && pos.y >= pantry_bounds.0.y && pos.y <= pantry_bounds.1.y
+                && pos.z >= pantry_bounds.0.z && pos.z <= pantry_bounds.1.z
+        };
 
-            if !is_occupied {
-                // Depleted slot: spawn fresh Moose Treat jar!
-                spawn_moose_treat_jar(
-                    &mut commands,
-                    &mut meshes,
-                    &mut materials,
-                    workshop_mats.as_deref(),
-                    slot_pos,
-                );
-                restocked_this_cycle += 1;
-                tracker.total_restocked_jars += 1;
+        // Check if there is already a Moose Treat jar inside the pantry
+        let jar_in_pantry = q_jars.iter().any(|tf| is_in_pantry(tf.translation));
+
+        // The Pantry should only have one jar of Moose Treats at a time.
+        // Once removed, it should not refresh until the door is closed and then reopened,
+        // which should reset all of the Pantry supplies to the default initialized state.
+        if !jar_in_pantry {
+            tracker.restock_cycle_count += 1;
+
+            // Clear any lingering pantry supplies remaining inside the pantry
+            for (supply_entity, supply_tf) in &q_pantry_supplies {
+                if is_in_pantry(supply_tf.translation) {
+                    commands.entity(supply_entity).despawn();
+                }
             }
-        }
 
-        if restocked_this_cycle > 0 {
+            // Reset pantry supplies to default initialized state: spawn 1 jar at primary slot
+            let slot_pos = tracker.slots.first().copied().unwrap_or(Vec3::new(-15.0, 0.98, 3.80));
+            spawn_moose_treat_jar(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                workshop_mats.as_deref(),
+                slot_pos,
+            );
+            tracker.total_restocked_jars += 1;
+
             if let Some(ref mut writer) = restock_events {
                 writer.write(PantryRestockEvent {
-                    slots_restocked: restocked_this_cycle,
+                    slots_restocked: 1,
                     total_restocked_all_time: tracker.total_restocked_jars,
                     cycle_index: tracker.restock_cycle_count,
                 });

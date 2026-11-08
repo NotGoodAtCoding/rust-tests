@@ -6212,29 +6212,13 @@ fn test_pantry_infinite_restock_cycle_closed_to_opened() {
     spawn_pantry_storage_wing(&mut commands, &mut None, &mut None, None);
     app.update();
 
-    // 1. Verify initial jars spawned at all 6 slots
+    // 1. Verify initially exactly ONE jar of Moose Treats in the pantry
     let initial_jars_count = app.world_mut().query::<&MooseTreatJar>().iter(app.world()).count();
-    assert_eq!(initial_jars_count, 6, "Must initially spawn 6 MooseTreatJar entities at shelf slots");
+    assert_eq!(initial_jars_count, 1, "The Pantry should only have one jar of Moose Treats at a time");
 
     let tracker = app.world().resource::<PantryRestockTracker>().clone();
-    assert_eq!(tracker.slots.len(), 6);
+    assert_eq!(tracker.slots.len(), 1);
     assert_eq!(tracker.restock_cycle_count, 0);
-
-    // 2. Player takes 2 jars from the shelves (despawn 2 jars to simulate carrying them away)
-    let jars_to_remove: Vec<Entity> = app
-        .world_mut()
-        .query_filtered::<Entity, With<MooseTreatJar>>()
-        .iter(app.world())
-        .take(2)
-        .collect();
-
-    for j in jars_to_remove {
-        app.world_mut().despawn(j);
-    }
-    app.update();
-
-    let remaining_jars = app.world_mut().query::<&MooseTreatJar>().iter(app.world()).count();
-    assert_eq!(remaining_jars, 4, "Should have 4 jars remaining after 2 were taken");
 
     app.add_systems(Update, pantry_door_restock_cycle_system);
 
@@ -6243,7 +6227,40 @@ fn test_pantry_infinite_restock_cycle_closed_to_opened() {
         panic!("PantryDoor must be spawned");
     };
 
-    // 3. Step with door still OPEN (yaw = 0.6 rad into workshop room) -> no restock yet!
+    // 2. Door closes and reopens while the jar is still in the pantry:
+    // Should NOT refresh / spawn another jar because the jar was not removed!
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+        tf.rotation = Quat::from_rotation_y(0.0);
+    }
+    app.update();
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+        tf.rotation = Quat::from_rotation_y(0.55);
+    }
+    app.update();
+
+    assert_eq!(
+        app.world_mut().query::<&MooseTreatJar>().iter(app.world()).count(),
+        1,
+        "Must still only have 1 jar if not removed from pantry"
+    );
+
+    // 3. Player removes the jar from the pantry (move jar outside pantry to main room)
+    let jar_entity = app
+        .world_mut()
+        .query_filtered::<Entity, With<MooseTreatJar>>()
+        .iter(app.world())
+        .next()
+        .unwrap();
+
+    {
+        let mut jar_tf = app.world_mut().get_mut::<Transform>(jar_entity).unwrap();
+        jar_tf.translation = Vec3::new(0.0, 0.5, 0.0); // Outside pantry bounds
+    }
+    app.update();
+
+    // 4. Step with door still OPEN (yaw = 0.6 rad) -> no refresh until closed and reopened!
     {
         let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
         tf.rotation = Quat::from_rotation_y(0.6);
@@ -6252,13 +6269,7 @@ fn test_pantry_infinite_restock_cycle_closed_to_opened() {
     }
     app.update();
 
-    assert_eq!(
-        app.world_mut().query::<&MooseTreatJar>().iter(app.world()).count(),
-        4,
-        "No restock while door remains open without a close cycle"
-    );
-
-    // 4. Player completely closes the door (yaw = 0.0 rad, <= closed_threshold)
+    // 5. Close the door
     {
         let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
         tf.rotation = Quat::from_rotation_y(0.0);
@@ -6269,25 +6280,28 @@ fn test_pantry_infinite_restock_cycle_closed_to_opened() {
     let door = app.world().get::<PantryDoor>(door_entity).unwrap();
     assert!(door.was_closed, "Door must record was_closed = true when closed");
 
-    // 5. Player reopens the door into the room (yaw = 0.55 rad, >= open_threshold) -> Closed -> Opened transition!
+    // 6. Player reopens the door -> Closed -> Opened transition!
+    // Since jar was removed, pantry supplies reset to default initialized state (1 jar in pantry).
     {
         let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
         tf.rotation = Quat::from_rotation_y(0.55);
     }
     app.update();
 
-    // 6. Verify depleted slots restocked: all 6 slots now occupied again!
-    let jars_after_restock = app.world_mut().query::<&MooseTreatJar>().iter(app.world()).count();
+    // 7. Verify new jar was spawned at shelf slot
+    let jars_after_restock = app.world_mut().query::<(&MooseTreatJar, &Transform)>().iter(app.world())
+        .filter(|(_, tf)| tf.translation.x < -13.0) // inside pantry
+        .count();
     assert_eq!(
-        jars_after_restock, 6,
-        "Exactly 6 jars must exist after restock (the 2 missing slots were replenished)"
+        jars_after_restock, 1,
+        "Exactly 1 jar must exist inside pantry after reset"
     );
 
     let updated_tracker = app.world().resource::<PantryRestockTracker>();
     assert_eq!(updated_tracker.restock_cycle_count, 1);
-    assert_eq!(updated_tracker.total_restocked_jars, 2);
+    assert_eq!(updated_tracker.total_restocked_jars, 1);
 
-    // 7. Verify PantryRestockEvent was emitted
+    // 8. Verify PantryRestockEvent was emitted
     let events = app.world().resource::<Messages<PantryRestockEvent>>();
     assert_eq!(events.len(), 1, "Must emit PantryRestockEvent on restock");
 }

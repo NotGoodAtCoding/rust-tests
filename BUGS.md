@@ -3,8 +3,6 @@ Bug descriptions will be added to the ACTIVE section. Fix the bug and move them 
 
 ACTIVE:
 
-in dialogue.rs: Make the text for the Elf Prompts larger and in a rectangular box at the bottom of the screen rather than in the middle. Leave the center of the wheel clear and transparent so the player can see the elf they are talking to. If the player inputs a keyboard navigation option, set the mouse position to the center so that it doesn't reset the chosen option on every frame. 
-
 The Pantry section is not fully closed off, there are big holes in the walls that allow the player to enter without opening the door.
 
 The Pantry should only have one jar of Moose Treats at a time. Once removed, it should not refresh until the door is closed and then reopened, which should reset all of the Pantry supplies to the default initialized state.
@@ -34,6 +32,8 @@ Idea: Elf Mischief behavior: Philosopher. If an elf gains this Mischief trait, i
 Update the KleptoStash behavior to add leaf nodes with one edge back to the main graph that are in the corners of the main room. The elf should put the stolen item in front of them when stashing it, and remember the last item stashed and not target that item again to prevent getting stuck in a loop. There should also be a longer cooldown between stashing items, like 15 seconds.
 
 DONE:
+
+in dialogue.rs: Make the text for the Elf Prompts larger and in a rectangular box at the bottom of the screen rather than in the middle. Leave the center of the wheel clear and transparent so the player can see the elf they are talking to. If the player inputs a keyboard navigation option, set the mouse position to the center so that it doesn't reset the chosen option on every frame.
 
 Moose: Remove the previous double shutter window. Update the Moose default and resting location to the new area, and update all the coordinates for its pathing while rampaging. Make sure the food trough location and active area is updated to the new location in the center of the wall. Make the top of the stable door open as the Moose pokes his head in, and slam shut when he goes back.
 

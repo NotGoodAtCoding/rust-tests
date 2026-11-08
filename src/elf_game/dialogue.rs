@@ -358,6 +358,9 @@ pub struct DialogueWheelPromptText;
 pub struct DialogueWheelStatusText;
 
 #[derive(Component)]
+pub struct DialoguePromptBox;
+
+#[derive(Component)]
 pub struct DialogueSliceButton {
     pub section_index: usize,
     pub is_back: bool,
@@ -411,11 +414,11 @@ pub fn spawn_dialogue_ui(mut commands: Commands) {
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.02, 0.03, 0.05, 0.45)),
+            BackgroundColor(Color::srgba(0.02, 0.03, 0.05, 0.40)),
             Visibility::Hidden,
         ))
         .with_children(|root| {
-            // Radial Wheel Frame (480x480)
+            // Radial Wheel Frame (480x480) - Clear and transparent center to see the elf
             root.spawn((
                 DialogueWheelFrame,
                 Node {
@@ -428,72 +431,94 @@ pub fn spawn_dialogue_ui(mut commands: Commands) {
                     border_radius: BorderRadius::all(Val::Px(240.0)),
                     ..default()
                 },
-                BorderColor::all(Color::srgba(0.85, 0.70, 0.30, 0.45)),
-                BackgroundColor(Color::srgba(0.04, 0.06, 0.10, 0.75)),
+                BorderColor::all(Color::srgba(0.85, 0.70, 0.30, 0.35)),
+                BackgroundColor(Color::NONE),
             ))
             .with_children(|frame| {
-                // Center Hub (160x160 circular info panel)
-                frame
-                    .spawn((
-                        DialogueWheelHub,
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(160.0),
-                            top: Val::Px(160.0),
-                            width: Val::Px(160.0),
-                            height: Val::Px(160.0),
-                            border_radius: BorderRadius::all(Val::Px(80.0)),
-                            border: UiRect::all(Val::Px(2.0)),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            flex_direction: FlexDirection::Column,
-                            padding: UiRect::all(Val::Px(10.0)),
-                            row_gap: Val::Px(4.0),
-                            ..default()
-                        },
-                        BorderColor::all(Color::from(tailwind::EMERALD_400)),
-                        BackgroundColor(Color::srgba(0.08, 0.18, 0.12, 0.95)),
-                    ))
-                    .with_children(|hub| {
-                        hub.spawn((
-                            DialogueWheelTitleText,
-                            Text::new("Elf Assistant"),
-                            TextFont {
-                                font_size: FontSize::Px(13.0),
-                                ..default()
-                            },
-                            TextColor(Color::from(tailwind::AMBER_300)),
-                        ));
+                // Center Hub (160x160 circular area - fully transparent and clear so player can see elf)
+                frame.spawn((
+                    DialogueWheelHub,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(160.0),
+                        top: Val::Px(160.0),
+                        width: Val::Px(160.0),
+                        height: Val::Px(160.0),
+                        border_radius: BorderRadius::all(Val::Px(80.0)),
+                        border: UiRect::all(Val::Px(0.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BorderColor::all(Color::NONE),
+                    BackgroundColor(Color::NONE),
+                ));
+            });
 
-                        hub.spawn((
-                            DialogueWheelPromptText,
-                            Text::new("Choose an option:"),
-                            TextFont {
-                                font_size: FontSize::Px(11.0),
-                                ..default()
-                            },
-                            TextColor(Color::WHITE),
-                        ));
+            // Rectangular prompt box at the bottom of the screen with larger prominent text
+            root.spawn((
+                DialoguePromptBox,
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(24.0),
+                    left: Val::Percent(50.0),
+                    margin: UiRect {
+                        left: Val::Px(-340.0),
+                        ..default()
+                    },
+                    width: Val::Px(680.0),
+                    min_height: Val::Px(104.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::axes(Val::Px(28.0), Val::Px(12.0)),
+                    row_gap: Val::Px(4.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
+                    ..default()
+                },
+                BorderColor::all(Color::srgba(0.85, 0.70, 0.30, 0.75)),
+                BackgroundColor(Color::srgba(0.06, 0.08, 0.12, 0.92)),
+            ))
+            .with_children(|prompt_box| {
+                prompt_box.spawn((
+                    DialogueWheelTitleText,
+                    Text::new("Elf Assistant"),
+                    TextFont {
+                        font_size: FontSize::Px(16.0),
+                        ..default()
+                    },
+                    TextColor(Color::from(tailwind::AMBER_300)),
+                ));
 
-                        hub.spawn((
-                            DialogueWheelStatusText,
-                            Text::new(""),
-                            TextFont {
-                                font_size: FontSize::Px(10.0),
-                                ..default()
-                            },
-                            TextColor(Color::from(tailwind::EMERALD_300)),
-                        ));
+                prompt_box.spawn((
+                    DialogueWheelPromptText,
+                    Text::new("Choose an option:"),
+                    TextFont {
+                        font_size: FontSize::Px(22.0),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
 
-                        hub.spawn((
-                            Text::new("WASD / Mouse Aim • Q/E/M1"),
-                            TextFont {
-                                font_size: FontSize::Px(9.0),
-                                ..default()
-                            },
-                            TextColor(Color::from(tailwind::SLATE_400)),
-                        ));
-                    });
+                prompt_box.spawn((
+                    DialogueWheelStatusText,
+                    Text::new(""),
+                    TextFont {
+                        font_size: FontSize::Px(15.0),
+                        ..default()
+                    },
+                    TextColor(Color::from(tailwind::EMERALD_300)),
+                ));
+
+                prompt_box.spawn((
+                    Text::new("WASD / Mouse Aim • Q/E/M1 to Select • ESC/Backspace to Go Back"),
+                    TextFont {
+                        font_size: FontSize::Px(11.0),
+                        ..default()
+                    },
+                    TextColor(Color::from(tailwind::SLATE_400)),
+                ));
             });
         });
 }
@@ -564,7 +589,7 @@ pub fn elf_dialogue_interaction_system(
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
-    q_window: Query<&Window, With<PrimaryWindow>>,
+    mut q_window: Query<&mut Window, With<PrimaryWindow>>,
     q_camera: Query<&GlobalTransform, With<FirstPersonCamera>>,
     mut q_elves: Query<(Entity, &Transform, &mut ElfAssistant)>,
     mut cursor_query: Query<&mut CursorOptions, With<Window>>,
@@ -628,6 +653,10 @@ pub fn elf_dialogue_interaction_system(
                     cursor.visible = true;
                     cursor.grab_mode = CursorGrabMode::None;
                 }
+                if let Ok(mut window) = q_window.single_mut() {
+                    let center = Vec2::new(window.width() / 2.0, window.height() / 2.0);
+                    window.set_cursor_position(Some(center));
+                }
             }
         }
         return;
@@ -652,22 +681,26 @@ pub fn elf_dialogue_interaction_system(
 
     // B. Keyboard WASD navigation
     let mut wasd_dir = Vec2::ZERO;
-    if keys.just_pressed(KeyCode::KeyW) || keys.pressed(KeyCode::KeyW) {
+    if keys.just_pressed(KeyCode::KeyW) || keys.pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp) || keys.pressed(KeyCode::ArrowUp) {
         wasd_dir.y += 1.0;
     }
-    if keys.just_pressed(KeyCode::KeyS) || keys.pressed(KeyCode::KeyS) {
+    if keys.just_pressed(KeyCode::KeyS) || keys.pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown) || keys.pressed(KeyCode::ArrowDown) {
         wasd_dir.y -= 1.0;
     }
-    if keys.just_pressed(KeyCode::KeyA) || keys.pressed(KeyCode::KeyA) {
+    if keys.just_pressed(KeyCode::KeyA) || keys.pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft) || keys.pressed(KeyCode::ArrowLeft) {
         wasd_dir.x -= 1.0;
     }
-    if keys.just_pressed(KeyCode::KeyD) || keys.pressed(KeyCode::KeyD) {
+    if keys.just_pressed(KeyCode::KeyD) || keys.pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) || keys.pressed(KeyCode::ArrowRight) {
         wasd_dir.x += 1.0;
     }
 
     if wasd_dir.length_squared() > 0.1 {
         if let Some(sec_idx) = find_section_for_wasd(&active_dialogue.sections_cache, wasd_dir) {
             active_dialogue.selected_index = sec_idx;
+            if let Ok(mut window) = q_window.single_mut() {
+                let center = Vec2::new(window.width() / 2.0, window.height() / 2.0);
+                window.set_cursor_position(Some(center));
+            }
         }
     }
 

@@ -7597,6 +7597,117 @@ fn test_elf_in_dialogue_stops_and_faces_player_smoothly() {
 }
 
 #[test]
+fn test_dialogue_ui_bottom_prompt_box_and_keyboard_cursor_reset() {
+    use rust_tests::elf_game::dialogue::{
+        spawn_dialogue_ui, elf_dialogue_interaction_system, compute_wheel_sections,
+        ActiveDialogue, DialogueAction, DialogueMenu, DialogueOption, DialoguePromptBox,
+        DialogueWheelFrame, DialogueWheelHub, DialogueWheelPromptText,
+    };
+    use bevy::window::{Window, PrimaryWindow, CursorOptions};
+    use bevy::input::ButtonInput;
+
+    // 1. Verify UI hierarchy: bottom rectangular prompt box and transparent wheel center
+    let mut app = App::new();
+    app.add_systems(Startup, spawn_dialogue_ui);
+    app.update();
+
+    // Check DialoguePromptBox
+    let mut prompt_box_q = app.world_mut().query::<(&DialoguePromptBox, &Node, &BackgroundColor)>();
+    let (_, box_node, box_bg) = prompt_box_q.iter(app.world()).next().expect("DialoguePromptBox must exist");
+    assert_eq!(box_node.position_type, PositionType::Absolute);
+    assert_eq!(box_node.bottom, Val::Px(24.0), "Prompt box must be anchored at the bottom of the screen");
+    assert!(box_bg.0.alpha() > 0.8, "Prompt box should have dark solid/semi-solid background");
+
+    // Check DialogueWheelPromptText is larger (font_size >= 20.0)
+    let mut prompt_text_q = app.world_mut().query::<(&DialogueWheelPromptText, &TextFont)>();
+    let (_, text_font) = prompt_text_q.iter(app.world()).next().expect("DialogueWheelPromptText must exist");
+    match text_font.font_size {
+        FontSize::Px(px) => assert!(px >= 20.0, "Elf prompt text must be larger (>= 20px, got {})", px),
+        _ => panic!("Expected FontSize::Px"),
+    }
+
+    // Check DialogueWheelFrame and DialogueWheelHub are transparent
+    let mut frame_q = app.world_mut().query::<(&DialogueWheelFrame, &BackgroundColor)>();
+    let (_, frame_bg) = frame_q.iter(app.world()).next().expect("DialogueWheelFrame must exist");
+    assert_eq!(frame_bg.0, Color::NONE, "DialogueWheelFrame background must be clear/transparent (Color::NONE)");
+
+    let mut hub_q = app.world_mut().query::<(&DialogueWheelHub, &BackgroundColor, Option<&Children>)>();
+    let (_, hub_bg, hub_children) = hub_q.iter(app.world()).next().expect("DialogueWheelHub must exist");
+    assert_eq!(hub_bg.0, Color::NONE, "DialogueWheelHub center must be clear/transparent (Color::NONE)");
+    assert!(hub_children.is_none(), "Center hub must have no children blocking view of the elf");
+
+    // 2. Verify keyboard navigation sets mouse position to center
+    let mut sim_app = App::new();
+    sim_app.init_resource::<ButtonInput<KeyCode>>();
+    sim_app.init_resource::<ButtonInput<MouseButton>>();
+    let mut active = ActiveDialogue::default();
+    active.is_active = true;
+
+    let menu = DialogueMenu {
+        title: "Test".to_string(),
+        prompt: "Choose".to_string(),
+        options: vec![
+            DialogueOption {
+                label: "Right".to_string(),
+                description: "".to_string(),
+                action: DialogueAction::Speak("1".to_string()),
+            },
+            DialogueOption {
+                label: "Top".to_string(),
+                description: "".to_string(),
+                action: DialogueAction::Speak("2".to_string()),
+            },
+            DialogueOption {
+                label: "Left".to_string(),
+                description: "".to_string(),
+                action: DialogueAction::Speak("3".to_string()),
+            },
+        ],
+    };
+    active.sections_cache = compute_wheel_sections(&menu);
+    active.current_menu = Some(menu);
+    active.selected_index = 0; // Starts at 0 (Right)
+    sim_app.insert_resource(active);
+
+    // Spawn window with non-centered mouse position
+    let mut test_window = Window::default();
+    test_window.set_cursor_position(Some(Vec2::new(100.0, 100.0)));
+    let win_w = test_window.width();
+    let win_h = test_window.height();
+    let center = Vec2::new(win_w / 2.0, win_h / 2.0);
+
+    let win_entity = sim_app.world_mut().spawn((
+        test_window,
+        PrimaryWindow,
+        CursorOptions::default(),
+    )).id();
+
+    sim_app.add_systems(Update, elf_dialogue_interaction_system);
+
+    // Press 'W' key -> selects Top option (index 1) and resets cursor to center
+    sim_app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyW);
+    sim_app.update();
+
+    let updated_active = sim_app.world().resource::<ActiveDialogue>();
+    assert_eq!(updated_active.selected_index, 1, "W key must select Top option (index 1)");
+
+    let updated_win = sim_app.world().get::<Window>(win_entity).unwrap();
+    let cur_pos = updated_win.cursor_position().expect("Cursor position must be set");
+    assert!((cur_pos.x - center.x).abs() < 1e-4, "Cursor X must be set to center");
+    assert!((cur_pos.y - center.y).abs() < 1e-4, "Cursor Y must be set to center");
+
+    // Release 'W' key: on subsequent frame with mouse at center, selected_index must NOT be reset!
+    sim_app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::KeyW);
+    sim_app.update();
+
+    let after_release_active = sim_app.world().resource::<ActiveDialogue>();
+    assert_eq!(
+        after_release_active.selected_index, 1,
+        "Subsequent frame with mouse at center must retain keyboard selection (index 1)"
+    );
+}
+
+#[test]
 fn test_oven_stove_models_and_gas_hose_attachment() {
     use rust_tests::elf_game::workshop::stove::{
         spawn_oven_stove_and_propane_scene, GasFurnaceStove, WorkshopOven, GasHose,

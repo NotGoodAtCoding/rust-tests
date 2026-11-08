@@ -2866,8 +2866,8 @@ fn test_physical_mechanical_hunger_dial_and_scale() {
     assert!(dial.is_some(), "MooseHungerDial must be spawned outside window");
     let (_, dial_tf) = dial.unwrap();
     assert!(
-        (dial_tf.translation.x - (-5.35)).abs() < 0.2 && (dial_tf.translation.z - (-13.25)).abs() < 0.2,
-        "Dial must be mounted beside window exterior jamb, got {:?}",
+        (dial_tf.translation.x - (-8.35)).abs() < 0.2 && (dial_tf.translation.z - (-12.65)).abs() < 0.2,
+        "Dial must be mounted beside stove by the window, got {:?}",
         dial_tf.translation
     );
 
@@ -7594,4 +7594,395 @@ fn test_elf_in_dialogue_stops_and_faces_player_smoothly() {
         "Elf must smoothly rotate towards player (expected yaw ~3.14 / -3.14, got {})",
         yaw
     );
+}
+
+#[test]
+fn test_oven_stove_models_and_gas_hose_attachment() {
+    use rust_tests::elf_game::workshop::stove::{
+        spawn_oven_stove_and_propane_scene, GasFurnaceStove, WorkshopOven, GasHose,
+        HoseAttachment, PropaneTankHolder, MainPropaneRefillStation, PropaneTank,
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_systems(Startup, spawn_oven_stove_and_propane_scene);
+    app.update();
+
+    // 1. Gas furnace stove entity
+    let mut stove_q = app.world_mut().query::<(&GasFurnaceStove, &Transform)>();
+    let (stove, stove_tf) = stove_q.iter(app.world()).next().expect("Stove must exist");
+    assert!(stove.is_lit, "Furnace stove should be lit by default");
+    assert!((stove_tf.translation.x - (-9.2)).abs() < 0.2, "Stove must be by the window at X ≈ -9.2");
+    assert!((stove_tf.translation.z - (-12.2)).abs() < 0.2, "Stove must be by North wall at Z ≈ -12.2");
+
+    // 2. Baker's oven entity
+    let mut oven_q = app.world_mut().query::<(&WorkshopOven, &Transform)>();
+    let (oven, oven_tf) = oven_q.iter(app.world()).next().expect("Oven must exist");
+    assert_eq!(oven.internal_temp, 20.0);
+    assert!((oven_tf.translation.x - (-10.9)).abs() < 0.2, "Oven must be adjacent to stove at X ≈ -10.9");
+
+    // 3. Flexible yellow gas hose entity
+    let mut hose_q = app.world_mut().query::<&GasHose>();
+    let hose = hose_q.iter(app.world()).next().expect("Flexible yellow hose must exist");
+    assert_eq!(hose.attached_to, HoseAttachment::Stove, "Hose must default to Stove attachment");
+    assert!(!hose.is_venting_gas);
+
+    // 4. Outside propane tank holder and tanks
+    let mut holder_q = app.world_mut().query::<(&PropaneTankHolder, &Transform)>();
+    let (holder, holder_tf) = holder_q.iter(app.world()).next().expect("Propane holder must exist");
+    assert!(holder.connected_tank.is_some(), "Holder must have active connected tank");
+    assert!((holder_tf.translation.x - (-8.3)).abs() < 0.2, "Holder mounted on exterior wall outside window");
+
+    let mut tanks_q = app.world_mut().query::<&PropaneTank>();
+    let tank_count = tanks_q.iter(app.world()).count();
+    assert!(tank_count >= 2, "Must spawn at least active and spare propane tanks");
+
+    // 5. Main bulk propane refill tank station in snowy landscape
+    let mut station_q = app.world_mut().query::<(&MainPropaneRefillStation, &Transform)>();
+    let (_, station_tf) = station_q.iter(app.world()).next().expect("Main bulk tank must exist");
+    assert!((station_tf.translation.x - (-16.0)).abs() < 0.2, "Main bulk tank at X ≈ -16.0");
+    assert!((station_tf.translation.z - (-26.0)).abs() < 0.2, "Main bulk tank at distance Z ≈ -26.0 in snow");
+}
+
+#[test]
+fn test_workshop_temperature_heating_and_freezing_spawner_halt() {
+    use rust_tests::elf_game::workshop::stove::{
+        WorkshopTemperature, WorkshopGasLine, GasFurnaceStove, GasHose, HoseAttachment,
+        workshop_temperature_system,
+    };
+    use rust_tests::elf_game::workshop::room::{
+        ConveyorSpawnerTimer, conveyor_cube_spawner_system,
+    };
+    use rust_tests::elf_game::wrapping::Present;
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.init_resource::<WorkshopTemperature>();
+    app.init_resource::<WorkshopGasLine>();
+    app.init_resource::<ConveyorSpawnerTimer>();
+
+    app.add_systems(Update, (workshop_temperature_system, conveyor_cube_spawner_system));
+
+    // Spawn stove and hose
+    app.world_mut().spawn(GasFurnaceStove { is_lit: true, heat_output: 1.5 });
+    let hose_e = app.world_mut().spawn(GasHose {
+        attached_to: HoseAttachment::Stove,
+        wall_inlet_pos: Vec3::ZERO,
+        stove_anchor_pos: Vec3::ZERO,
+        oven_anchor_pos: Vec3::ZERO,
+        loose_nozzle_pos: Vec3::ZERO,
+        is_venting_gas: false,
+    }).id();
+
+    // Set initial cool temperature (15.0 deg C)
+    {
+        let mut temp = app.world_mut().resource_mut::<WorkshopTemperature>();
+        temp.current = 15.0;
+        temp.is_frozen = false;
+    }
+
+    // Advance 2 seconds with heating active (heating_rate = 1.5 C/s)
+    app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(2));
+    app.update();
+
+    {
+        let temp = app.world().resource::<WorkshopTemperature>();
+        assert!(temp.current > 15.0, "Active stove must heat the workshop (expected > 15.0, got {})", temp.current);
+        assert!(!temp.is_frozen, "Workshop must not be frozen");
+    }
+
+    // Detach hose so stove stops heating
+    app.world_mut().get_mut::<GasHose>(hose_e).unwrap().attached_to = HoseAttachment::Neither;
+
+    // Force temperature to freezing
+    {
+        let mut temp = app.world_mut().resource_mut::<WorkshopTemperature>();
+        temp.current = -5.0;
+        temp.is_frozen = true;
+    }
+
+    // Trigger spawner timer
+    {
+        let mut spawner = app.world_mut().resource_mut::<ConveyorSpawnerTimer>();
+        spawner.timer.set_elapsed(std::time::Duration::from_secs(5));
+    }
+
+    // Run update while frozen
+    app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(50));
+    app.update();
+
+    let cube_count_frozen = app.world_mut().query::<&Present>().iter(app.world()).count();
+    assert_eq!(cube_count_frozen, 0, "Present cubes must NOT spawn when workshop is frozen");
+
+    // Warm back up above freezing
+    {
+        let mut temp = app.world_mut().resource_mut::<WorkshopTemperature>();
+        temp.current = 18.0;
+        temp.is_frozen = false;
+        let mut spawner = app.world_mut().resource_mut::<ConveyorSpawnerTimer>();
+        spawner.timer.set_elapsed(std::time::Duration::from_secs(5));
+    }
+
+    app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(50));
+    app.update();
+
+    let cube_count_thawed = app.world_mut().query::<&Present>().iter(app.world()).count();
+    assert!(cube_count_thawed > 0, "Present cubes must spawn once workshop is kept warm above freezing");
+}
+
+#[test]
+fn test_repurposed_gas_pressure_gauge_needle_and_alert() {
+    use rust_tests::elf_game::diegetic_ui::hunger_dial::{
+        spawn_moose_hunger_dial_and_scale, animate_moose_hunger_dial_system,
+        MooseHungerNeedle, MooseHungerWarningBeacon,
+    };
+    use rust_tests::elf_game::workshop::stove::WorkshopGasLine;
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.insert_resource(WorkshopGasLine {
+        pressure_psi: 100.0,
+        burn_rate: 0.8,
+        leak_vent_rate: 2.5,
+    });
+
+    app.add_systems(Startup, spawn_moose_hunger_dial_and_scale);
+    app.add_systems(Update, animate_moose_hunger_dial_system);
+    app.update();
+
+    // Full pressure (100 PSI) -> needle at max_angle (+2.356 rad)
+    {
+        let mut needle_q = app.world_mut().query::<&MooseHungerNeedle>();
+        let needle = needle_q.iter(app.world()).next().unwrap();
+        assert!(
+            (needle.current_angle - needle.max_angle).abs() < 0.1,
+            "Needle should be at maximum angle (≈ +2.356) when gas tank is full (100 PSI), got {}",
+            needle.current_angle
+        );
+        let mut beacon_q = app.world_mut().query::<&MooseHungerWarningBeacon>();
+        let beacon = beacon_q.iter(app.world()).next().unwrap();
+        assert!(!beacon.is_alert, "Warning beacon must not alert when gas pressure is full");
+    }
+
+    // Drop pressure below 15 PSI (< 15% warning threshold)
+    {
+        let mut gas = app.world_mut().resource_mut::<WorkshopGasLine>();
+        gas.pressure_psi = 10.0;
+    }
+    app.update();
+
+    {
+        let mut needle_q = app.world_mut().query::<&MooseHungerNeedle>();
+        let needle = needle_q.iter(app.world()).next().unwrap();
+        assert!(needle.is_jittering, "Needle must jitter when gas pressure is critically low");
+
+        let mut beacon_q = app.world_mut().query::<&MooseHungerWarningBeacon>();
+        let beacon = beacon_q.iter(app.world()).next().unwrap();
+        assert!(beacon.is_alert, "Warning beacon must pulse in alert mode when gas pressure is < 15 PSI");
+    }
+}
+
+#[test]
+fn test_propane_tank_flow_consumption_and_refill() {
+    use rust_tests::elf_game::workshop::stove::{
+        WorkshopGasLine, PropaneTank, PropaneTankHolder, GasHose, HoseAttachment,
+        propane_gas_flow_system,
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.insert_resource(WorkshopGasLine {
+        pressure_psi: 100.0,
+        burn_rate: 5.0,
+        leak_vent_rate: 20.0,
+    });
+
+    app.add_systems(Update, propane_gas_flow_system);
+
+    let tank_e = app.world_mut().spawn(PropaneTank {
+        fuel_amount: 100.0,
+        capacity: 100.0,
+        is_connected: true,
+    }).id();
+
+    app.world_mut().spawn(PropaneTankHolder {
+        connected_tank: Some(tank_e),
+    });
+
+    let hose_e = app.world_mut().spawn(GasHose {
+        attached_to: HoseAttachment::Stove,
+        wall_inlet_pos: Vec3::ZERO,
+        stove_anchor_pos: Vec3::ZERO,
+        oven_anchor_pos: Vec3::ZERO,
+        loose_nozzle_pos: Vec3::ZERO,
+        is_venting_gas: false,
+    }).id();
+
+    // Advance 1 sec burning fuel at stove (burn_rate = 5.0)
+    app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(1));
+    app.update();
+
+    let fuel_after_stove = app.world().get::<PropaneTank>(tank_e).unwrap().fuel_amount;
+    assert!(
+        (fuel_after_stove - 95.0).abs() < 0.1,
+        "Connected tank fuel should decrease with stove burn rate (got {})",
+        fuel_after_stove
+    );
+    let line_pressure = app.world().resource::<WorkshopGasLine>().pressure_psi;
+    assert_eq!(line_pressure, fuel_after_stove);
+
+    // Switch hose to Neither -> venting gas
+    app.world_mut().get_mut::<GasHose>(hose_e).unwrap().attached_to = HoseAttachment::Neither;
+
+    app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(1));
+    app.update();
+
+    let fuel_after_venting = app.world().get::<PropaneTank>(tank_e).unwrap().fuel_amount;
+    assert!(
+        fuel_after_venting < fuel_after_stove - 15.0,
+        "Venting gas when detached to Neither must rapidly consume propane (got {})",
+        fuel_after_venting
+    );
+    let hose = app.world().get::<GasHose>(hose_e).unwrap();
+    assert!(hose.is_venting_gas, "Hose must be marked venting gas when attached to Neither with fuel left");
+}
+
+#[test]
+fn test_climbable_windows_geometry() {
+    use rust_tests::elf_game::workshop::room::setup_workshop_scene;
+    use rust_tests::elf_game::assets::AssetsPlugin;
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_plugins(AssetsPlugin);
+    app.add_systems(Startup, setup_workshop_scene);
+    app.update();
+
+    // Verify 3 climbable window sills are spawned
+    let mut names_q = app.world_mut().query::<(&Name, &Transform)>();
+    let mut found_west = false;
+    let mut found_moose = false;
+    let mut found_east = false;
+    let mut found_mullion_w = false;
+    let mut found_mullion_e = false;
+
+    for (name, tf) in names_q.iter(app.world()) {
+        match name.as_str() {
+            "WestClimbableWindowSill" => {
+                found_west = true;
+                assert!((tf.translation.x - (-8.3)).abs() < 0.1);
+                assert_eq!(tf.translation.y, 0.85, "Window sill height must be 0.85m for player climbing");
+            }
+            "MooseWindowSill" => {
+                found_moose = true;
+                assert!((tf.translation.x - (-6.5)).abs() < 0.1);
+                assert_eq!(tf.translation.y, 0.85, "Center Moose window sill height must be 0.85m");
+            }
+            "EastClimbableWindowSill" => {
+                found_east = true;
+                assert!((tf.translation.x - (-4.7)).abs() < 0.1);
+                assert_eq!(tf.translation.y, 0.85, "East window sill height must be 0.85m for player climbing");
+            }
+            "WindowMullionWest" => {
+                found_mullion_w = true;
+                assert!((tf.translation.x - (-7.4)).abs() < 0.1);
+            }
+            "WindowMullionEast" => {
+                found_mullion_e = true;
+                assert!((tf.translation.x - (-5.6)).abs() < 0.1);
+            }
+            _ => {}
+        }
+    }
+
+    assert!(found_west, "West climbable window sill must be present");
+    assert!(found_moose, "Center Moose window sill must be present");
+    assert!(found_east, "East climbable window sill must be present");
+    assert!(found_mullion_w, "West timber mullion must be present");
+    assert!(found_mullion_e, "East timber mullion must be present");
+}
+
+#[test]
+fn test_gas_leak_flame_explosion() {
+    use bevy_rapier3d::prelude::Velocity;
+    use rust_tests::elf_game::workshop::stove::{
+        WorkshopGasLine, GasHose, HoseAttachment, FlameSource, FieryExplosionEvent,
+        gas_leak_flame_explosion_system,
+    };
+    use rust_tests::elf_game::player::{ElfMovement, controller::ElfPlayer};
+    use rust_tests::elf_game::physics_sandbox::{ElfAssistant, ElfNpcState};
+
+    let mut app = App::new();
+    app.add_message::<FieryExplosionEvent>();
+    app.insert_resource(WorkshopGasLine {
+        pressure_psi: 80.0,
+        burn_rate: 0.8,
+        leak_vent_rate: 2.5,
+    });
+
+    app.add_systems(Update, gas_leak_flame_explosion_system);
+
+    let nozzle_pos = Vec3::new(-10.0, 0.12, -12.0);
+
+    // Spawn hose in Neither (loose nozzle)
+    app.world_mut().spawn(GasHose {
+        attached_to: HoseAttachment::Neither,
+        wall_inlet_pos: Vec3::new(-10.0, 0.85, -12.85),
+        stove_anchor_pos: Vec3::new(-9.6, 0.65, -12.2),
+        oven_anchor_pos: Vec3::new(-10.4, 0.65, -12.2),
+        loose_nozzle_pos: nozzle_pos,
+        is_venting_gas: true,
+    });
+
+    // Spawn Player nearby
+    let player_e = app.world_mut().spawn((
+        ElfPlayer,
+        Transform::from_xyz(-10.5, 0.45, -11.5),
+        ElfMovement {
+            velocity: Vec3::ZERO,
+            ..default()
+        },
+    )).id();
+
+    // Spawn Elf nearby
+    let elf_e = app.world_mut().spawn((
+        Transform::from_xyz(-9.5, 0.45, -12.3),
+        Velocity::zero(),
+        ElfAssistant {
+            state: ElfNpcState::Wandering,
+            ..ElfAssistant::new(99, "BoomElf", vec![Vec3::ZERO])
+        },
+    )).id();
+
+    // Spawn FlameSource within 0.6m of nozzle (< 1.0m threshold)
+    app.world_mut().spawn((
+        FlameSource,
+        Transform::from_translation(nozzle_pos + Vec3::new(0.3, 0.1, 0.2)),
+        GlobalTransform::from_translation(nozzle_pos + Vec3::new(0.3, 0.1, 0.2)),
+    ));
+
+    app.update();
+
+    // 1. Verify FieryExplosionEvent was received
+    let events = app.world().resource::<bevy::ecs::message::Messages<FieryExplosionEvent>>();
+    assert!(!events.is_empty(), "FieryExplosionEvent must be triggered when flame source is within 1 meter of venting hose");
+
+    // 2. Verify Player received shockwave velocity impulse
+    let player_mov = app.world().get::<ElfMovement>(player_e).unwrap();
+    assert!(
+        player_mov.velocity.length() > 5.0,
+        "Player must be blasted back by gas explosion shockwave, got velocity {:?}",
+        player_mov.velocity
+    );
+
+    // 3. Verify Elf was knocked into RagdollTumble
+    let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+    assert_eq!(elf.state, ElfNpcState::RagdollTumble, "Elf must tumble in ragdoll from explosion");
+    let elf_vel = app.world().get::<Velocity>(elf_e).unwrap();
+    assert!(elf_vel.linear.length() > 5.0, "Elf must receive linear blast impulse");
 }

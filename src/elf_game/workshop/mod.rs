@@ -6,10 +6,12 @@ pub mod room;
 pub mod events;
 pub mod progression;
 pub mod pantry;
+pub mod stove;
 
 pub use room::VacuumTractorBeamCone;
 pub use progression::*;
 pub use pantry::*;
+pub use stove::*;
 
 #[derive(Message, Debug, Clone)]
 pub struct UnlockDoorMessage {
@@ -45,6 +47,8 @@ pub struct WorkshopPlugin;
 impl Plugin for WorkshopPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<room::ConveyorSpawnerTimer>()
+            .init_resource::<stove::WorkshopTemperature>()
+            .init_resource::<stove::WorkshopGasLine>()
             .add_message::<UnlockDoorMessage>()
             .add_message::<progression::PlasmaExplosionEvent>()
             .add_message::<progression::TriggerPlasmaWrapperMessage>()
@@ -52,7 +56,8 @@ impl Plugin for WorkshopPlugin {
             .add_message::<progression::ToggleOverclockerMessage>()
             .add_message::<pantry::PantryRestockEvent>()
             .add_message::<pantry::PantryDoorInteractMessage>()
-            .add_systems(Startup, room::setup_workshop_scene)
+            .add_message::<stove::FieryExplosionEvent>()
+            .add_systems(Startup, (room::setup_workshop_scene, stove::spawn_oven_stove_and_propane_scene))
             .add_systems(
                 Update,
                 (
@@ -65,6 +70,12 @@ impl Plugin for WorkshopPlugin {
                     pantry::pantry_door_spring_system,
                     pantry::pantry_door_restock_cycle_system,
                     pantry::pantry_door_interaction_system,
+                    stove::workshop_temperature_system,
+                    stove::propane_gas_flow_system,
+                    stove::gas_hose_interaction_system,
+                    stove::propane_tank_refill_and_holder_system,
+                    stove::gas_leak_flame_explosion_system,
+                    stove::explosion_flash_fade_system,
                 ),
             )
             .add_systems(

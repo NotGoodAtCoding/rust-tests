@@ -498,92 +498,102 @@ pub fn setup_workshop_scene(
     ));
 
     // North wall (Front: Z = -13.0):
-    // 1. Left North Wall section (from X = -13.0 to X = -7.4, width 5.6m)
+    // 1. Left North Wall section (from X = -13.0 to X = -9.05, width 3.95m, center X = -11.025)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(5.6, 5.5, 0.4))),
+        Mesh3d(meshes.add(Cuboid::new(3.95, 5.5, 0.4))),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(-10.2, 2.75, -13.0),
-        Collider::cuboid(2.8, 2.75, 0.2),
+        Transform::from_xyz(-11.025, 2.75, -13.0),
+        Collider::cuboid(1.975, 2.75, 0.2),
         RigidBody::Fixed,
         Name::new("WallNorthLeft"),
     ));
 
-    // 2. Mr. Moose Head-Sized Window Opening (X = -7.4 to X = -5.6, centered at X = -6.5, width 1.8m, height 1.8m)
-    // Wall below window opening (Y = 0.0 to 1.95)
+    // 2. Series of 3 Climbable Window Bays (from X = -9.05 to X = -3.95, width 5.1m)
+    // Low sill height at Y = 0.85m allows player to jump onto the sill and climb directly through into the snowy yard.
+    // - Low wall below windowsills (Y = 0.0 to 0.85, height 0.85m)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.8, 1.95, 0.4))),
+        Mesh3d(meshes.add(Cuboid::new(5.1, 0.85, 0.4))),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(-6.5, 0.975, -13.0),
-        Collider::cuboid(0.9, 0.975, 0.2),
+        Transform::from_xyz(-6.5, 0.425, -13.0),
+        Collider::cuboid(2.55, 0.425, 0.2),
         RigidBody::Fixed,
-        Name::new("WallNorthBelowWindow"),
+        Name::new("WallNorthBelowWindows"),
     ));
 
-    // Window Sill Shelf (Wooden ledge protruding slightly into room for decorations/props)
+    // - Upper wall lintel above window bays (Y = 2.70 to 5.50, height 2.80m)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(2.1, 0.12, 0.6))),
+        Mesh3d(meshes.add(Cuboid::new(5.1, 2.80, 0.4))),
+        MeshMaterial3d(wall_material.clone()),
+        Transform::from_xyz(-6.5, 4.10, -13.0),
+        Collider::cuboid(2.55, 1.40, 0.2),
+        RigidBody::Fixed,
+        Name::new("WallNorthAboveWindows"),
+    ));
+
+    // Window Bay 1: West Window (by the Stove & Gas Pressure Gauge: center X = -8.3)
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(1.5, 0.08, 0.6))),
         MeshMaterial3d(window_frame_material.clone()),
-        Transform::from_xyz(-6.5, 1.95, -12.95),
-        Collider::cuboid(1.05, 0.06, 0.3),
+        Transform::from_xyz(-8.3, 0.85, -12.95),
+        Collider::cuboid(0.75, 0.04, 0.3),
+        RigidBody::Fixed,
+        Name::new("WestClimbableWindowSill"),
+    ));
+
+    // Timber Mullion between West and Center windows (X = -7.4)
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(0.3, 1.85, 0.45))),
+        MeshMaterial3d(window_frame_material.clone()),
+        Transform::from_xyz(-7.4, 1.775, -13.0),
+        Collider::cuboid(0.15, 0.925, 0.225),
+        RigidBody::Fixed,
+        Name::new("WindowMullionWest"),
+    ));
+
+    // Window Bay 2: Center Window (Mr. Moose Peeking & Breach Window: center X = -6.5)
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(1.5, 0.08, 0.6))),
+        MeshMaterial3d(window_frame_material.clone()),
+        Transform::from_xyz(-6.5, 0.85, -12.95),
+        Collider::cuboid(0.75, 0.04, 0.3),
         RigidBody::Fixed,
         Name::new("MooseWindowSill"),
     ));
 
-    // Window Casing / Frame Trim
-    // Header trim (above opening at Y = 3.86)
+    // Timber Mullion between Center and East windows (X = -5.6)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(2.1, 0.12, 0.45))),
+        Mesh3d(meshes.add(Cuboid::new(0.3, 1.85, 0.45))),
         MeshMaterial3d(window_frame_material.clone()),
-        Transform::from_xyz(-6.5, 3.86, -13.0),
-        Collider::cuboid(1.05, 0.06, 0.225),
+        Transform::from_xyz(-5.6, 1.775, -13.0),
+        Collider::cuboid(0.15, 0.925, 0.225),
         RigidBody::Fixed,
-        Name::new("MooseWindowHeaderTrim"),
+        Name::new("WindowMullionEast"),
     ));
 
-    // Left jamb trim
+    // Window Bay 3: East Window (by Workbench: center X = -4.7)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.15, 1.8, 0.45))),
+        Mesh3d(meshes.add(Cuboid::new(1.5, 0.08, 0.6))),
         MeshMaterial3d(window_frame_material.clone()),
-        Transform::from_xyz(-7.45, 2.9, -13.0),
-        Collider::cuboid(0.075, 0.9, 0.225),
+        Transform::from_xyz(-4.7, 0.85, -12.95),
+        Collider::cuboid(0.75, 0.04, 0.3),
         RigidBody::Fixed,
-        Name::new("MooseWindowLeftJamb"),
+        Name::new("EastClimbableWindowSill"),
     ));
 
-    // Right jamb trim
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.15, 1.8, 0.45))),
-        MeshMaterial3d(window_frame_material.clone()),
-        Transform::from_xyz(-5.55, 2.9, -13.0),
-        Collider::cuboid(0.075, 0.9, 0.225),
-        RigidBody::Fixed,
-        Name::new("MooseWindowRightJamb"),
-    ));
-
-    // Wall North above window opening (Y = 3.92 to 5.5, height 1.58m)
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.8, 1.58, 0.4))),
-        MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(-6.5, 4.71, -13.0),
-        Collider::cuboid(0.9, 0.79, 0.2),
-        RigidBody::Fixed,
-        Name::new("WallNorthAboveWindow"),
-    ));
-
-    // Breakable window pane state entity for event integration
+    // Breakable window pane state entity for event integration (Center window)
     commands.spawn((
         BreakableWindowPane { is_broken: false },
-        Transform::from_xyz(-6.5, 2.9, -13.0),
+        Transform::from_xyz(-6.5, 1.775, -13.0),
         Visibility::default(),
         Name::new("MooseWindowBreachState"),
     ));
 
-    // 3. Right & Center North Wall (Behind the workbench & monitor: X = -5.6 to X = 13.0, width 18.6m)
+    // 3. Right & Center North Wall (Behind the workbench & monitor: X = -3.95 to X = 13.0, width 16.95m)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(18.6, 5.5, 0.4))),
+        Mesh3d(meshes.add(Cuboid::new(16.95, 5.5, 0.4))),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(3.7, 2.75, -13.0),
-        Collider::cuboid(9.3, 2.75, 0.2),
+        Transform::from_xyz(4.525, 2.75, -13.0),
+        Collider::cuboid(8.475, 2.75, 0.2),
         RigidBody::Fixed,
         Name::new("WallNorthMainSolid"),
     ));
@@ -1180,6 +1190,7 @@ pub fn setup_workshop_scene(
                     Mesh3d(candle_flame_cone.clone()),
                     MeshMaterial3d(candle_flame_mat.clone()),
                     Transform::from_xyz(cx, cy_pos + 0.14, cz_pos),
+                    crate::elf_game::workshop::stove::FlameSource,
                     Name::new("CandleFlameTip"),
                 ));
             }
@@ -1218,11 +1229,13 @@ pub fn setup_workshop_scene(
     );
 }
 
-/// Spawns raw present cubes at the start of the conveyor belt (X = -8.5, Z = 3.0)
+/// Spawns raw present cubes at the start of the conveyor belt (X = -8.5, Z = 3.0).
+/// Halts spawning if workshop temperature drops below freezing (is_frozen).
 pub fn conveyor_cube_spawner_system(
     time: Option<Res<Time>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
+    temperature: Option<Res<crate::elf_game::workshop::stove::WorkshopTemperature>>,
     spawner: Option<ResMut<ConveyorSpawnerTimer>>,
     mut commands: Commands,
     meshes: Option<ResMut<Assets<Mesh>>>,
@@ -1234,6 +1247,11 @@ pub fn conveyor_cube_spawner_system(
     };
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
         return;
+    }
+    if let Some(ref temp) = temperature {
+        if temp.is_frozen {
+            return;
+        }
     }
     spawner.timer.tick(time.delta());
     if !spawner.timer.just_finished() {

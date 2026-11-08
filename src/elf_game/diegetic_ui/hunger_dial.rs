@@ -8,6 +8,11 @@ use crate::elf_game::{
 #[derive(Component, Debug, Clone)]
 pub struct MooseHungerDial;
 
+/// Type alias repurposing MooseHungerDial as the workshop gas pressure gauge
+pub type GasPressureGauge = MooseHungerDial;
+/// Type alias repurposing MooseHungerNeedle as the gas pressure needle pointer
+pub type GasPressureNeedle = MooseHungerNeedle;
+
 /// Mechanical needle pointer that sweeps across the dial face
 #[derive(Component, Debug, Clone)]
 pub struct MooseHungerNeedle {
@@ -155,11 +160,11 @@ pub fn spawn_moose_hunger_dial_and_scale(
         (None, None, None, None, None, None, None, None, None)
     };
 
-    // 1. Physical Mechanical Hunger Dial outside the window
-    // Mounted prominently beside the right exterior window frame at X = -5.35, Y = 3.25, Z = -13.25
-    // Angled slightly (-0.22 rad) so it is clearly readable from the workbench and feeding trough
+    // 1. Physical Mechanical Gas Pressure Gauge / Hunger Dial mounted by the stove & window
+    // Mounted prominently on the North wall by the furnace stove and climbable window bay at X = -8.35, Y = 1.95, Z = -12.65
+    // Angled slightly (+0.15 rad) so it is clearly readable from the stove, oven, and workbench
     let mut dial_cmd = commands.spawn((
-        Transform::from_xyz(-5.35, 3.25, -13.25).with_rotation(Quat::from_rotation_y(-0.22)),
+        Transform::from_xyz(-8.35, 1.95, -12.65).with_rotation(Quat::from_rotation_y(0.15)),
         Visibility::default(),
         MooseHungerDial,
         Name::new("MooseHungerMechanicalDial"),
@@ -352,11 +357,12 @@ pub fn spawn_moose_hunger_dial_and_scale(
     }
 }
 
-/// Animates the physical mechanical hunger needle, warning beacon, and trough scale plate
+/// Animates the physical mechanical pressure / hunger needle, warning beacon, and trough scale plate
 pub fn animate_moose_hunger_dial_system(
     time: Option<Res<Time>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
+    gas_line: Option<Res<crate::elf_game::workshop::stove::WorkshopGasLine>>,
     hunger: Option<Res<MooseHunger>>,
     q_snacks: Query<&Transform, (With<MooseSnack>, Without<MooseHungerNeedle>, Without<MooseTroughScalePlate>)>,
     q_trough: Query<&Transform, (With<MooseFeedingTrough>, Without<MooseHungerNeedle>, Without<MooseTroughScalePlate>)>,
@@ -370,21 +376,32 @@ pub fn animate_moose_hunger_dial_system(
     let dt = time.as_ref().map(|t| t.delta_secs()).unwrap_or(0.016);
     let total_time = time.as_ref().map(|t| t.elapsed_secs()).unwrap_or(0.0);
 
-    let (hunger_val, hunger_max, stage) = if let Some(h) = hunger {
-        (h.value, h.max_value.max(1.0), h.stage)
+    let (progress, is_critical, stage_opt) = if let Some(ref gas) = gas_line {
+        // Repurposed as Gas Pressure Gauge: tracks connected tank fuel pressure (0.0 to 100.0 PSI)
+        let prog = (gas.pressure_psi / 100.0).clamp(0.0, 1.0);
+        let crit = gas.pressure_psi < 15.0;
+        (prog, crit, None)
     } else {
-        (0.0, 60.0, MooseHungerStage::BehindShutters)
+        let (hunger_val, hunger_max, stage) = if let Some(h) = hunger {
+            (h.value, h.max_value.max(1.0), h.stage)
+        } else {
+            (0.0, 60.0, MooseHungerStage::BehindShutters)
+        };
+        let prog = (hunger_val / hunger_max).clamp(0.0, 1.0);
+        let crit = hunger_val >= 50.0
+            || stage == MooseHungerStage::AgitatedHuffing
+            || stage == MooseHungerStage::WindowSlammed
+            || stage == MooseHungerStage::BreachedRampage;
+        (prog, crit, Some(stage))
     };
 
-    let progress = (hunger_val / hunger_max).clamp(0.0, 1.0);
-
-    // 1. Update Hunger Needle Rotation
+    // 1. Update Needle Rotation
     for (mut needle, mut tf) in &mut q_needle {
         // Map 0.0..1.0 progress to angle between min_angle and max_angle
         let base_target = needle.min_angle + progress * (needle.max_angle - needle.min_angle);
 
-        // Agitation jitter when stage is AgitatedHuffing or hunger >= 50.0
-        let is_agitating = stage == MooseHungerStage::AgitatedHuffing || hunger_val >= 50.0;
+        // Agitation jitter when critical / low pressure or AgitatedHuffing
+        let is_agitating = is_critical || stage_opt == Some(MooseHungerStage::AgitatedHuffing);
         needle.is_jittering = is_agitating;
 
         let jitter = if is_agitating {
@@ -404,16 +421,12 @@ pub fn animate_moose_hunger_dial_system(
 
         needle.current_angle += (needle.target_angle - needle.current_angle) * lerp_factor;
 
-        // Rotating around local -Z swings pointer clockwise from left (green 0) to right (red 60)
+        // Rotating around local -Z swings pointer clockwise from left to right
         tf.rotation = Quat::from_rotation_z(-needle.current_angle);
     }
 
     // 2. Update Warning Beacon
     for (mut beacon, mut light) in &mut q_beacon {
-        let is_critical = hunger_val >= 50.0
-            || stage == MooseHungerStage::AgitatedHuffing
-            || stage == MooseHungerStage::WindowSlammed
-            || stage == MooseHungerStage::BreachedRampage;
         beacon.is_alert = is_critical;
 
         if is_critical {

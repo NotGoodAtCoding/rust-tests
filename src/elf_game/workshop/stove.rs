@@ -71,7 +71,8 @@ pub enum HoseAttachment {
     Neither,
 }
 
-/// The flexible thin yellow gas supply hose inside the workshop.
+/// The flexible thin yellow gas supply hose inside the workshop,
+/// modeled as a dynamic chain of links (similar to the Moose scarf).
 #[derive(Component, Debug, Clone)]
 pub struct GasHose {
     pub attached_to: HoseAttachment,
@@ -80,7 +81,36 @@ pub struct GasHose {
     pub oven_anchor_pos: Vec3,
     pub loose_nozzle_pos: Vec3,
     pub is_venting_gas: bool,
+    pub snap_distance: f32,
+    pub nozzle_entity: Option<Entity>,
 }
+
+impl Default for GasHose {
+    fn default() -> Self {
+        Self {
+            attached_to: HoseAttachment::Stove,
+            wall_inlet_pos: Vec3::new(-9.05, 1.15, -12.85),
+            stove_anchor_pos: Vec3::new(-8.44, 0.85, -12.0),
+            oven_anchor_pos: Vec3::new(-9.62, 0.85, -12.0),
+            loose_nozzle_pos: Vec3::new(-9.05, 0.05, -12.0),
+            is_venting_gas: false,
+            snap_distance: 0.22,
+            nozzle_entity: None,
+        }
+    }
+}
+
+/// Individual link segment along the flexible yellow gas hose chain.
+#[derive(Component, Debug, Clone)]
+pub struct GasHoseSegment {
+    pub index: usize,
+    pub velocity: Vec3,
+}
+
+/// The brass quick-connect coupler nozzle on the free end of the flexible yellow gas hose.
+/// Can be grabbed and carried by the player, snapping into place when within 0.2m of an anchor.
+#[derive(Component, Debug, Clone)]
+pub struct GasHoseCouplerNozzle;
 
 /// Anchor port on the gas-burning furnace stove.
 #[derive(Component, Debug, Clone)]
@@ -206,10 +236,10 @@ pub fn spawn_oven_stove_and_propane_scene(
     });
 
     // -------------------------------------------------------------------------
-    // 1. Gas-Burning Furnace Stove (Located by the window: X = -9.2, Z = -12.2)
+    // 1. Gas-Burning Furnace Stove (Bigger footprint: X = -7.6, Z = -12.0)
     // -------------------------------------------------------------------------
-    let stove_pos = Vec3::new(-9.2, 0.0, -12.2);
-    let stove_anchor_pos = Vec3::new(-9.6, 0.65, -12.2);
+    let stove_pos = Vec3::new(-7.6, 0.0, -12.0);
+    let stove_anchor_pos = Vec3::new(-8.44, 0.85, -12.0);
 
     commands
         .spawn((
@@ -219,40 +249,40 @@ pub fn spawn_oven_stove_and_propane_scene(
             },
             Transform::from_translation(stove_pos),
             Visibility::default(),
-            Collider::cuboid(0.48, 0.48, 0.42),
+            Collider::cuboid(0.80, 0.675, 0.60),
             RigidBody::Fixed,
             Name::new("GasFurnaceStove"),
         ))
         .with_children(|stove| {
-            // Main heavy cast-iron stove body
+            // Main heavy cast-iron stove body (Width: 1.6m, Height: 1.35m, Depth: 1.2m)
             stove.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.92, 0.90, 0.80))),
+                Mesh3d(meshes.add(Cuboid::new(1.60, 1.35, 1.20))),
                 MeshMaterial3d(iron_mat.clone()),
-                Transform::from_xyz(0.0, 0.45, 0.0),
+                Transform::from_xyz(0.0, 0.675, 0.0),
                 Name::new("StoveBodyIron"),
             ));
 
             // Four top cooking burner grates
             let burner_offsets = [
-                (-0.24, -0.20),
-                (0.24, -0.20),
-                (-0.24, 0.20),
-                (0.24, 0.20),
+                (-0.40, -0.32),
+                (0.40, -0.32),
+                (-0.40, 0.32),
+                (0.40, 0.32),
             ];
             for (bx, bz) in burner_offsets {
                 stove.spawn((
-                    Mesh3d(meshes.add(Cylinder::new(0.12, 0.04))),
+                    Mesh3d(meshes.add(Cylinder::new(0.18, 0.05))),
                     MeshMaterial3d(iron_mat.clone()),
-                    Transform::from_xyz(bx, 0.92, bz),
+                    Transform::from_xyz(bx, 1.38, bz),
                     Name::new("BurnerGrate"),
                 ));
             }
 
             // Furnace firebox inspection window with glowing ember glass
             stove.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.40, 0.28, 0.05))),
+                Mesh3d(meshes.add(Cuboid::new(0.65, 0.45, 0.08))),
                 MeshMaterial3d(warning_mat.clone()),
-                Transform::from_xyz(0.0, 0.35, 0.41),
+                Transform::from_xyz(0.0, 0.50, 0.61),
                 Name::new("FurnaceFireboxWindow"),
             ));
 
@@ -260,38 +290,38 @@ pub fn spawn_oven_stove_and_propane_scene(
             stove.spawn((
                 PointLight {
                     color: Color::srgb(1.0, 0.55, 0.15),
-                    intensity: 1200.0,
-                    radius: 4.5,
+                    intensity: 1600.0,
+                    radius: 6.0,
                     shadow_maps_enabled: false,
                     ..default()
                 },
-                Transform::from_xyz(0.0, 0.35, 0.35),
+                Transform::from_xyz(0.0, 0.50, 0.50),
                 Name::new("FurnaceFireGlowLight"),
             ));
 
             // Vertical exhaust flue pipe leading upward
             stove.spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.08, 4.2))),
+                Mesh3d(meshes.add(Cylinder::new(0.12, 4.0))),
                 MeshMaterial3d(dark_mat.clone()),
-                Transform::from_xyz(0.0, 3.0, -0.25),
+                Transform::from_xyz(0.0, 3.35, -0.35),
                 Name::new("StoveExhaustFluePipe"),
             ));
 
             // Stove brass gas inlet anchor fitting on West flank
             stove.spawn((
                 StoveGasAnchor,
-                Mesh3d(meshes.add(Cylinder::new(0.045, 0.12))),
+                Mesh3d(meshes.add(Cylinder::new(0.055, 0.16))),
                 MeshMaterial3d(brass_mat.clone()),
-                Transform::from_xyz(-0.48, 0.65, 0.0).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                Transform::from_xyz(-0.84, 0.85, 0.0).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
                 Name::new("StoveGasAnchorFitting"),
             ));
         });
 
     // -------------------------------------------------------------------------
-    // 2. Baker's Oven (Located adjacent to stove: X = -10.9, Z = -12.2)
+    // 2. Baker's Oven (Bigger footprint: X = -10.6, Z = -12.0)
     // -------------------------------------------------------------------------
-    let oven_pos = Vec3::new(-10.9, 0.0, -12.2);
-    let oven_anchor_pos = Vec3::new(-10.4, 0.65, -12.2);
+    let oven_pos = Vec3::new(-10.6, 0.0, -12.0);
+    let oven_anchor_pos = Vec3::new(-9.62, 0.85, -12.0);
 
     commands
         .spawn((
@@ -301,115 +331,116 @@ pub fn spawn_oven_stove_and_propane_scene(
             },
             Transform::from_translation(oven_pos),
             Visibility::default(),
-            Collider::cuboid(0.55, 0.55, 0.45),
+            Collider::cuboid(0.95, 0.775, 0.675),
             RigidBody::Fixed,
             Name::new("WorkshopOven"),
         ))
         .with_children(|oven| {
-            // Main rustic masonry oven body
+            // Main rustic masonry oven body (Width: 1.9m, Height: 1.55m, Depth: 1.35m)
             oven.spawn((
-                Mesh3d(meshes.add(Cuboid::new(1.10, 1.05, 0.88))),
+                Mesh3d(meshes.add(Cuboid::new(1.90, 1.55, 1.35))),
                 MeshMaterial3d(oven_brick_mat.clone()),
-                Transform::from_xyz(0.0, 0.525, 0.0),
+                Transform::from_xyz(0.0, 0.775, 0.0),
                 Name::new("OvenBrickBody"),
             ));
 
             // Heavy cast-iron arched oven door
             oven.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.65, 0.55, 0.06))),
+                Mesh3d(meshes.add(Cuboid::new(1.15, 0.95, 0.08))),
                 MeshMaterial3d(iron_mat.clone()),
-                Transform::from_xyz(0.0, 0.50, 0.45),
+                Transform::from_xyz(0.0, 0.75, 0.68),
                 Name::new("OvenDoor"),
             ));
 
             // Brass handle on door
             oven.spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.025, 0.35))),
+                Mesh3d(meshes.add(Cylinder::new(0.035, 0.55))),
                 MeshMaterial3d(brass_mat.clone()),
-                Transform::from_xyz(0.24, 0.50, 0.50).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                Transform::from_xyz(0.45, 0.75, 0.74).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
                 Name::new("OvenDoorHandle"),
             ));
 
             // Oven brass gas inlet anchor fitting on East flank
             oven.spawn((
                 OvenGasAnchor,
-                Mesh3d(meshes.add(Cylinder::new(0.045, 0.12))),
+                Mesh3d(meshes.add(Cylinder::new(0.055, 0.16))),
                 MeshMaterial3d(brass_mat.clone()),
-                Transform::from_xyz(0.56, 0.65, 0.0).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                Transform::from_xyz(0.98, 0.85, 0.0).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
                 Name::new("OvenGasAnchorFitting"),
             ));
         });
 
     // -------------------------------------------------------------------------
-    // 3. Wall Gas Supply Pipe & Flexible Thin Yellow Hose
+    // 3. Wall Gas Supply Pipe & Flexible Chain Yellow Hose (Similar to Moose Scarf)
     // -------------------------------------------------------------------------
-    let wall_inlet_pos = Vec3::new(-10.0, 0.85, -12.85);
-    let loose_nozzle_pos = Vec3::new(-10.0, 0.12, -12.0);
+    let wall_inlet_pos = Vec3::new(-9.05, 1.15, -12.85);
 
-    // Wall intake pipe coming from outside manifold
+    // Permanent wall intake pipe fitting
     commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(0.04, 0.45))),
+        Mesh3d(meshes.add(Cylinder::new(0.045, 0.45))),
         MeshMaterial3d(iron_mat.clone()),
         Transform::from_xyz(wall_inlet_pos.x, wall_inlet_pos.y, wall_inlet_pos.z)
             .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
         Name::new("WallGasIntakePipe"),
     ));
 
-    // Flexible Thin Yellow Hose entity
-    commands
+    // Flexible yellow chain hose: 7 links (0..6)
+    // Link 6 is the coupler nozzle (grabbable by player, snaps to anchor within 0.2m)
+    let nozzle_e = commands
         .spawn((
-            GasHose {
-                attached_to: HoseAttachment::Stove,
-                wall_inlet_pos,
-                stove_anchor_pos,
-                oven_anchor_pos,
-                loose_nozzle_pos,
-                is_venting_gas: false,
+            GasHoseSegment {
+                index: 6,
+                velocity: Vec3::ZERO,
             },
-            Transform::from_translation(wall_inlet_pos),
-            Visibility::default(),
-            Name::new("FlexibleYellowGasHose"),
+            GasHoseCouplerNozzle,
+            Transform::from_translation(stove_anchor_pos),
+            Mesh3d(meshes.add(Cylinder::new(0.045, 0.12))),
+            MeshMaterial3d(brass_mat.clone()),
+            Collider::cylinder(0.08, 0.05),
+            RigidBody::Dynamic,
+            Grabbable,
+            Name::new("YellowHoseCouplerNozzle"),
         ))
-        .with_children(|hose| {
-            // Visual segments of the yellow hose arched to stove by default
-            hose.spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.022, 0.95))),
-                MeshMaterial3d(yellow_hose_mat.clone()),
-                Transform::from_xyz(0.2, -0.1, 0.3).with_rotation(Quat::from_rotation_y(0.6) * Quat::from_rotation_x(0.3)),
-                Name::new("YellowHoseSegment1"),
-            ));
-            hose.spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.022, 0.85))),
-                MeshMaterial3d(yellow_hose_mat.clone()),
-                Transform::from_xyz(0.35, -0.2, 0.55).with_rotation(Quat::from_rotation_y(0.8) * Quat::from_rotation_x(0.4)),
-                Name::new("YellowHoseSegment2"),
-            ));
-            // Brass quick-connect nozzle coupler
-            hose.spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.038, 0.10))),
-                MeshMaterial3d(brass_mat.clone()),
-                Transform::from_xyz(0.40, -0.20, 0.65),
-                Name::new("YellowHoseCouplerNozzle"),
-            ));
-        });
+        .id();
+
+    // Spawn intermediate chain links 0..5
+    for i in 0..6 {
+        let t = i as f32 / 6.0;
+        let rest_pos = wall_inlet_pos.lerp(stove_anchor_pos, t) + Vec3::new(0.0, -0.15 * (1.0 - (t - 0.5).abs() * 2.0), 0.1 * t);
+
+        commands.spawn((
+            GasHoseSegment {
+                index: i,
+                velocity: Vec3::ZERO,
+            },
+            Transform::from_translation(rest_pos),
+            Mesh3d(meshes.add(Cylinder::new(0.024, 0.20))),
+            MeshMaterial3d(yellow_hose_mat.clone()),
+            Name::new(format!("YellowHoseChainLink_{}", i)),
+        ));
+    }
+
+    // Flexible Yellow Hose Manager entity
+    commands.spawn((
+        GasHose {
+            attached_to: HoseAttachment::Stove,
+            wall_inlet_pos,
+            stove_anchor_pos,
+            oven_anchor_pos,
+            loose_nozzle_pos: stove_anchor_pos,
+            is_venting_gas: false,
+            snap_distance: 0.22,
+            nozzle_entity: Some(nozzle_e),
+        },
+        Transform::from_translation(wall_inlet_pos),
+        Visibility::default(),
+        Name::new("FlexibleYellowGasHose"),
+    ));
 
     // -------------------------------------------------------------------------
     // 4. Outside Propane Tank Holder (Exterior wall outside window: X = -8.3, Z = -13.55)
     // -------------------------------------------------------------------------
     let holder_pos = Vec3::new(-8.3, 0.45, -13.55);
-
-    // Holder cradle frame mounted to exterior wall
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.65, 0.85, 0.55))),
-        MeshMaterial3d(dark_mat.clone()),
-        Transform::from_translation(holder_pos),
-        Collider::cuboid(0.32, 0.42, 0.27),
-        RigidBody::Fixed,
-        PropaneTankHolder {
-            connected_tank: None, // Initialized below with the connected tank
-        },
-        Name::new("PropaneTankHolderCradle"),
-    ));
 
     // Active Connected Propane Tank seated inside the holder
     let connected_tank_e = commands
@@ -429,13 +460,17 @@ pub fn spawn_oven_stove_and_propane_scene(
         ))
         .id();
 
-    // Link connected tank into holder
+    // Holder cradle frame mounted to exterior wall with active tank connected
     commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(0.65, 0.85, 0.55))),
+        MeshMaterial3d(dark_mat.clone()),
         Transform::from_translation(holder_pos),
+        Collider::cuboid(0.32, 0.42, 0.27),
+        RigidBody::Fixed,
         PropaneTankHolder {
             connected_tank: Some(connected_tank_e),
         },
-        Name::new("PropaneTankHolderManager"),
+        Name::new("PropaneTankHolderCradle"),
     ));
 
     // Spare portable propane tank resting in the snow outside
@@ -680,8 +715,216 @@ pub fn propane_gas_flow_system(
     line.pressure_psi = tank.fuel_amount;
 }
 
-/// Allows the player to interact with the flexible thin yellow hose to pull it off an anchor point
-/// and attach it to either the Stove, Oven, or leave it detached (Neither).
+/// Simulates soft-body chain physics for the flexible yellow gas supply hose (similar to the Moose scarf).
+/// The hose has a permanent wall anchor, and detachable anchors on the Stove and Oven.
+/// If the end nozzle is held by the player and gets within 0.2m of either anchor point, it snaps into place.
+pub fn gas_hose_chain_physics_system(
+    time: Option<Res<Time>>,
+    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
+    mut commands: Commands,
+    mut q_hands: Query<&mut crate::elf_game::player::ElfHands>,
+    q_held: Query<Entity, With<crate::elf_game::player::hands::HeldByPlayer>>,
+    mut q_hose: Query<&mut GasHose>,
+    mut q_segments: Query<(&mut GasHoseSegment, &mut Transform), (Without<FirstPersonCamera>, Without<crate::elf_game::player::ElfHands>)>,
+) {
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+    let raw_dt = time.as_ref().map(|t| t.delta_secs()).unwrap_or(0.016);
+    let dt = if raw_dt > 0.0 { raw_dt } else { 0.016 };
+
+    let Ok(mut hose) = q_hose.single_mut() else {
+        return;
+    };
+
+    let wall_pos = hose.wall_inlet_pos;
+    let stove_anchor = hose.stove_anchor_pos;
+    let oven_anchor = hose.oven_anchor_pos;
+    let snap_dist = hose.snap_distance;
+
+    // Gather segment data (7 segments: 0..6)
+    let mut seg_transforms: [Option<Transform>; 7] = [None; 7];
+    let mut seg_velocities: [Vec3; 7] = [Vec3::ZERO; 7];
+
+    for (seg, tf) in &q_segments {
+        if seg.index < 7 {
+            seg_transforms[seg.index] = Some(*tf);
+            seg_velocities[seg.index] = seg.velocity;
+        }
+    }
+
+    let is_nozzle_held = if let Some(nozzle_e) = hose.nozzle_entity {
+        q_held.get(nozzle_e).is_ok()
+    } else {
+        false
+    };
+
+    // 1. Coupler Nozzle (Segment 6) snapping and target calculation
+    let mut nozzle_pos = if let Some(tf) = seg_transforms[6] {
+        tf.translation
+    } else {
+        match hose.attached_to {
+            HoseAttachment::Stove => stove_anchor,
+            HoseAttachment::Oven => oven_anchor,
+            HoseAttachment::Neither => hose.loose_nozzle_pos,
+        }
+    };
+
+    if is_nozzle_held {
+        // Player is holding the nozzle: check distance to Stove and Oven anchor points
+        let dist_to_stove = nozzle_pos.distance(stove_anchor);
+        let dist_to_oven = nozzle_pos.distance(oven_anchor);
+
+        if dist_to_stove <= snap_dist {
+            // Snap to Stove!
+            hose.attached_to = HoseAttachment::Stove;
+            hose.is_venting_gas = false;
+            nozzle_pos = stove_anchor;
+            if let Some(nozzle_e) = hose.nozzle_entity {
+                commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
+                for mut hands in &mut q_hands {
+                    if hands.left_grabbed == Some(nozzle_e) {
+                        hands.left_grabbed = None;
+                    }
+                    if hands.right_grabbed == Some(nozzle_e) {
+                        hands.right_grabbed = None;
+                    }
+                }
+            }
+        } else if dist_to_oven <= snap_dist {
+            // Snap to Oven!
+            hose.attached_to = HoseAttachment::Oven;
+            hose.is_venting_gas = false;
+            nozzle_pos = oven_anchor;
+            if let Some(nozzle_e) = hose.nozzle_entity {
+                commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
+                for mut hands in &mut q_hands {
+                    if hands.left_grabbed == Some(nozzle_e) {
+                        hands.left_grabbed = None;
+                    }
+                    if hands.right_grabbed == Some(nozzle_e) {
+                        hands.right_grabbed = None;
+                    }
+                }
+            }
+        } else {
+            // Held and carried in open space -> detached to Neither
+            hose.attached_to = HoseAttachment::Neither;
+            hose.is_venting_gas = true;
+            hose.loose_nozzle_pos = nozzle_pos;
+        }
+    } else {
+        // Not held by player: snap to attached anchor or let loose on floor
+        match hose.attached_to {
+            HoseAttachment::Stove => {
+                nozzle_pos = stove_anchor;
+            }
+            HoseAttachment::Oven => {
+                nozzle_pos = oven_anchor;
+            }
+            HoseAttachment::Neither => {
+                hose.loose_nozzle_pos = nozzle_pos;
+            }
+        }
+    }
+
+    // 2. Chain propagation for segments 1..6 (similar to Moose scarf)
+    const LINK_REST_LEN: f32 = 0.20;
+    let mut calculated_pos = [Vec3::ZERO; 7];
+    let mut calculated_vel = [Vec3::ZERO; 7];
+
+    calculated_pos[0] = wall_pos;
+    calculated_pos[6] = nozzle_pos;
+
+    // Simulate intermediate links 1..5
+    for i in 1..6 {
+        let cur_pos = seg_transforms[i].map(|t| t.translation).unwrap_or_else(|| {
+            wall_pos.lerp(nozzle_pos, i as f32 / 6.0)
+        });
+        let cur_vel = seg_velocities[i];
+
+        let prev_pos = calculated_pos[i - 1];
+        let next_pos = if i == 5 {
+            nozzle_pos
+        } else {
+            seg_transforms[i + 1].map(|t| t.translation).unwrap_or_else(|| {
+                wall_pos.lerp(nozzle_pos, (i + 1) as f32 / 6.0)
+            })
+        };
+
+        // Spring tension pulling towards both adjacent links
+        let to_prev = prev_pos - cur_pos;
+        let d_prev = to_prev.length();
+        let f_prev = if d_prev > 0.001 {
+            (to_prev / d_prev) * ((d_prev - LINK_REST_LEN) * 85.0)
+        } else {
+            Vec3::ZERO
+        };
+
+        let to_next = next_pos - cur_pos;
+        let d_next = to_next.length();
+        let f_next = if d_next > 0.001 {
+            (to_next / d_next) * ((d_next - LINK_REST_LEN) * 85.0)
+        } else {
+            Vec3::ZERO
+        };
+
+        let gravity = Vec3::new(0.0, -5.5, 0.0);
+        let drag = -cur_vel * 3.5;
+        let total_acc = f_prev + f_next + gravity + drag;
+
+        let mut new_vel = cur_vel + total_acc * dt;
+        let mut new_pos = cur_pos + new_vel * dt;
+
+        // Floor collision constraint
+        if new_pos.y < 0.04 {
+            new_pos.y = 0.04;
+            new_vel.y = 0.0;
+        }
+
+        // Distance constraint projection to prev link
+        let from_prev = new_pos - prev_pos;
+        let d = from_prev.length();
+        let max_d = LINK_REST_LEN * 1.35;
+        let min_d = LINK_REST_LEN * 0.65;
+        if d > max_d && d > 0.001 {
+            new_pos = prev_pos + (from_prev / d) * max_d;
+        } else if d < min_d && d > 0.001 {
+            new_pos = prev_pos + (from_prev / d) * min_d;
+        }
+
+        calculated_pos[i] = new_pos;
+        calculated_vel[i] = new_vel;
+    }
+
+    // Apply positions, velocities, and tangent orientations to chain entities
+    for (mut seg, mut tf) in &mut q_segments {
+        let i = seg.index;
+        if i < 7 {
+            if i == 6 && is_nozzle_held {
+                // When held by player hand, hands system drives position
+                seg.velocity = Vec3::ZERO;
+            } else {
+                tf.translation = calculated_pos[i];
+                seg.velocity = calculated_vel[i];
+            }
+
+            // Align segment rotation along chain tangent vector
+            let tangent = if i > 0 {
+                calculated_pos[i] - calculated_pos[i - 1]
+            } else {
+                calculated_pos[1] - calculated_pos[0]
+            };
+            if tangent.length_squared() > 0.001 {
+                tf.rotation = Quat::from_rotation_arc(Vec3::Y, tangent.normalize());
+            }
+        }
+    }
+}
+
+/// Allows the player to interact with the flexible yellow hose coupler nozzle or anchor fittings
+/// to pull it off an anchor point or cycle its attachment.
 pub fn gas_hose_interaction_system(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     mouse: Option<Res<ButtonInput<MouseButton>>>,
@@ -689,8 +932,7 @@ pub fn gas_hose_interaction_system(
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     dialogue_state: Option<Res<crate::elf_game::dialogue::ActiveDialogue>>,
     q_camera: Query<&GlobalTransform, With<FirstPersonCamera>>,
-    mut q_hose: Query<(&mut GasHose, &Children)>,
-    mut q_child_tf: Query<&mut Transform, Without<FirstPersonCamera>>,
+    mut q_hose: Query<&mut GasHose>,
 ) {
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
         return;
@@ -717,7 +959,7 @@ pub fn gas_hose_interaction_system(
     let cam_pos = cam_gt.translation();
     let cam_fwd = cam_gt.forward();
 
-    for (mut hose, children) in &mut q_hose {
+    for mut hose in &mut q_hose {
         let stove_target = hose.stove_anchor_pos;
         let oven_target = hose.oven_anchor_pos;
         let loose_target = hose.loose_nozzle_pos;
@@ -737,7 +979,6 @@ pub fn gas_hose_interaction_system(
             } else {
                 hose.attached_to = HoseAttachment::Stove;
             }
-            update_hose_visuals(&hose, children, &mut q_child_tf);
             break;
         } else if dist_oven < 2.5 && dot_oven > 0.70 {
             // Toggle / attach to Oven
@@ -746,7 +987,6 @@ pub fn gas_hose_interaction_system(
             } else {
                 hose.attached_to = HoseAttachment::Oven;
             }
-            update_hose_visuals(&hose, children, &mut q_child_tf);
             break;
         } else if (dist_loose < 2.5 && dot_loose > 0.65) || (cam_pos.distance(hose.wall_inlet_pos) < 2.5) {
             // Cycle attachment: Neither -> Stove -> Oven -> Neither
@@ -755,26 +995,7 @@ pub fn gas_hose_interaction_system(
                 HoseAttachment::Stove => HoseAttachment::Oven,
                 HoseAttachment::Oven => HoseAttachment::Neither,
             };
-            update_hose_visuals(&hose, children, &mut q_child_tf);
             break;
-        }
-    }
-}
-
-fn update_hose_visuals(
-    hose: &GasHose,
-    children: &Children,
-    q_child_tf: &mut Query<&mut Transform, Without<FirstPersonCamera>>,
-) {
-    let offset_target = match hose.attached_to {
-        HoseAttachment::Stove => Vec3::new(0.40, -0.20, 0.65),
-        HoseAttachment::Oven => Vec3::new(-0.40, -0.20, 0.65),
-        HoseAttachment::Neither => Vec3::new(0.0, -0.72, 0.85),
-    };
-
-    if let Some(&coupler_e) = children.last() {
-        if let Ok(mut tf) = q_child_tf.get_mut(coupler_e) {
-            tf.translation = offset_target;
         }
     }
 }

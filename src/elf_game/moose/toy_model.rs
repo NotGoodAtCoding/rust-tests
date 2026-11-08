@@ -303,7 +303,7 @@ pub fn spawn_mr_moose(
         .spawn((
             Mesh3d(torso_mesh),
             MeshMaterial3d(moose_fur_primary.clone()),
-            Transform::from_xyz(-6.5, 1.8, -17.0),
+            Transform::from_xyz(-2.0, 1.8, -17.0),
             Collider::cuboid(0.85, 0.68, 1.35),
             RigidBody::KinematicPositionBased,
             MrMoose,
@@ -506,7 +506,7 @@ pub fn spawn_mr_moose(
             let mut seg_cmd = commands.spawn((
                 Mesh3d(scarf_segment_mesh.clone()),
                 MeshMaterial3d(seg_mat),
-                Transform::from_translation(Vec3::new(-6.5, 1.8, -17.0) + rest_off),
+                Transform::from_translation(Vec3::new(-2.0, 1.8, -17.0) + rest_off),
                 MooseScarfSegment {
                     index: idx,
                     rest_offset: rest_off,
@@ -651,7 +651,7 @@ pub fn spawn_mr_moose(
         ));
     });
 
-    // 4. Feeding Trough / Food Box in front of the window (X = -6.5, Z = -12.0)
+    // 4. Feeding Trough / Food Box in front of the stable door (X = -2.0, Z = -12.0)
     let trough_metal = workshop_mats.as_ref().map(|wm| wm.sheet_metal.clone()).unwrap_or_else(|| {
         materials.add(StandardMaterial {
             base_color: SHEET_METAL,
@@ -663,7 +663,7 @@ pub fn spawn_mr_moose(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(2.0, 0.5, 1.2))),
         MeshMaterial3d(trough_metal),
-        Transform::from_xyz(-6.5, 0.3, -12.0),
+        Transform::from_xyz(-2.0, 0.3, -12.0),
         Collider::cuboid(1.0, 0.25, 0.6),
         RigidBody::Fixed,
         MooseFeedingTrough,
@@ -767,12 +767,14 @@ pub fn animate_mr_moose_peeking_system(
         return;
     }
 
+    let moose_x = q_moose.iter().next().map(|m| m.translation.x).unwrap_or(-2.0);
+
     // Determine target transforms for current hunger stage
     let (target_moose_pos, target_head_pos, target_head_rot, target_shutter_angle) = match hunger.stage {
         MooseHungerStage::BehindShutters => {
             // Far back outside, shutters shut
             (
-                Vec3::new(-6.5, 1.8, -17.0),
+                Vec3::new(moose_x, 1.8, -17.0),
                 Vec3::new(0.0, 1.1, 1.6),
                 Quat::IDENTITY,
                 0.0,
@@ -783,7 +785,7 @@ pub fn animate_mr_moose_peeking_system(
             let progress = ((hunger.value - 20.0) / 30.0).clamp(0.0, 1.0);
             let head_sway = (progress * std::f32::consts::PI * 2.0).sin() * 0.05;
             (
-                Vec3::new(-6.5, 1.8, -14.5),
+                Vec3::new(moose_x, 1.8, -14.5),
                 Vec3::new(head_sway, 1.1, 2.4 + progress * 0.1),
                 Quat::IDENTITY,
                 MAX_PEEK_SHUTTER_ANGLE,
@@ -795,7 +797,7 @@ pub fn animate_mr_moose_peeking_system(
             let huff_offset = huff_pulse.max(0.0) * 0.05;
             let jitter = huff_pulse * 0.03;
             (
-                Vec3::new(-6.5, 1.8, -14.3),
+                Vec3::new(moose_x, 1.8, -14.3),
                 Vec3::new(0.0, 1.1, 2.6 + huff_offset),
                 Quat::IDENTITY,
                 MAX_PEEK_SHUTTER_ANGLE + jitter,
@@ -804,7 +806,7 @@ pub fn animate_mr_moose_peeking_system(
         MooseHungerStage::WindowSlammed => {
             // Sharp snap back outside, shutters slammed shut
             (
-                Vec3::new(-6.5, 1.8, -17.0),
+                Vec3::new(moose_x, 1.8, -17.0),
                 Vec3::new(0.0, 1.1, 1.6),
                 Quat::IDENTITY,
                 0.0,
@@ -816,7 +818,7 @@ pub fn animate_mr_moose_peeking_system(
             let deliberate_sway = (progress * std::f32::consts::PI * 4.0).sin() * 0.04;
             let head_cock_z = (progress * std::f32::consts::PI * 2.0).sin() * 0.08;
             (
-                Vec3::new(-6.5, 1.8, -14.5),
+                Vec3::new(moose_x, 1.8, -14.5),
                 Vec3::new(deliberate_sway, 1.08, 2.45),
                 Quat::from_rotation_z(head_cock_z),
                 MAX_PEEK_SHUTTER_ANGLE,

@@ -161,10 +161,10 @@ pub fn spawn_moose_hunger_dial_and_scale(
     };
 
     // 1. Physical Mechanical Gas Pressure Gauge / Hunger Dial mounted by the stove & window
-    // Mounted prominently on the North wall by the furnace stove and climbable window bay at X = -8.35, Y = 1.95, Z = -12.65
+    // Mounted prominently on the North wall by the furnace stove and climbable window bay at X = -6.6, Y = 1.95, Z = -12.75
     // Angled slightly (+0.15 rad) so it is clearly readable from the stove, oven, and workbench
     let mut dial_cmd = commands.spawn((
-        Transform::from_xyz(-8.35, 1.95, -12.65).with_rotation(Quat::from_rotation_y(0.15)),
+        Transform::from_xyz(-6.6, 1.95, -12.75).with_rotation(Quat::from_rotation_y(0.15)),
         Visibility::default(),
         MooseHungerDial,
         Name::new("MooseHungerMechanicalDial"),
@@ -339,9 +339,9 @@ pub fn spawn_moose_hunger_dial_and_scale(
     });
 
     // 2. Physical Scale Base Platform under the Moose Feeding Trough
-    // Positioned at X = -6.5, Y = 0.08, Z = -12.0 (directly beneath trough at Y = 0.3)
+    // Positioned at X = -2.0, Y = 0.08, Z = -12.0 (directly beneath trough at Y = 0.3)
     let mut scale_cmd = commands.spawn((
-        Transform::from_xyz(-6.5, 0.08, -12.0),
+        Transform::from_xyz(-2.0, 0.08, -12.0),
         Visibility::default(),
         MooseTroughScalePlate::default(),
         Name::new("MooseTroughScalePlatform"),

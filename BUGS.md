@@ -3,6 +3,8 @@ Bug descriptions will be added to the ACTIVE section. Fix the bug and move them 
 
 ACTIVE:
 
+in dialogue.rs: Make the text for the Elf Prompts larger and in a rectangular box at the bottom of the screen rather than in the middle. Leave the center of the wheel clear and transparent so the player can see the elf they are talking to. If the player inputs a keyboard navigation option, set the mouse position to the center so that it doesn't reset the chosen option on every frame. 
+
 The Pantry section is not fully closed off, there are big holes in the walls that allow the player to enter without opening the door.
 
 The Pantry should only have one jar of Moose Treats at a time. Once removed, it should not refresh until the door is closed and then reopened, which should reset all of the Pantry supplies to the default initialized state.
@@ -32,6 +34,8 @@ Idea: Elf Mischief behavior: Philosopher. If an elf gains this Mischief trait, i
 Update the KleptoStash behavior to add leaf nodes with one edge back to the main graph that are in the corners of the main room. The elf should put the stolen item in front of them when stashing it, and remember the last item stashed and not target that item again to prevent getting stuck in a loop. There should also be a longer cooldown between stashing items, like 15 seconds.
 
 DONE:
+
+Stove and oven: The yellow hose connector should be a flexible chain, similar to the scarf asset on the Moose. it should have one permanent attach point on the wall, and two detachable anchor points on the stove and the oven. It should snap to connect if the end of the hose is held by the player and gets within about .2 meters of the attach point. Make both the stove and oven bigger. Move Mr. Moose to be closer to the center of the wall, and replace the window he peeks through with a Stable door, which has a top and bottom half section that can open independently. When Moose pokes is head through, only the top half opens. When Moose rampages, both the top and bottom should fly open and be physics objects rotating freely on their hinges within 2 radian range from the closed orientation to the fully open orientation, with a large impulse from the Moose. When the Moose is fed or when the rampage ends, set both the top and bottom to be fully closed. Make the door grabbable but not movable by the player. This will be a key part of progression for the player to get outside. 
 
 Feature: Oven and Stove: Make a model for an oven and a gas burning furnace stove. The player must keep the temperature up or everything will freeze and presents will stop spawning in. Repurpose the hunger_dial to be a Pressure gauge for the amount of Gas left to power the stove. Move the gauge to be by the stove, which should be by the window. Instead of a single large glass window, make a series of smaller windows that are large enough for the player to jump and climb through. Outside the house make a propane tank holder that the player can replace the propane tanks, and then refill them at the main tank which is a distance away. Inside, there should be a pipe with a flexible thin yellow hose. This can be hooked up to either the Oven or the Stove by pulling it off of one anchor point and attaching it to the other. If it's attached to neither and the gas is on, if a FLAME source gets within 1 meter of the hose, cause a fiery explosion.
 

@@ -487,14 +487,14 @@ pub fn spawn_diegetic_screens_and_signs(
         "MooseSnacksJarLabel",
     );
 
-    // 8. Moose Feeding Trough Embossed Sign (X = -6.5, Y = 0.45, Z = -11.35, on front of trough facing +Z)
+    // 8. Moose Feeding Trough Embossed Sign (X = -2.0, Y = 0.45, Z = -11.35, on front of trough facing +Z)
     spawn_directional_sign(
         &mut commands,
         &mut meshes,
         &mut materials,
         &mut images,
         metal_sign_mat.clone(),
-        Transform::from_xyz(-6.5, 0.45, -11.35),
+        Transform::from_xyz(-2.0, 0.45, -11.35),
         Vec2::new(1.8, 0.25),
         "MOOSE FEEDING TROUGH\nDEPOSIT SNACKS HERE BEFORE HUNGER HITS 60",
         Color::srgb(0.4, 0.9, 1.0),

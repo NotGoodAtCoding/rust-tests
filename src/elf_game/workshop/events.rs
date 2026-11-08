@@ -100,11 +100,17 @@ pub fn handle_moose_window_breach(
             *vis = Visibility::Hidden;
         }
 
-        // Add rampage tracker to Mr. Moose and leap into window opening at X = -6.5
+        // Add rampage tracker to Mr. Moose and leap into opening
         for (moose_entity, mut moose_tf) in &mut q_moose {
-            moose_tf.translation = Vec3::new(-6.5, 1.4, -10.0);
+            let moose_x = moose_tf.translation.x;
+            moose_tf.translation = Vec3::new(moose_x, 1.4, -10.0);
             moose_tf.rotation = Quat::IDENTITY;
-            commands.entity(moose_entity).insert(MooseRampageTracker::default());
+            let mut tracker = MooseRampageTracker::default();
+            tracker.waypoints[0] = Vec3::new(moose_x, 1.4, -10.0);
+            tracker.waypoints[5] = Vec3::new(moose_x, 1.4, -4.0);
+            tracker.waypoints[6] = Vec3::new(moose_x, 1.4, -10.0);
+            tracker.waypoints[7] = Vec3::new(moose_x, 1.8, -17.0);
+            commands.entity(moose_entity).insert(tracker);
         }
 
         // Screen knockback impulse on player
@@ -240,8 +246,9 @@ pub fn moose_rampage_path_and_physics_impulse_system(
                 *w_vis = Visibility::Inherited;
             }
 
-            // Reset Moose root transform to exact default
-            moose_tf.translation = Vec3::new(-6.5, 1.8, -17.0);
+            // Reset Moose root transform to retreat destination
+            let retreat_pos = tracker.waypoints.last().copied().unwrap_or(moose_tf.translation);
+            moose_tf.translation = retreat_pos;
             moose_tf.rotation = Quat::IDENTITY;
             moose_tf.scale = Vec3::ONE;
 
@@ -284,7 +291,8 @@ pub fn moose_rampage_path_and_physics_impulse_system(
                     *w_vis = Visibility::Inherited;
                 }
 
-                moose_tf.translation = Vec3::new(-6.5, 1.8, -17.0);
+                let retreat_pos = tracker.waypoints.last().copied().unwrap_or(moose_tf.translation);
+                moose_tf.translation = retreat_pos;
                 moose_tf.rotation = Quat::IDENTITY;
                 moose_tf.scale = Vec3::ONE;
 

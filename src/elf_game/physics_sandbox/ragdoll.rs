@@ -125,7 +125,7 @@ impl ElfNavGraph {
                 name: "WorkbenchWest".to_string(),
                 position: Vec3::new(-3.8, 0.45, -4.0),
                 radius: 0.8,
-                neighbors: vec![0, 5, 6, 7],
+                neighbors: vec![0, 4, 5, 6, 7],
                 purpose: Some(ElfNodePurpose::MainTableTreatJar),
             },
             // Node 2: Workbench East Pass
@@ -150,9 +150,9 @@ impl ElfNavGraph {
             ElfNavNode {
                 id: 4,
                 name: "MooseTrough".to_string(),
-                position: Vec3::new(-6.5, 0.45, -10.5),
+                position: Vec3::new(-2.0, 0.45, -10.5),
                 radius: 1.2,
-                neighbors: vec![5],
+                neighbors: vec![1, 5],
                 purpose: Some(ElfNodePurpose::MooseFeedingStation),
             },
             // Node 5: Northwest Rafters Pass
@@ -1397,7 +1397,14 @@ pub fn elf_assistant_ai_system(
                         dest_pos.z - elf_tf.translation.z,
                     ).length();
 
-                    if dist_to_dest < 0.8 || (dist < 0.8 && elf.path_step + 1 >= elf.path.len()) {
+                    let legacy_dest = Vec3::new(-6.5, 0.45, -10.5);
+                    let dist_to_legacy = Vec3::new(
+                        legacy_dest.x - elf_tf.translation.x,
+                        0.0,
+                        legacy_dest.z - elf_tf.translation.z,
+                    ).length();
+
+                    if dist_to_dest < 0.8 || dist_to_legacy < 0.8 || (dist < 0.8 && elf.path_step + 1 >= elf.path.len()) {
                         if let Some(ref graph) = nav_graph {
                             // Arrived at MooseFeedingStation! Deposit treat and reduce hunger
                             elf.current_node = feeding_node_idx;

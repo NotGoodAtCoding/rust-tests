@@ -2854,7 +2854,7 @@ fn test_physical_mechanical_hunger_dial_and_scale() {
     // Spawn feeding trough at default location
     app.world_mut().spawn((
         MooseFeedingTrough,
-        Transform::from_xyz(-6.5, 0.3, -12.0),
+        Transform::from_xyz(-2.0, 0.3, -12.0),
     ));
 
     // Run startup
@@ -2866,7 +2866,7 @@ fn test_physical_mechanical_hunger_dial_and_scale() {
     assert!(dial.is_some(), "MooseHungerDial must be spawned outside window");
     let (_, dial_tf) = dial.unwrap();
     assert!(
-        (dial_tf.translation.x - (-8.35)).abs() < 0.2 && (dial_tf.translation.z - (-12.65)).abs() < 0.2,
+        (dial_tf.translation.x - (-6.6)).abs() < 0.2 && (dial_tf.translation.z - (-12.75)).abs() < 0.2,
         "Dial must be mounted beside stove by the window, got {:?}",
         dial_tf.translation
     );
@@ -2951,7 +2951,7 @@ fn test_physical_mechanical_hunger_dial_and_scale() {
     // 6. Test scale deflection when snack is placed in trough
     let snack = app.world_mut().spawn((
         MooseSnack { nutrition_value: 60.0 },
-        Transform::from_xyz(-6.5, 0.4, -12.0),
+        Transform::from_xyz(-2.0, 0.4, -12.0),
     )).id();
     app.update();
 
@@ -7613,14 +7613,14 @@ fn test_oven_stove_models_and_gas_hose_attachment() {
     let mut stove_q = app.world_mut().query::<(&GasFurnaceStove, &Transform)>();
     let (stove, stove_tf) = stove_q.iter(app.world()).next().expect("Stove must exist");
     assert!(stove.is_lit, "Furnace stove should be lit by default");
-    assert!((stove_tf.translation.x - (-9.2)).abs() < 0.2, "Stove must be by the window at X ≈ -9.2");
-    assert!((stove_tf.translation.z - (-12.2)).abs() < 0.2, "Stove must be by North wall at Z ≈ -12.2");
+    assert!((stove_tf.translation.x - (-7.6)).abs() < 0.2, "Stove must be by the window at X ≈ -7.6");
+    assert!((stove_tf.translation.z - (-12.0)).abs() < 0.2, "Stove must be by North wall at Z ≈ -12.0");
 
     // 2. Baker's oven entity
     let mut oven_q = app.world_mut().query::<(&WorkshopOven, &Transform)>();
     let (oven, oven_tf) = oven_q.iter(app.world()).next().expect("Oven must exist");
     assert_eq!(oven.internal_temp, 20.0);
-    assert!((oven_tf.translation.x - (-10.9)).abs() < 0.2, "Oven must be adjacent to stove at X ≈ -10.9");
+    assert!((oven_tf.translation.x - (-10.6)).abs() < 0.2, "Oven must be adjacent to stove at X ≈ -10.6");
 
     // 3. Flexible yellow gas hose entity
     let mut hose_q = app.world_mut().query::<&GasHose>();
@@ -7675,6 +7675,7 @@ fn test_workshop_temperature_heating_and_freezing_spawner_halt() {
         oven_anchor_pos: Vec3::ZERO,
         loose_nozzle_pos: Vec3::ZERO,
         is_venting_gas: false,
+        ..default()
     }).id();
 
     // Set initial cool temperature (15.0 deg C)
@@ -7820,6 +7821,7 @@ fn test_propane_tank_flow_consumption_and_refill() {
         oven_anchor_pos: Vec3::ZERO,
         loose_nozzle_pos: Vec3::ZERO,
         is_venting_gas: false,
+        ..default()
     }).id();
 
     // Advance 1 sec burning fuel at stove (burn_rate = 5.0)
@@ -7863,48 +7865,34 @@ fn test_climbable_windows_geometry() {
     app.add_systems(Startup, setup_workshop_scene);
     app.update();
 
-    // Verify 3 climbable window sills are spawned
+    // Verify climbable window sill and stable door are spawned
     let mut names_q = app.world_mut().query::<(&Name, &Transform)>();
-    let mut found_west = false;
-    let mut found_moose = false;
-    let mut found_east = false;
-    let mut found_mullion_w = false;
-    let mut found_mullion_e = false;
+    let mut found_window_sill = false;
+    let mut found_door_top = false;
+    let mut found_door_bottom = false;
 
     for (name, tf) in names_q.iter(app.world()) {
         match name.as_str() {
             "WestClimbableWindowSill" => {
-                found_west = true;
-                assert!((tf.translation.x - (-8.3)).abs() < 0.1);
+                found_window_sill = true;
+                assert!((tf.translation.x - (-4.8)).abs() < 0.1);
                 assert_eq!(tf.translation.y, 0.85, "Window sill height must be 0.85m for player climbing");
             }
-            "MooseWindowSill" => {
-                found_moose = true;
-                assert!((tf.translation.x - (-6.5)).abs() < 0.1);
-                assert_eq!(tf.translation.y, 0.85, "Center Moose window sill height must be 0.85m");
+            "StableDoorTopHalf" => {
+                found_door_top = true;
+                assert!((tf.translation.x - (-2.0)).abs() < 0.2);
             }
-            "EastClimbableWindowSill" => {
-                found_east = true;
-                assert!((tf.translation.x - (-4.7)).abs() < 0.1);
-                assert_eq!(tf.translation.y, 0.85, "East window sill height must be 0.85m for player climbing");
-            }
-            "WindowMullionWest" => {
-                found_mullion_w = true;
-                assert!((tf.translation.x - (-7.4)).abs() < 0.1);
-            }
-            "WindowMullionEast" => {
-                found_mullion_e = true;
-                assert!((tf.translation.x - (-5.6)).abs() < 0.1);
+            "StableDoorBottomHalf" => {
+                found_door_bottom = true;
+                assert!((tf.translation.x - (-2.0)).abs() < 0.2);
             }
             _ => {}
         }
     }
 
-    assert!(found_west, "West climbable window sill must be present");
-    assert!(found_moose, "Center Moose window sill must be present");
-    assert!(found_east, "East climbable window sill must be present");
-    assert!(found_mullion_w, "West timber mullion must be present");
-    assert!(found_mullion_e, "East timber mullion must be present");
+    assert!(found_window_sill, "Climbable window sill must be present");
+    assert!(found_door_top, "Stable door top half must be present");
+    assert!(found_door_bottom, "Stable door bottom half must be present");
 }
 
 #[test]
@@ -7937,6 +7925,8 @@ fn test_gas_leak_flame_explosion() {
         oven_anchor_pos: Vec3::new(-10.4, 0.65, -12.2),
         loose_nozzle_pos: nozzle_pos,
         is_venting_gas: true,
+        snap_distance: 0.22,
+        nozzle_entity: None,
     });
 
     // Spawn Player nearby
@@ -7985,4 +7975,216 @@ fn test_gas_leak_flame_explosion() {
     assert_eq!(elf.state, ElfNpcState::RagdollTumble, "Elf must tumble in ragdoll from explosion");
     let elf_vel = app.world().get::<Velocity>(elf_e).unwrap();
     assert!(elf_vel.linear.length() > 5.0, "Elf must receive linear blast impulse");
+}
+
+#[test]
+fn test_flexible_chain_yellow_gas_hose_and_anchors() {
+    use rust_tests::elf_game::workshop::stove::{
+        spawn_oven_stove_and_propane_scene, GasHose, GasHoseSegment, GasHoseCouplerNozzle,
+        StoveGasAnchor, OvenGasAnchor, HoseAttachment,
+    };
+    use rust_tests::elf_game::player::hands::Grabbable;
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_systems(Startup, spawn_oven_stove_and_propane_scene);
+    app.update();
+
+    // 1. GasHose entity
+    let mut hose_q = app.world_mut().query::<&GasHose>();
+    let hose = hose_q.iter(app.world()).next().expect("GasHose must exist");
+    assert_eq!(hose.attached_to, HoseAttachment::Stove);
+    assert!((hose.wall_inlet_pos.x - (-9.05)).abs() < 0.1);
+    assert!((hose.wall_inlet_pos.y - 1.15).abs() < 0.1);
+    assert!((hose.wall_inlet_pos.z - (-12.85)).abs() < 0.1);
+    assert!((hose.stove_anchor_pos.x - (-8.44)).abs() < 0.1);
+    assert!((hose.oven_anchor_pos.x - (-9.62)).abs() < 0.1);
+
+    // 2. 7 chain links
+    let mut seg_q = app.world_mut().query::<&GasHoseSegment>();
+    let segments: Vec<&GasHoseSegment> = seg_q.iter(app.world()).collect();
+    assert_eq!(segments.len(), 7, "Yellow hose must consist of a flexible 7-link chain");
+
+    // 3. Coupler nozzle has Grabbable and GasHoseCouplerNozzle
+    let mut nozzle_q = app.world_mut().query::<(&GasHoseCouplerNozzle, &Grabbable)>();
+    assert_eq!(nozzle_q.iter(app.world()).count(), 1, "Coupler nozzle must be Grabbable by player");
+
+    // 4. Detachable anchors on stove and oven
+    let mut stove_anchor_q = app.world_mut().query::<&StoveGasAnchor>();
+    assert_eq!(stove_anchor_q.iter(app.world()).count(), 1, "Stove must have a gas anchor fitting");
+
+    let mut oven_anchor_q = app.world_mut().query::<&OvenGasAnchor>();
+    assert_eq!(oven_anchor_q.iter(app.world()).count(), 1, "Oven must have a gas anchor fitting");
+}
+
+#[test]
+fn test_gas_hose_snap_to_connect_mechanics() {
+    use rust_tests::elf_game::workshop::stove::{
+        GasHose, GasHoseSegment, GasHoseCouplerNozzle, HoseAttachment,
+        gas_hose_chain_physics_system,
+    };
+    use rust_tests::elf_game::player::ElfHands;
+    use rust_tests::elf_game::player::hands::{Grabbable, HeldByPlayer};
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.add_systems(Update, gas_hose_chain_physics_system);
+
+    let nozzle_e = app.world_mut().spawn((
+        GasHoseSegment { index: 6, velocity: Vec3::ZERO },
+        GasHoseCouplerNozzle,
+        Grabbable,
+        HeldByPlayer,
+        Transform::from_xyz(-9.60, 0.85, -12.0), // Within 0.05m of oven anchor (-9.62, 0.85, -12.0)
+    )).id();
+
+    // Spawn hose attached to neither
+    app.world_mut().spawn(GasHose {
+        attached_to: HoseAttachment::Neither,
+        wall_inlet_pos: Vec3::new(-9.05, 1.15, -12.85),
+        stove_anchor_pos: Vec3::new(-8.44, 0.85, -12.0),
+        oven_anchor_pos: Vec3::new(-9.62, 0.85, -12.0),
+        loose_nozzle_pos: Vec3::new(-9.05, 0.05, -12.0),
+        is_venting_gas: true,
+        snap_distance: 0.22,
+        nozzle_entity: Some(nozzle_e),
+    });
+
+    // Player holding nozzle in left hand
+    let player_hands_e = app.world_mut().spawn(ElfHands {
+        left_grabbed: Some(nozzle_e),
+        right_grabbed: None,
+        ..default()
+    }).id();
+
+    app.update();
+
+    // 1. Verify hose snapped to Oven
+    let mut hose_q = app.world_mut().query::<&GasHose>();
+    let hose = hose_q.iter(app.world()).next().unwrap();
+    assert_eq!(hose.attached_to, HoseAttachment::Oven, "Hose must snap to Oven when held within 0.22m");
+    assert!(!hose.is_venting_gas);
+
+    // 2. Verify player grab was cleanly released upon snapping
+    let hands = app.world().get::<ElfHands>(player_hands_e).unwrap();
+    assert!(hands.left_grabbed.is_none(), "Left hand grab must be released upon snap");
+    assert!(app.world().get::<HeldByPlayer>(nozzle_e).is_none(), "HeldByPlayer component removed");
+}
+
+#[test]
+fn test_mr_moose_center_wall_and_stable_door_mechanics() {
+    use rust_tests::elf_game::workshop::stable_door::{
+        StableDoorTopHalf, StableDoorBottomHalf,
+        stable_door_system, stable_door_interaction_system,
+    };
+    use rust_tests::elf_game::moose::{MooseHunger, MooseHungerStage};
+    use rust_tests::elf_game::player::ElfHands;
+    use rust_tests::elf_game::player::hands::{Grabbable, HeldByPlayer};
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    let hunger = MooseHunger {
+        value: 25.0,
+        max_value: 60.0,
+        stage: MooseHungerStage::PeekingThrough,
+        ..default()
+    };
+    app.insert_resource(hunger);
+
+    app.add_systems(Update, (stable_door_system, stable_door_interaction_system));
+
+    // Spawn Stable Door Top Half
+    let top_door_e = app.world_mut().spawn((
+        StableDoorTopHalf {
+            current_angle: 0.0,
+            target_angle: 0.0,
+            angular_velocity: 0.0,
+            is_physics_driven: false,
+            hinge_pos: Vec3::new(-2.9, 1.78, -13.0),
+        },
+        Transform::from_xyz(-2.0, 1.78, -13.0),
+        Grabbable,
+    )).id();
+
+    // Spawn Stable Door Bottom Half
+    let bottom_door_e = app.world_mut().spawn((
+        StableDoorBottomHalf {
+            current_angle: 0.0,
+            target_angle: 0.0,
+            angular_velocity: 0.0,
+            is_physics_driven: false,
+            hinge_pos: Vec3::new(-2.9, 0.58, -13.0),
+        },
+        Transform::from_xyz(-2.0, 0.58, -13.0),
+        Grabbable,
+    )).id();
+
+    // 1. Advance frames during Peeking stage
+    for _ in 0..10 {
+        app.update();
+    }
+
+    let top = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+    let bottom = app.world().get::<StableDoorBottomHalf>(bottom_door_e).unwrap();
+    assert!(top.current_angle > 0.5, "Top half must open during peeking, got {}", top.current_angle);
+    assert_eq!(bottom.current_angle, 0.0, "Bottom half must remain firmly closed during peeking");
+
+    // 2. Trigger Rampage Breach
+    {
+        let mut h = app.world_mut().resource_mut::<MooseHunger>();
+        h.is_breached = true;
+        h.stage = MooseHungerStage::BreachedRampage;
+    }
+
+    app.update();
+
+    let top_breach = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+    let bottom_breach = app.world().get::<StableDoorBottomHalf>(bottom_door_e).unwrap();
+    assert!(top_breach.is_physics_driven, "Top half becomes physics driven on rampage");
+    assert!(bottom_breach.is_physics_driven, "Bottom half becomes physics driven on rampage");
+    assert!(top_breach.angular_velocity > 5.0, "Top half receives large impulse");
+    assert!(bottom_breach.angular_velocity > 5.0, "Bottom half receives large impulse");
+
+    // Run physics updates and verify angle stays within 2.0 radian range
+    for _ in 0..20 {
+        app.update();
+    }
+    let top_swung = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+    let bottom_swung = app.world().get::<StableDoorBottomHalf>(bottom_door_e).unwrap();
+    assert!(top_swung.current_angle <= 2.0, "Top angle must not exceed 2.0 rad, got {}", top_swung.current_angle);
+    assert!(bottom_swung.current_angle <= 2.0, "Bottom angle must not exceed 2.0 rad, got {}", bottom_swung.current_angle);
+
+    // 3. Moose fed / rampage ends: return to closed
+    {
+        let mut h = app.world_mut().resource_mut::<MooseHunger>();
+        h.is_breached = false;
+        h.value = 0.0;
+        h.stage = MooseHungerStage::BehindShutters;
+    }
+
+    for _ in 0..30 {
+        app.update();
+    }
+    let top_closed = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+    let bottom_closed = app.world().get::<StableDoorBottomHalf>(bottom_door_e).unwrap();
+    assert!(top_closed.current_angle < 0.05, "Top half returns to fully closed when rampage ends, got {}", top_closed.current_angle);
+    assert!(bottom_closed.current_angle < 0.05, "Bottom half returns to fully closed when rampage ends, got {}", bottom_closed.current_angle);
+
+    // 4. Test grabbable but not movable by player
+    let hands_e = app.world_mut().spawn(ElfHands {
+        left_grabbed: Some(bottom_door_e),
+        right_grabbed: Some(top_door_e),
+        ..default()
+    }).id();
+    app.world_mut().entity_mut(top_door_e).insert(HeldByPlayer);
+    app.world_mut().entity_mut(bottom_door_e).insert(HeldByPlayer);
+
+    app.update();
+
+    let hands = app.world().get::<ElfHands>(hands_e).unwrap();
+    assert!(hands.left_grabbed.is_none(), "Player cannot hold bottom door");
+    assert!(hands.right_grabbed.is_none(), "Player cannot hold top door");
+    assert!(app.world().get::<HeldByPlayer>(top_door_e).is_none());
+    assert!(app.world().get::<HeldByPlayer>(bottom_door_e).is_none());
 }

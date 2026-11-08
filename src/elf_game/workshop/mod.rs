@@ -7,11 +7,13 @@ pub mod events;
 pub mod progression;
 pub mod pantry;
 pub mod stove;
+pub mod stable_door;
 
 pub use room::VacuumTractorBeamCone;
 pub use progression::*;
 pub use pantry::*;
 pub use stove::*;
+pub use stable_door::*;
 
 #[derive(Message, Debug, Clone)]
 pub struct UnlockDoorMessage {
@@ -72,10 +74,13 @@ impl Plugin for WorkshopPlugin {
                     pantry::pantry_door_interaction_system,
                     stove::workshop_temperature_system,
                     stove::propane_gas_flow_system,
+                    stove::gas_hose_chain_physics_system,
                     stove::gas_hose_interaction_system,
                     stove::propane_tank_refill_and_holder_system,
                     stove::gas_leak_flame_explosion_system,
                     stove::explosion_flash_fade_system,
+                    stable_door::stable_door_system,
+                    stable_door::stable_door_interaction_system,
                 ),
             )
             .add_systems(

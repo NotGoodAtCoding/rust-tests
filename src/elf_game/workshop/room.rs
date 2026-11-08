@@ -498,102 +498,92 @@ pub fn setup_workshop_scene(
     ));
 
     // North wall (Front: Z = -13.0):
-    // 1. Left North Wall section (from X = -13.0 to X = -9.05, width 3.95m, center X = -11.025)
+    // 1. Left North Wall section (from X = -13.0 to X = -11.6, width 1.4m, center X = -12.3)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(3.95, 5.5, 0.4))),
+        Mesh3d(meshes.add(Cuboid::new(1.4, 5.5, 0.4))),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(-11.025, 2.75, -13.0),
-        Collider::cuboid(1.975, 2.75, 0.2),
+        Transform::from_xyz(-12.3, 2.75, -13.0),
+        Collider::cuboid(0.7, 2.75, 0.2),
         RigidBody::Fixed,
         Name::new("WallNorthLeft"),
     ));
 
-    // 2. Series of 3 Climbable Window Bays (from X = -9.05 to X = -3.95, width 5.1m)
+    // Solid wall backing behind the large Oven and Gas Furnace Stove (from X = -11.6 to X = -5.6, width 6.0m)
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(6.0, 5.5, 0.4))),
+        MeshMaterial3d(wall_material.clone()),
+        Transform::from_xyz(-8.6, 2.75, -13.0),
+        Collider::cuboid(3.0, 2.75, 0.2),
+        RigidBody::Fixed,
+        Name::new("WallNorthStoveBacking"),
+    ));
+
+    // 2. Climbable Window Bay (from X = -5.6 to X = -4.0, width 1.6m, center X = -4.8)
     // Low sill height at Y = 0.85m allows player to jump onto the sill and climb directly through into the snowy yard.
-    // - Low wall below windowsills (Y = 0.0 to 0.85, height 0.85m)
+    // - Low wall below window sill (Y = 0.0 to 0.85, height 0.85m)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(5.1, 0.85, 0.4))),
+        Mesh3d(meshes.add(Cuboid::new(1.6, 0.85, 0.4))),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(-6.5, 0.425, -13.0),
-        Collider::cuboid(2.55, 0.425, 0.2),
+        Transform::from_xyz(-4.8, 0.425, -13.0),
+        Collider::cuboid(0.8, 0.425, 0.2),
         RigidBody::Fixed,
-        Name::new("WallNorthBelowWindows"),
+        Name::new("WallNorthBelowWindow"),
     ));
 
-    // - Upper wall lintel above window bays (Y = 2.70 to 5.50, height 2.80m)
+    // - Upper wall lintel above window (Y = 2.70 to 5.50, height 2.80m)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(5.1, 2.80, 0.4))),
+        Mesh3d(meshes.add(Cuboid::new(1.6, 2.80, 0.4))),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(-6.5, 4.10, -13.0),
-        Collider::cuboid(2.55, 1.40, 0.2),
+        Transform::from_xyz(-4.8, 4.10, -13.0),
+        Collider::cuboid(0.8, 1.40, 0.2),
         RigidBody::Fixed,
-        Name::new("WallNorthAboveWindows"),
+        Name::new("WallNorthAboveWindow"),
     ));
 
-    // Window Bay 1: West Window (by the Stove & Gas Pressure Gauge: center X = -8.3)
+    // Climbable Window Sill shelf (Wooden ledge protruding slightly for stepping/climbing)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.5, 0.08, 0.6))),
+        Mesh3d(meshes.add(Cuboid::new(1.6, 0.08, 0.6))),
         MeshMaterial3d(window_frame_material.clone()),
-        Transform::from_xyz(-8.3, 0.85, -12.95),
-        Collider::cuboid(0.75, 0.04, 0.3),
+        Transform::from_xyz(-4.8, 0.85, -12.95),
+        Collider::cuboid(0.8, 0.04, 0.3),
         RigidBody::Fixed,
         Name::new("WestClimbableWindowSill"),
     ));
 
-    // Timber Mullion between West and Center windows (X = -7.4)
+    // Wall section / timber post between climbable window and Stable Door (from X = -4.0 to X = -2.9, width 1.1m)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.3, 1.85, 0.45))),
-        MeshMaterial3d(window_frame_material.clone()),
-        Transform::from_xyz(-7.4, 1.775, -13.0),
-        Collider::cuboid(0.15, 0.925, 0.225),
+        Mesh3d(meshes.add(Cuboid::new(1.1, 5.5, 0.4))),
+        MeshMaterial3d(wall_material.clone()),
+        Transform::from_xyz(-3.45, 2.75, -13.0),
+        Collider::cuboid(0.55, 2.75, 0.2),
         RigidBody::Fixed,
-        Name::new("WindowMullionWest"),
+        Name::new("WallNorthWindowDoorMullion"),
     ));
 
-    // Window Bay 2: Center Window (Mr. Moose Peeking & Breach Window: center X = -6.5)
+    // Upper lintel above Stable Door (from X = -2.9 to X = -1.1, width 1.8m, Y = 2.45 to 5.50, height 3.05m)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.5, 0.08, 0.6))),
-        MeshMaterial3d(window_frame_material.clone()),
-        Transform::from_xyz(-6.5, 0.85, -12.95),
-        Collider::cuboid(0.75, 0.04, 0.3),
+        Mesh3d(meshes.add(Cuboid::new(1.8, 3.05, 0.4))),
+        MeshMaterial3d(wall_material.clone()),
+        Transform::from_xyz(-2.0, 3.975, -13.0),
+        Collider::cuboid(0.9, 1.525, 0.2),
         RigidBody::Fixed,
-        Name::new("MooseWindowSill"),
+        Name::new("WallNorthAboveStableDoor"),
     ));
 
-    // Timber Mullion between Center and East windows (X = -5.6)
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.3, 1.85, 0.45))),
-        MeshMaterial3d(window_frame_material.clone()),
-        Transform::from_xyz(-5.6, 1.775, -13.0),
-        Collider::cuboid(0.15, 0.925, 0.225),
-        RigidBody::Fixed,
-        Name::new("WindowMullionEast"),
-    ));
-
-    // Window Bay 3: East Window (by Workbench: center X = -4.7)
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.5, 0.08, 0.6))),
-        MeshMaterial3d(window_frame_material.clone()),
-        Transform::from_xyz(-4.7, 0.85, -12.95),
-        Collider::cuboid(0.75, 0.04, 0.3),
-        RigidBody::Fixed,
-        Name::new("EastClimbableWindowSill"),
-    ));
-
-    // Breakable window pane state entity for event integration (Center window)
+    // Breakable window / door breach state entity for event integration (at Stable Door X = -2.0)
     commands.spawn((
         BreakableWindowPane { is_broken: false },
-        Transform::from_xyz(-6.5, 1.775, -13.0),
+        Transform::from_xyz(-2.0, 1.78, -13.0),
         Visibility::default(),
         Name::new("MooseWindowBreachState"),
     ));
 
-    // 3. Right & Center North Wall (Behind the workbench & monitor: X = -3.95 to X = 13.0, width 16.95m)
+    // 3. Right & Center North Wall (Behind the workbench & monitor: X = -1.1 to X = 13.0, width 14.1m)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(16.95, 5.5, 0.4))),
+        Mesh3d(meshes.add(Cuboid::new(14.1, 5.5, 0.4))),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(4.525, 2.75, -13.0),
-        Collider::cuboid(8.475, 2.75, 0.2),
+        Transform::from_xyz(5.95, 2.75, -13.0),
+        Collider::cuboid(7.05, 2.75, 0.2),
         RigidBody::Fixed,
         Name::new("WallNorthMainSolid"),
     ));
@@ -1222,6 +1212,14 @@ pub fn setup_workshop_scene(
 
     // Spawn Pantry Storage Wing & interactive restocking physics door
     super::pantry::spawn_pantry_storage_wing(
+        &mut commands,
+        &mut meshes_opt,
+        &mut materials_opt,
+        workshop_mats.as_deref(),
+    );
+
+    // Spawn Stable Door (Dutch Door) where Mr. Moose peeks and breaches
+    super::stable_door::spawn_stable_door(
         &mut commands,
         &mut meshes_opt,
         &mut materials_opt,

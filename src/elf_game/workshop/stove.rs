@@ -110,9 +110,9 @@ impl Default for GasHose {
         Self {
             attached_to: HoseAttachment::Stove,
             wall_inlet_pos: Vec3::new(-9.05, 1.15, -12.85),
-            stove_anchor_pos: Vec3::new(-8.44, 0.85, -12.0),
-            oven_anchor_pos: Vec3::new(-9.62, 0.85, -12.0),
-            loose_nozzle_pos: Vec3::new(-9.05, 0.05, -12.0),
+            stove_anchor_pos: Vec3::new(-7.34, 0.85, -11.4),
+            oven_anchor_pos: Vec3::new(-10.42, 0.85, -11.4),
+            loose_nozzle_pos: Vec3::new(-9.05, 0.05, -11.4),
             is_venting_gas: false,
             snap_distance: 0.85,
             nozzle_entity: None,
@@ -257,6 +257,14 @@ pub fn spawn_oven_stove_and_propane_scene(
         ..default()
     });
 
+    // Stove gas anchor fitting red material
+    let red_anchor_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.88, 0.12, 0.14),
+        metallic: 0.35,
+        perceptual_roughness: 0.4,
+        ..default()
+    });
+
     // Propane tank blue/steel material
     let propane_blue_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.18, 0.42, 0.75),
@@ -308,10 +316,10 @@ pub fn spawn_oven_stove_and_propane_scene(
     });
 
     // -------------------------------------------------------------------------
-    // 1. Gas-Burning Furnace Stove (Bigger footprint: X = -7.6, Z = -12.0)
+    // 1. Gas-Burning Furnace Stove (Moved further away: X = -6.5, Z = -11.4)
     // -------------------------------------------------------------------------
-    let stove_pos = Vec3::new(-7.6, 0.0, -12.0);
-    let stove_anchor_pos = Vec3::new(-8.44, 0.85, -12.0);
+    let stove_pos = Vec3::new(-6.5, 0.0, -11.4);
+    let stove_anchor_pos = Vec3::new(-7.34, 0.85, -11.4);
 
     commands
         .spawn((
@@ -391,13 +399,14 @@ pub fn spawn_oven_stove_and_propane_scene(
                 Name::new("StoveExhaustFluePipe"),
             ));
 
-            // Stove brass gas inlet anchor fitting on West flank with generous interaction area
+            // Stove red gas inlet anchor fitting on West flank with compact active area
             stove.spawn((
                 StoveGasAnchor,
+                crate::elf_game::assets::objects::AnchorPoint::new("gas_hose").with_radius(2.0),
                 Mesh3d(meshes.add(Cylinder::new(0.08, 0.22))),
-                MeshMaterial3d(brass_mat.clone()),
+                MeshMaterial3d(red_anchor_mat.clone()),
                 Transform::from_xyz(-0.84, 0.85, 0.0).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
-                Collider::cylinder(0.40, 0.45),
+                Collider::cylinder(0.18, 0.22),
                 Sensor,
                 Grabbable,
                 Name::new("StoveGasAnchorFitting"),
@@ -405,10 +414,10 @@ pub fn spawn_oven_stove_and_propane_scene(
         });
 
     // -------------------------------------------------------------------------
-    // 2. Baker's Oven (Bigger footprint: X = -10.6, Z = -12.0)
+    // 2. Baker's Oven (Moved further away: X = -11.4, Z = -11.4)
     // -------------------------------------------------------------------------
-    let oven_pos = Vec3::new(-10.6, 0.0, -12.0);
-    let oven_anchor_pos = Vec3::new(-9.62, 0.85, -12.0);
+    let oven_pos = Vec3::new(-11.4, 0.0, -11.4);
+    let oven_anchor_pos = Vec3::new(-10.42, 0.85, -11.4);
 
     commands
         .spawn((
@@ -456,13 +465,14 @@ pub fn spawn_oven_stove_and_propane_scene(
                 Name::new("OvenDoorHandle"),
             ));
 
-            // Oven brass gas inlet anchor fitting on East flank with generous interaction area
+            // Oven gas inlet anchor fitting on East flank with compact active area
             oven.spawn((
                 OvenGasAnchor,
+                crate::elf_game::assets::objects::AnchorPoint::new("gas_hose").with_radius(2.0),
                 Mesh3d(meshes.add(Cylinder::new(0.08, 0.22))),
                 MeshMaterial3d(brass_mat.clone()),
                 Transform::from_xyz(0.98, 0.85, 0.0).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
-                Collider::cylinder(0.40, 0.45),
+                Collider::cylinder(0.18, 0.22),
                 Sensor,
                 Grabbable,
                 Name::new("OvenGasAnchorFitting"),
@@ -497,7 +507,7 @@ pub fn spawn_oven_stove_and_propane_scene(
         let rest_pos = wall_inlet_pos.lerp(stove_anchor_pos, t)
             + Vec3::new(0.0, -0.15 * (1.0 - (t - 0.5).abs() * 2.0), 0.1 * t);
 
-        let rope_joint = RopeJointBuilder::new(0.32).contacts_enabled(false);
+        let rope_joint = RopeJointBuilder::new(0.38).contacts_enabled(false);
 
         let link_e = commands
             .spawn((
@@ -514,7 +524,7 @@ pub fn spawn_oven_stove_and_propane_scene(
                 },
                 Velocity::zero(),
                 ImpulseJoint::new(prev_joint_body, rope_joint),
-                Mesh3d(meshes.add(Cylinder::new(0.024, 0.20))),
+                Mesh3d(meshes.add(Cylinder::new(0.026, 0.38))),
                 MeshMaterial3d(yellow_hose_mat.clone()),
                 Name::new(format!("YellowHoseChainLink_{}", i)),
             ))
@@ -524,7 +534,7 @@ pub fn spawn_oven_stove_and_propane_scene(
     }
 
     // Coupler Nozzle (Link 6) connected to Link 5 via Rapier RopeJoint
-    let nozzle_rope_joint = RopeJointBuilder::new(0.32).contacts_enabled(false);
+    let nozzle_rope_joint = RopeJointBuilder::new(0.38).contacts_enabled(false);
 
     let nozzle_e = commands
         .spawn((
@@ -533,6 +543,7 @@ pub fn spawn_oven_stove_and_propane_scene(
                 velocity: Vec3::ZERO,
             },
             GasHoseCouplerNozzle,
+            crate::elf_game::assets::objects::AnchorTrait::new("gas_hose"),
             Transform::from_translation(stove_anchor_pos),
             RigidBody::Fixed, // Starts securely docked to Stove
             Collider::cylinder(0.08, 0.05),
@@ -686,13 +697,13 @@ pub fn spawn_oven_stove_and_propane_scene(
         });
 
     // -------------------------------------------------------------------------
-    // 6. Portable Lit Candle Stick on Windowsill (A grabbable FlameSource)
+    // 6. Portable Lit Candle Stick on Workshop Bench (A grabbable FlameSource)
     // -------------------------------------------------------------------------
     commands
         .spawn((
             FlameSource,
             Grabbable,
-            Transform::from_xyz(-8.35, 0.95, -12.95),
+            Transform::from_xyz(0.60, 0.95, -4.0),
             Collider::cylinder(0.15, 0.08),
             RigidBody::Dynamic,
             Name::new("PortableBrassCandlestick"),

@@ -9,3 +9,6 @@ bevy = "0.20.1"
 bevy_rapier3d = "0.37"
 cpal = "0.18.2"
 ab_glyph = "0.2"
+
+[profile.dev.package.bevy_rapier3d]
+opt-level = 3

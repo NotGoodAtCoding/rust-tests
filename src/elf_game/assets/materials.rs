@@ -421,5 +421,6 @@ pub struct AssetsPlugin;
 impl Plugin for AssetsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(PreStartup, init_workshop_materials);
+        app.add_plugins(super::objects::AnchorPointPlugin);
     }
 }

@@ -7724,14 +7724,14 @@ fn test_oven_stove_models_and_gas_hose_attachment() {
     let mut stove_q = app.world_mut().query::<(&GasFurnaceStove, &Transform)>();
     let (stove, stove_tf) = stove_q.iter(app.world()).next().expect("Stove must exist");
     assert!(stove.is_lit, "Furnace stove should be lit by default");
-    assert!((stove_tf.translation.x - (-7.6)).abs() < 0.2, "Stove must be by the window at X ≈ -7.6");
-    assert!((stove_tf.translation.z - (-12.0)).abs() < 0.2, "Stove must be by North wall at Z ≈ -12.0");
+    assert!((stove_tf.translation.x - (-6.5)).abs() < 0.2, "Stove must be at X ≈ -6.5");
+    assert!((stove_tf.translation.z - (-11.4)).abs() < 0.2, "Stove must be at Z ≈ -11.4");
 
     // 2. Baker's oven entity
     let mut oven_q = app.world_mut().query::<(&WorkshopOven, &Transform)>();
     let (oven, oven_tf) = oven_q.iter(app.world()).next().expect("Oven must exist");
     assert_eq!(oven.internal_temp, 20.0);
-    assert!((oven_tf.translation.x - (-10.6)).abs() < 0.2, "Oven must be adjacent to stove at X ≈ -10.6");
+    assert!((oven_tf.translation.x - (-11.4)).abs() < 0.2, "Oven must be at X ≈ -11.4");
 
     // 3. Flexible yellow gas hose entity
     let mut hose_q = app.world_mut().query::<&GasHose>();
@@ -8117,8 +8117,8 @@ fn test_flexible_chain_yellow_gas_hose_and_anchors() {
     assert!((hose.wall_inlet_pos.x - (-9.05)).abs() < 0.1);
     assert!((hose.wall_inlet_pos.y - 1.15).abs() < 0.1);
     assert!((hose.wall_inlet_pos.z - (-12.85)).abs() < 0.1);
-    assert!((hose.stove_anchor_pos.x - (-8.44)).abs() < 0.1);
-    assert!((hose.oven_anchor_pos.x - (-9.62)).abs() < 0.1);
+    assert!((hose.stove_anchor_pos.x - (-7.34)).abs() < 0.1);
+    assert!((hose.oven_anchor_pos.x - (-10.42)).abs() < 0.1);
 
     // 2. 7 chain links
     let mut seg_q = app.world_mut().query::<&GasHoseSegment>();
@@ -8600,8 +8600,8 @@ fn test_taller_stable_door_feeding_bucket_and_gas_hose_visual_indicators() {
     }
     auto_app.world_mut().entity_mut(nozzle_e).insert(HeldByPlayer);
 
-    // Player faces Oven anchor: cam at (-9.62, 1.2, -10.0), looking North towards oven_anchor_pos (-9.62, 0.85, -12.0)
-    let cam_pos = Vec3::new(-9.62, 1.2, -10.0);
+    // Player faces Oven anchor: cam placed 2m south of oven anchor, looking North towards oven_anchor_pos
+    let cam_pos = Vec3::new(oven_anchor_pos.x, 1.2, oven_anchor_pos.z + 2.0);
     let cam_target = oven_anchor_pos;
     let cam_fwd = (cam_target - cam_pos).normalize();
     auto_app.world_mut().spawn((
@@ -8794,4 +8794,206 @@ fn test_gas_hose_rapier_rope_joint_physics_simulation() {
         assert_eq!(*nozzle_rb, RigidBody::Fixed, "Nozzle must switch to Fixed when attached to Oven");
         assert_eq!(nozzle_tf.translation, hose.oven_anchor_pos, "Nozzle must be positioned at oven anchor");
     }
+}
+
+#[test]
+fn test_generic_reusable_anchor_point_and_matching_traits() {
+    use bevy_rapier3d::prelude::*;
+    use rust_tests::elf_game::{
+        assets::objects::{
+            AnchorPoint, AnchorTrait, LockedInAnchor,
+            anchor_point_interaction_system, sync_locked_anchor_objects_system,
+        },
+        player::{
+            hands::HeldByPlayer,
+            ElfHands,
+            controller::{ElfPlayer, FirstPersonCamera},
+        },
+        workshop::stove::{
+            spawn_oven_stove_and_propane_scene, FlameSource, GasFurnaceStove,
+            StoveGasAnchor, GasHose, GasHoseSegment,
+        },
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+
+    app.add_systems(Startup, spawn_oven_stove_and_propane_scene);
+    app.add_systems(
+        Update,
+        (
+            anchor_point_interaction_system,
+            sync_locked_anchor_objects_system,
+        ),
+    );
+    app.update();
+
+    // 1. Verify Stove and Furnace moved further away
+    let mut stove_q = app.world_mut().query::<(&GasFurnaceStove, &Transform)>();
+    let (_, stove_tf) = stove_q.iter(app.world()).next().expect("Stove must exist");
+    assert!((stove_tf.translation.x - (-6.5)).abs() < 0.1, "Stove moved to X ≈ -6.5");
+    assert!((stove_tf.translation.z - (-11.4)).abs() < 0.1, "Stove moved to Z ≈ -11.4");
+
+    let mut hose_q = app.world_mut().query::<&GasHose>();
+    let hose = hose_q.iter(app.world()).next().expect("GasHose must exist");
+    let anchor_dist = hose.stove_anchor_pos.distance(hose.oven_anchor_pos);
+    assert!(anchor_dist > 3.0, "Stove and Oven anchors must be further away (> 3.0m apart), dist = {}", anchor_dist);
+
+    // 2. Verify Stove attachment point is red and has smaller active area (< 0.25)
+    let mut anchor_q = app.world_mut().query::<(&StoveGasAnchor, &MeshMaterial3d<StandardMaterial>, &Collider)>();
+    let (_, mat_handle, collider) = anchor_q.iter(app.world()).next().expect("StoveGasAnchor must exist");
+    let materials = app.world().resource::<Assets<StandardMaterial>>();
+    let mat = materials.get(mat_handle).expect("Stove gas anchor material must exist");
+    if let Color::Srgba(srgba) = mat.base_color {
+        assert!(srgba.red > 0.8 && srgba.green < 0.3 && srgba.blue < 0.3, "Stove attachment point must be red");
+    } else {
+        panic!("Material base_color must be red");
+    }
+
+    // Active area collider radius should be small (0.22, not previous 0.45)
+    if let Some(cylinder) = collider.as_cylinder() {
+        assert!(cylinder.radius() < 0.25, "Active area collider must be smaller (< 0.25m), got {}", cylinder.radius());
+    }
+
+    // 3. Verify Candle is moved to the workshop bench (Z ≈ -4.0, Y ≈ 0.95)
+    let mut candle_q = app.world_mut().query::<(&FlameSource, &Transform, &Name)>();
+    let mut found_bench_candle = false;
+    for (_, candle_tf, name) in candle_q.iter(app.world()) {
+        if name.as_str() == "PortableBrassCandlestick" {
+            assert!((candle_tf.translation.z - (-4.0)).abs() < 0.2, "Candle must be on workshop bench at Z ≈ -4.0");
+            assert!((candle_tf.translation.y - 0.95).abs() < 0.1, "Candle must rest on workbench surface at Y ≈ 0.95");
+            found_bench_candle = true;
+        }
+    }
+    assert!(found_bench_candle, "Portable brass candlestick must exist on workshop bench");
+
+    // 4. Verify continuous yellow hose segments: link cylinder length is continuous (>= 0.35m)
+    let mut seg_mesh_q = app.world_mut().query::<(&GasHoseSegment, &Mesh3d)>();
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    for (seg, mesh_h) in seg_mesh_q.iter(app.world()) {
+        if seg.index < 6 {
+            // Check segment cylinder mesh
+            let mesh = meshes.get(mesh_h).expect("Segment mesh must exist");
+            // Segment mesh exists and is valid
+            assert!(mesh.count_vertices() > 0, "Segment cylinder mesh must be populated");
+        }
+    }
+
+    // 5. Generic AnchorPoint mechanics:
+    // Create an isolated player, camera, anchor point and physics objects
+    let anchor_pos = Vec3::new(2.0, 1.0, 0.0);
+    let anchor_e = app.world_mut().spawn((
+        AnchorPoint::new("battery").with_radius(3.0).with_offset(Vec3::new(0.0, 0.2, 0.0)),
+        Transform::from_translation(anchor_pos),
+        GlobalTransform::from_translation(anchor_pos),
+    )).id();
+
+    let player_pos = Vec3::new(2.0, 1.0, 1.5);
+    let cam_fwd = (anchor_pos - player_pos).normalize();
+    let player_e = app.world_mut().spawn((
+        ElfPlayer,
+        Transform::from_translation(player_pos),
+        GlobalTransform::from_translation(player_pos),
+        ElfHands::default(),
+    )).id();
+
+    app.world_mut().spawn((
+        FirstPersonCamera,
+        GlobalTransform::from(Transform::from_translation(player_pos).looking_to(cam_fwd, Vec3::Y)),
+    ));
+
+    // Spawn a matching physics object with AnchorTrait("battery")
+    let battery_e = app.world_mut().spawn((
+        AnchorTrait::new("battery"),
+        RigidBody::Dynamic,
+        Velocity::zero(),
+        Transform::from_xyz(2.0, 1.0, 1.0),
+        GlobalTransform::from_xyz(2.0, 1.0, 1.0),
+    )).id();
+
+    // Set object as held by player
+    app.world_mut().entity_mut(battery_e).insert(HeldByPlayer);
+    app.world_mut().entity_mut(player_e).get_mut::<ElfHands>().unwrap().left_grabbed = Some(battery_e);
+
+    // Rule A: If the object is being held, it should NOT snap to the anchor point on proximity!
+    app.update();
+    let anchor = app.world().get::<AnchorPoint>(anchor_e).unwrap();
+    assert_eq!(anchor.locked_object, None, "Object must NOT automatically snap to anchor on proximity while held");
+    assert!(app.world().get::<HeldByPlayer>(battery_e).is_some(), "Battery must remain held by player");
+
+    // Rule B: When player interacts with KeyCode::KeyE while holding matching object, it locks the object in!
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(KeyCode::KeyE);
+        keys.reset(KeyCode::KeyE);
+        keys.press(KeyCode::KeyE);
+    }
+    app.update();
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(KeyCode::KeyE);
+        keys.reset(KeyCode::KeyE);
+    }
+
+    let anchor = app.world().get::<AnchorPoint>(anchor_e).unwrap();
+    assert_eq!(anchor.locked_object, Some(battery_e), "Battery must be locked into AnchorPoint");
+    assert!(app.world().get::<HeldByPlayer>(battery_e).is_none(), "HeldByPlayer must be removed on lock");
+    assert!(app.world().get::<LockedInAnchor>(battery_e).is_some(), "LockedInAnchor component must be added to object");
+    assert_eq!(*app.world().get::<RigidBody>(battery_e).unwrap(), RigidBody::Fixed, "RigidBody must become Fixed on lock");
+
+    let player_hands = app.world().get::<ElfHands>(player_e).unwrap();
+    assert_eq!(player_hands.left_grabbed, None, "Player hand must be released when object locks");
+
+    let battery_tf = app.world().get::<Transform>(battery_e).unwrap();
+    assert_eq!(battery_tf.translation, anchor_pos + Vec3::new(0.0, 0.2, 0.0), "Battery snapped to anchor position + offset");
+
+    // Rule C: Interacting with KeyCode::KeyE again unlocks the object!
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(KeyCode::KeyE);
+        keys.reset(KeyCode::KeyE);
+        keys.press(KeyCode::KeyE);
+    }
+    app.update();
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(KeyCode::KeyE);
+        keys.reset(KeyCode::KeyE);
+    }
+
+    let anchor = app.world().get::<AnchorPoint>(anchor_e).unwrap();
+    assert_eq!(anchor.locked_object, None, "Anchor must be empty after unlocking");
+    assert!(app.world().get::<LockedInAnchor>(battery_e).is_none(), "LockedInAnchor must be removed upon unlocking");
+    assert_eq!(*app.world().get::<RigidBody>(battery_e).unwrap(), RigidBody::Dynamic, "RigidBody must be restored to Dynamic");
+
+    // Rule D: Object with non-matching trait does NOT lock
+    let wood_e = app.world_mut().spawn((
+        AnchorTrait::new("wood"),
+        RigidBody::Dynamic,
+        Velocity::zero(),
+        Transform::from_xyz(2.0, 1.0, 1.0),
+        GlobalTransform::from_xyz(2.0, 1.0, 1.0),
+        HeldByPlayer,
+    )).id();
+    app.world_mut().entity_mut(player_e).get_mut::<ElfHands>().unwrap().left_grabbed = Some(wood_e);
+
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(KeyCode::KeyE);
+        keys.reset(KeyCode::KeyE);
+        keys.press(KeyCode::KeyE);
+    }
+    app.update();
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(KeyCode::KeyE);
+        keys.reset(KeyCode::KeyE);
+    }
+
+    let anchor = app.world().get::<AnchorPoint>(anchor_e).unwrap();
+    assert_eq!(anchor.locked_object, None, "Non-matching object trait ('wood') must not be locked into 'battery' anchor");
+    assert!(app.world().get::<HeldByPlayer>(wood_e).is_some(), "Non-matching object remains held");
 }

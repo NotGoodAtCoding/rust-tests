@@ -9207,3 +9207,121 @@ fn test_festive_cookie_plate_table_and_world_physics_tuning() {
         vel.linear.length()
     );
 }
+
+#[test]
+fn test_tractor_beam_player_force_and_activation_button_distance() {
+    use rust_tests::elf_game::workshop::room::{
+        PresentSendingPlatform, SendPlatformButton, VacuumTractorBeamCone,
+        present_sending_platform_system, setup_workshop_scene,
+    };
+    use rust_tests::elf_game::player::ElfMovement;
+    use bevy_rapier3d::prelude::Velocity;
+
+    // 1. Verify in the spawned workshop room that the button is moved further away from the tractor beam
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time);
+    app.insert_resource(ButtonInput::<KeyCode>::default());
+    app.insert_resource(ButtonInput::<MouseButton>::default());
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_systems(Startup, setup_workshop_scene);
+    app.update();
+
+    let mut button_tf = None;
+    let mut platform_tf = None;
+    for (tf, _) in app.world_mut().query::<(&Transform, &SendPlatformButton)>().iter(app.world()) {
+        button_tf = Some(*tf);
+    }
+    for (tf, _) in app.world_mut().query::<(&Transform, &PresentSendingPlatform)>().iter(app.world()) {
+        platform_tf = Some(*tf);
+    }
+
+    let btn_pos = button_tf.expect("SendPlatformButton must exist").translation;
+    let plat_pos = platform_tf.expect("PresentSendingPlatform must exist").translation;
+    let horizontal_dist = (btn_pos.x - plat_pos.x).hypot(btn_pos.z - plat_pos.z);
+    assert!(
+        horizontal_dist >= 3.5,
+        "Activation button must be moved further away from tractor beam platform (>= 3.5m, got {})",
+        horizontal_dist
+    );
+
+    // 2. Test that player standing inside the tractor beam cannot activate the button
+    let mut app2 = App::new();
+    let mut time2 = Time::<()>::default();
+    time2.advance_by(std::time::Duration::from_millis(50));
+    app2.insert_resource(time2);
+    app2.insert_resource(ButtonInput::<KeyCode>::default());
+    app2.insert_resource(ButtonInput::<MouseButton>::default());
+    app2.add_systems(Update, present_sending_platform_system);
+
+    let plat_e = app2.world_mut().spawn((
+        PresentSendingPlatform::default(),
+        Transform::from_xyz(5.5, 0.05, -4.0),
+    )).id();
+
+    let _cone_e = app2.world_mut().spawn((
+        VacuumTractorBeamCone::default(),
+        Visibility::Hidden,
+        Transform::from_xyz(5.5, 2.025, -4.0),
+    )).id();
+
+    let _btn_e = app2.world_mut().spawn((
+        SendPlatformButton,
+        Transform::from_xyz(1.8, 0.95, -1.8),
+    )).id();
+
+    // Player inside tractor beam area
+    let player_e = app2.world_mut().spawn((
+        ElfMovement::default(),
+        Transform::from_xyz(5.5, 0.2, -4.0),
+    )).id();
+
+    // Press KeyQ while in tractor beam
+    app2.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyQ);
+    app2.update();
+
+    let plat = app2.world().get::<PresentSendingPlatform>(plat_e).unwrap();
+    assert!(
+        !plat.is_active,
+        "Player standing in the tractor beam area MUST NOT be able to activate the tractor beam button"
+    );
+
+    // 3. Move player outside tractor beam area, near the button (e.g. at 1.8, 1.0, -1.5)
+    {
+        let mut p_tf = app2.world_mut().get_mut::<Transform>(player_e).unwrap();
+        p_tf.translation = Vec3::new(1.8, 1.0, -1.5);
+    }
+    app2.update();
+    let plat = app2.world().get::<PresentSendingPlatform>(plat_e).unwrap();
+    assert!(
+        plat.is_active,
+        "Player near the activation button outside the tractor beam MUST be able to activate it"
+    );
+
+    // 4. Test increased force on player when inside active tractor beam
+    // Place physics object on button to hold it active
+    app2.world_mut().spawn((
+        Transform::from_xyz(1.8, 1.0, -1.8),
+        Velocity::zero(),
+    ));
+    // Release key
+    app2.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::KeyQ);
+
+    // Put player back in tractor beam area
+    {
+        let mut p_tf = app2.world_mut().get_mut::<Transform>(player_e).unwrap();
+        p_tf.translation = Vec3::new(5.5, 0.2, -4.0);
+        let mut p_mov = app2.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+        p_mov.velocity = Vec3::ZERO;
+    }
+    app2.update();
+
+    let p_mov = app2.world().get::<ElfMovement>(player_e).unwrap();
+    assert!(
+        p_mov.velocity.y >= 3.0,
+        "Tractor beam upward force on player must be increased to fully suck them up (got vy = {})",
+        p_mov.velocity.y
+    );
+}

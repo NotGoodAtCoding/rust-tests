@@ -453,14 +453,14 @@ pub fn spawn_diegetic_screens_and_signs(
         ));
     });
 
-    // 6. Pneumatic Vacuum Send Button Pedestal Sign (X = 3.8, Y = 0.72, Z = -2.62, angled towards player)
+    // 6. Pneumatic Vacuum Send Button Pedestal Sign (X = 1.8, Y = 0.72, Z = -1.62, angled towards player)
     spawn_directional_sign(
         &mut commands,
         &mut meshes,
         &mut materials,
         &mut images,
         brass_sign_mat.clone(),
-        Transform::from_xyz(3.8, 0.72, -2.62).with_rotation(Quat::from_rotation_x(-0.4)),
+        Transform::from_xyz(1.8, 0.72, -1.62).with_rotation(Quat::from_rotation_x(-0.4)),
         Vec2::new(0.55, 0.22),
         "PNEUMATIC VACUUM\n[ PRESS RED BUTTON ]",
         Color::srgb(1.0, 0.25, 0.25),

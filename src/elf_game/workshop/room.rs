@@ -907,11 +907,11 @@ pub fn setup_workshop_scene(
         })
     });
 
-    // Control Pedestal
+    // Control Pedestal moved further away from tractor beam area (1.8, 0.45, -1.8)
     commands.spawn((
         Mesh3d(meshes.add(Cylinder::new(0.12, 0.9))),
         MeshMaterial3d(btn_pedestal_mat),
-        Transform::from_xyz(3.8, 0.45, -2.8),
+        Transform::from_xyz(1.8, 0.45, -1.8),
         Collider::cylinder(0.45, 0.12),
         RigidBody::Fixed,
         Name::new("SendButtonPedestal"),
@@ -921,7 +921,7 @@ pub fn setup_workshop_scene(
     commands.spawn((
         Mesh3d(meshes.add(Cylinder::new(0.18, 0.10))),
         MeshMaterial3d(red_plunger_mat),
-        Transform::from_xyz(3.8, 0.95, -2.8),
+        Transform::from_xyz(1.8, 0.95, -1.8),
         Collider::cylinder(0.05, 0.18),
         RigidBody::Fixed,
         SendPlatformButton,
@@ -1632,8 +1632,11 @@ pub fn present_sending_platform_system(
             btn_tf.translation
         };
 
-        // Player interaction: Q, E, F or Left/Right Click within reach (< 3.2m)
-        let player_near = q_player.iter().any(|(p_tf, _)| p_tf.translation.distance(btn_pos) < 3.2);
+        // Player interaction: Q, E, F or Left/Right Click within reach (< 2.8m)
+        // Player cannot activate the button when in the tractor beam area
+        let player_near = q_player.iter().any(|(p_tf, _)| {
+            !beam_cone.contains_point(p_tf.translation) && p_tf.translation.distance(btn_pos) < 2.8
+        });
         let button_pressed_by_player = player_near && (
             keys.as_ref().map(|k| {
                 k.pressed(KeyCode::KeyQ)
@@ -1774,9 +1777,10 @@ pub fn present_sending_platform_system(
         let player_pos = player_tf.translation;
 
         if beam_cone.contains_point(player_pos) {
-            // Apply vacuum suction to player (proportional to distance)
+            // Apply vacuum suction to player with increased force to fully suck player up against gravity
             let draw_accel = beam_cone.compute_gravity_draw(player_pos);
-            movement.velocity += draw_accel * dt;
+            let player_suction = draw_accel * 2.2 + Vec3::Y * 20.0;
+            movement.velocity += player_suction * dt;
             movement.is_grounded = false;
 
             // Horizontal centering towards the central suction axis

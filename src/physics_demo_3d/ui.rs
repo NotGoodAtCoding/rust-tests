@@ -58,6 +58,9 @@ pub fn fill_bar_width(sens: f32) -> f32 {
     sensitivity_to_norm(sens) * (SLIDER_TRACK_WIDTH - SLIDER_THUMB_SIZE) + (SLIDER_THUMB_SIZE / 2.0)
 }
 
+#[derive(Debug, Component, Default)]
+pub struct SensitivitySlider;
+
 #[derive(Debug, Component)]
 pub struct SensitivitySliderTrack;
 
@@ -398,7 +401,9 @@ pub fn spawn_ui(mut commands: Commands) {
                                 )],
                             ),
                             (
+                                SensitivitySlider,
                                 SensitivitySliderTrack,
+                                Hovered::default(),
                                 Node {
                                     width: px(SLIDER_TRACK_WIDTH),
                                     height: px(10),
@@ -412,7 +417,9 @@ pub fn spawn_ui(mut commands: Commands) {
                                 BackgroundColor(Color::from(tailwind::SLATE_800)),
                                 children![
                                     (
+                                        SensitivitySlider,
                                         SensitivitySliderFill,
+                                        Hovered::default(),
                                         Node {
                                             width: px(fill_bar_width(DEFAULT_SENSITIVITY)),
                                             height: px(10),
@@ -424,7 +431,9 @@ pub fn spawn_ui(mut commands: Commands) {
                                         BackgroundColor(Color::from(tailwind::CYAN_600)),
                                     ),
                                     (
+                                        SensitivitySlider,
                                         SensitivitySliderThumb,
+                                        Hovered::default(),
                                         Node {
                                             width: px(SLIDER_THUMB_SIZE),
                                             height: px(SLIDER_THUMB_SIZE),
@@ -575,7 +584,28 @@ pub fn on_button_activate(
 pub fn on_slider_thumb_drag(
     event: On<PointerDrag>,
     mut menu_state: ResMut<MenuState>,
+    slider_query: Query<
+        Entity,
+        Or<(
+            With<SensitivitySlider>,
+            With<SensitivitySliderTrack>,
+            With<SensitivitySliderThumb>,
+            With<SensitivitySliderFill>,
+        )>,
+    >,
 ) {
+    if !menu_state.is_open {
+        return;
+    }
+
+    if event.button != PointerButton::Primary {
+        return;
+    }
+
+    if !slider_query.contains(event.entity) {
+        return;
+    }
+
     let usable_width = SLIDER_TRACK_WIDTH - SLIDER_THUMB_SIZE;
     let delta_norm = event.delta.x / usable_width;
     let old_norm = sensitivity_to_norm(menu_state.mouse_sensitivity);
@@ -584,20 +614,42 @@ pub fn on_slider_thumb_drag(
 }
 
 pub fn on_slider_thumb_over(
-    _: On<PointerOver>,
+    event: On<PointerOver>,
+    slider_query: Query<
+        Entity,
+        Or<(
+            With<SensitivitySlider>,
+            With<SensitivitySliderTrack>,
+            With<SensitivitySliderThumb>,
+            With<SensitivitySliderFill>,
+        )>,
+    >,
     mut query: Query<&mut BackgroundColor, With<SensitivitySliderThumb>>,
 ) {
-    for mut bg in query.iter_mut() {
-        *bg = BackgroundColor(Color::from(tailwind::CYAN_300));
+    if slider_query.contains(event.entity) {
+        for mut bg in query.iter_mut() {
+            *bg = BackgroundColor(Color::from(tailwind::CYAN_300));
+        }
     }
 }
 
 pub fn on_slider_thumb_out(
-    _: On<PointerOut>,
+    event: On<PointerOut>,
+    slider_query: Query<
+        Entity,
+        Or<(
+            With<SensitivitySlider>,
+            With<SensitivitySliderTrack>,
+            With<SensitivitySliderThumb>,
+            With<SensitivitySliderFill>,
+        )>,
+    >,
     mut query: Query<&mut BackgroundColor, With<SensitivitySliderThumb>>,
 ) {
-    for mut bg in query.iter_mut() {
-        *bg = BackgroundColor(Color::from(tailwind::CYAN_400));
+    if slider_query.contains(event.entity) {
+        for mut bg in query.iter_mut() {
+            *bg = BackgroundColor(Color::from(tailwind::CYAN_400));
+        }
     }
 }
 

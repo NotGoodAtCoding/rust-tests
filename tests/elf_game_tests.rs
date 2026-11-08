@@ -6537,3 +6537,209 @@ fn test_moose_feeder_hat_equipping_activates_routine() {
         assert_eq!(hands.right_grabbed, None, "Player hand must release the hat upon placing it");
     }
 }
+
+#[test]
+fn test_mouse_sensitivity_slider_activation_and_hit_filtering() {
+    use bevy::camera::NormalizedRenderTarget;
+    use bevy::picking::backend::HitData;
+    use bevy::picking::pointer::{Location, PointerId};
+    use bevy::window::WindowRef;
+    use rust_tests::elf_game::ui::{
+        on_slider_thumb_drag, on_slider_thumb_over, on_slider_thumb_out,
+        MenuState, MenuSubmenu, SensitivitySlider, SensitivitySliderThumb,
+        SensitivitySliderTrack, SensitivitySliderFill,
+        DEFAULT_SENSITIVITY,
+    };
+
+    let mut app = App::new();
+    app.init_resource::<MenuState>();
+    app.add_observer(on_slider_thumb_drag);
+    app.add_observer(on_slider_thumb_over);
+    app.add_observer(on_slider_thumb_out);
+
+    // Spawn slider components
+    let track_e = app.world_mut().spawn((
+        SensitivitySlider,
+        SensitivitySliderTrack,
+    )).id();
+
+    let fill_e = app.world_mut().spawn((
+        SensitivitySlider,
+        SensitivitySliderFill,
+    )).id();
+
+    let thumb_e = app.world_mut().spawn((
+        SensitivitySlider,
+        SensitivitySliderThumb,
+        BackgroundColor(Color::from(bevy::color::palettes::tailwind::CYAN_400)),
+    )).id();
+
+    // Spawn an unrelated entity (e.g. background, player or button)
+    let unrelated_e = app.world_mut().spawn(()).id();
+
+    let dummy_pointer = Pointer::new(
+        PointerId::Mouse,
+        Location {
+            target: NormalizedRenderTarget::Window(WindowRef::Entity(Entity::PLACEHOLDER).normalize(None).unwrap()),
+            position: Vec2::ZERO,
+        },
+    );
+
+    let dummy_hit = HitData::new(Entity::PLACEHOLDER, 0.0, None, None);
+
+    // 1. Menu CLOSED: Dragging thumb or unrelated entity MUST NOT move slider
+    assert!(!app.world().resource::<MenuState>().is_open);
+    assert_eq!(app.world().resource::<MenuState>().mouse_sensitivity, DEFAULT_SENSITIVITY);
+
+    app.world_mut().trigger(PointerDrag {
+        entity: thumb_e,
+        pointer: dummy_pointer.clone(),
+        button: PointerButton::Primary,
+        distance: Vec2::new(50.0, 0.0),
+        delta: Vec2::new(50.0, 0.0),
+    });
+    assert_eq!(
+        app.world().resource::<MenuState>().mouse_sensitivity,
+        DEFAULT_SENSITIVITY,
+        "Holding Mouse1 when menu is closed must not move sensitivity slider"
+    );
+
+    app.world_mut().trigger(PointerDrag {
+        entity: unrelated_e,
+        pointer: dummy_pointer.clone(),
+        button: PointerButton::Primary,
+        distance: Vec2::new(50.0, 0.0),
+        delta: Vec2::new(50.0, 0.0),
+    });
+    assert_eq!(
+        app.world().resource::<MenuState>().mouse_sensitivity,
+        DEFAULT_SENSITIVITY,
+        "Holding Mouse1 on unrelated entity when menu is closed must not move slider"
+    );
+
+    // 2. Menu OPEN (Main Submenu / Options Menu):
+    app.world_mut().resource_mut::<MenuState>().is_open = true;
+    app.world_mut().resource_mut::<MenuState>().active_submenu = MenuSubmenu::Main;
+
+    // Dragging UNRELATED entity while menu is open MUST NOT move slider
+    app.world_mut().trigger(PointerDrag {
+        entity: unrelated_e,
+        pointer: dummy_pointer.clone(),
+        button: PointerButton::Primary,
+        distance: Vec2::new(50.0, 0.0),
+        delta: Vec2::new(50.0, 0.0),
+    });
+    assert_eq!(
+        app.world().resource::<MenuState>().mouse_sensitivity,
+        DEFAULT_SENSITIVITY,
+        "Holding Mouse1 on unrelated entity (not slider) must not move sensitivity slider"
+    );
+
+    // Dragging with non-primary button (e.g. Secondary / Right click) on thumb MUST NOT move slider
+    app.world_mut().trigger(PointerDrag {
+        entity: thumb_e,
+        pointer: dummy_pointer.clone(),
+        button: PointerButton::Secondary,
+        distance: Vec2::new(50.0, 0.0),
+        delta: Vec2::new(50.0, 0.0),
+    });
+    assert_eq!(
+        app.world().resource::<MenuState>().mouse_sensitivity,
+        DEFAULT_SENSITIVITY,
+        "Right-clicking/dragging must not move sensitivity slider"
+    );
+
+    // Dragging on SLIDER THUMB with Mouse1 (Primary) MUST move slider
+    app.world_mut().trigger(PointerDrag {
+        entity: thumb_e,
+        pointer: dummy_pointer.clone(),
+        button: PointerButton::Primary,
+        distance: Vec2::new(20.2, 0.0),
+        delta: Vec2::new(20.2, 0.0),
+    });
+    let sens_after_thumb = app.world().resource::<MenuState>().mouse_sensitivity;
+    assert!(
+        sens_after_thumb > DEFAULT_SENSITIVITY,
+        "Dragging slider thumb to the right must increase mouse sensitivity"
+    );
+
+    // Dragging on SLIDER TRACK with Mouse1 (Primary) MUST also move slider
+    app.world_mut().trigger(PointerDrag {
+        entity: track_e,
+        pointer: dummy_pointer.clone(),
+        button: PointerButton::Primary,
+        distance: Vec2::new(-10.1, 0.0),
+        delta: Vec2::new(-10.1, 0.0),
+    });
+    let sens_after_track = app.world().resource::<MenuState>().mouse_sensitivity;
+    assert!(
+        sens_after_track < sens_after_thumb,
+        "Dragging on slider track to the left must decrease mouse sensitivity"
+    );
+
+    // Dragging on SLIDER FILL with Mouse1 (Primary) MUST also move slider
+    app.world_mut().trigger(PointerDrag {
+        entity: fill_e,
+        pointer: dummy_pointer.clone(),
+        button: PointerButton::Primary,
+        distance: Vec2::new(10.1, 0.0),
+        delta: Vec2::new(10.1, 0.0),
+    });
+    assert!(
+        app.world().resource::<MenuState>().mouse_sensitivity > sens_after_track,
+        "Dragging on slider fill must adjust mouse sensitivity"
+    );
+
+    // 3. Menu in DEBUG Submenu: Options menu is inactive, dragging must not move slider
+    app.world_mut().resource_mut::<MenuState>().active_submenu = MenuSubmenu::Debug;
+    let sens_before_debug = app.world().resource::<MenuState>().mouse_sensitivity;
+    app.world_mut().trigger(PointerDrag {
+        entity: thumb_e,
+        pointer: dummy_pointer.clone(),
+        button: PointerButton::Primary,
+        distance: Vec2::new(30.0, 0.0),
+        delta: Vec2::new(30.0, 0.0),
+    });
+    assert_eq!(
+        app.world().resource::<MenuState>().mouse_sensitivity,
+        sens_before_debug,
+        "Dragging slider when debug submenu is active must not move slider"
+    );
+
+    // 4. Hover tests: PointerOver on unrelated entity must not highlight thumb
+    app.world_mut().resource_mut::<MenuState>().active_submenu = MenuSubmenu::Main;
+    app.world_mut().trigger(PointerOver {
+        entity: unrelated_e,
+        pointer: dummy_pointer.clone(),
+        hit: dummy_hit.clone(),
+    });
+    assert_eq!(
+        app.world().get::<BackgroundColor>(thumb_e).unwrap().0,
+        Color::from(bevy::color::palettes::tailwind::CYAN_400),
+        "Hovering unrelated entity must not highlight slider thumb"
+    );
+
+    // PointerOver on slider thumb highlights to CYAN_300
+    app.world_mut().trigger(PointerOver {
+        entity: thumb_e,
+        pointer: dummy_pointer.clone(),
+        hit: dummy_hit.clone(),
+    });
+    assert_eq!(
+        app.world().get::<BackgroundColor>(thumb_e).unwrap().0,
+        Color::from(bevy::color::palettes::tailwind::CYAN_300),
+        "Hovering slider thumb must highlight it to CYAN_300"
+    );
+
+    // PointerOut restores CYAN_400
+    app.world_mut().trigger(PointerOut {
+        entity: thumb_e,
+        pointer: dummy_pointer.clone(),
+        hit: dummy_hit,
+    });
+    assert_eq!(
+        app.world().get::<BackgroundColor>(thumb_e).unwrap().0,
+        Color::from(bevy::color::palettes::tailwind::CYAN_400),
+        "PointerOut must restore thumb to CYAN_400"
+    );
+}

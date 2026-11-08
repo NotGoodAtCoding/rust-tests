@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 use crate::elf_game::{
     assets::{palette::*, WorkshopMaterials},
-    player::{ElfHands, controller::{LeftHandVisual, RightHandVisual}},
+    player::{ElfHands, ElfMovement, controller::{LeftHandVisual, RightHandVisual}},
     physics_sandbox::{SoftBodyLattice, SoftBodyDeformableMesh},
     wrapping::{Present, WrappingSpecification, WrappingTool, UseToolOnPresentMessage},
 };
@@ -146,7 +146,7 @@ pub fn dual_hand_interaction_system(
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
-    mut q_player: Query<(&Transform, &mut ElfHands)>,
+    mut q_player: Query<(&Transform, &mut ElfHands, Option<&ElfMovement>), Without<Grabbable>>,
     q_camera: Query<&GlobalTransform, With<crate::elf_game::player::controller::FirstPersonCamera>>,
     q_left_visual: Query<&GlobalTransform, With<LeftHandVisual>>,
     q_right_visual: Query<&GlobalTransform, With<RightHandVisual>>,
@@ -160,9 +160,13 @@ pub fn dual_hand_interaction_system(
         return;
     }
 
-    let Ok((_player_tf, mut hands)) = q_player.single_mut() else {
+    let Ok((_player_tf, mut hands, movement_opt)) = q_player.single_mut() else {
         return;
     };
+
+    let player_vel = movement_opt
+        .map(|m| m.velocity)
+        .unwrap_or(Vec3::ZERO);
 
     let left_hand_pos = q_left_visual.single().map(|gt| gt.translation()).unwrap_or(Vec3::ZERO);
     let right_hand_pos = q_right_visual.single().map(|gt| gt.translation()).unwrap_or(Vec3::ZERO);
@@ -171,7 +175,8 @@ pub fn dual_hand_interaction_system(
     let right_toggle = keys.as_ref().map(|k| k.just_pressed(KeyCode::KeyE)).unwrap_or(false);
     let throw_clicked = mouse_buttons.as_ref().map(|m| m.just_pressed(MouseButton::Left)).unwrap_or(false);
 
-    // 1. Mouse 1 Throwing: Throws held object forward along camera look vector
+    // 1. Mouse 1 Throwing: Throws held object forward along camera look vector,
+    // inheriting the player's current velocity (enabling jump-throws to fling items further)
     if throw_clicked {
         let thrown_entity_opt = if hands.right_grabbed.is_some() {
             hands.right_grabbed.take()
@@ -188,7 +193,8 @@ pub fn dual_hand_interaction_system(
             let camera_fwd = q_camera.single().map(|gt| gt.forward().into()).unwrap_or(Vec3::NEG_Z);
             let throw_dir = (camera_fwd + Vec3::Y * 0.15).normalize();
             let throw_speed = 10.0;
-            let throw_vel = throw_dir * throw_speed;
+            let base_throw_vel = throw_dir * throw_speed;
+            let throw_vel = base_throw_vel + player_vel;
             let tumble = Vec3::new(2.5, 1.2, -1.8);
 
             if let Ok(mut vel) = q_velocities.get_mut(thrown_e) {

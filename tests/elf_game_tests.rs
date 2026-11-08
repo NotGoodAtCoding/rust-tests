@@ -987,6 +987,121 @@ fn test_toggle_grab_set_down_and_mouse1_throw() {
 }
 
 #[test]
+fn test_player_jump_throw_velocity_inheritance() {
+    use rust_tests::elf_game::player::hands::{Grabbable, dual_hand_interaction_system};
+    use rust_tests::elf_game::player::controller::{RightHandVisual, FirstPersonCamera};
+    use rust_tests::elf_game::player::{ElfHands, ElfMovement};
+    use bevy_rapier3d::prelude::Velocity;
+
+    let mut app = App::new();
+    app.insert_resource(ButtonInput::<KeyCode>::default());
+    app.insert_resource(ButtonInput::<MouseButton>::default());
+    app.add_message::<rust_tests::elf_game::wrapping::UseToolOnPresentMessage>();
+    app.add_systems(Update, dual_hand_interaction_system);
+
+    // Player with forward and jumping vertical velocity (e.g. running at 6.0 m/s in -Z and jumping at +5.0 m/s in +Y)
+    let player_e = app.world_mut().spawn((
+        ElfHands::default(),
+        ElfMovement {
+            velocity: Vec3::new(0.0, 5.0, -6.0),
+            is_grounded: false,
+            ..default()
+        },
+        Transform::from_xyz(0.0, 1.0, 0.0),
+    )).id();
+
+    // Camera pointing forward (-Z)
+    app.world_mut().spawn((
+        FirstPersonCamera,
+        GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0)),
+    ));
+
+    app.world_mut().spawn((
+        RightHandVisual,
+        GlobalTransform::from(Transform::from_xyz(0.35, 1.0, -0.6)),
+    ));
+
+    let cube_entity = app.world_mut().spawn((
+        Grabbable,
+        Transform::from_xyz(0.35, 1.0, -0.7),
+        Velocity::zero(),
+    )).id();
+
+    // 1. Right hand grabs object
+    {
+        let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+        hands.right_grabbed = Some(cube_entity);
+    }
+
+    // 2. Click Mouse 1 (Left button) to throw while jumping forward
+    {
+        let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        mouse.press(MouseButton::Left);
+    }
+    app.update();
+
+    let vel = app.world().get::<Velocity>(cube_entity).unwrap();
+    // Base throw is ~10 m/s: vz ~ -9.89, vy ~ +1.48.
+    // With jump-throw:
+    // vz should be base vz (-9.89) + player vz (-6.0) = ~ -15.89 m/s!
+    // vy should be base vy (+1.48) + player jump vy (+5.0) = ~ +6.48 m/s!
+    assert!(
+        vel.linear.z < -14.0,
+        "Forward throw velocity must inherit player forward running velocity (-6.0 m/s), got vz = {}",
+        vel.linear.z
+    );
+    assert!(
+        vel.linear.y > 6.0,
+        "Vertical throw velocity must inherit player jumping vertical velocity (+5.0 m/s), got vy = {}",
+        vel.linear.y
+    );
+    assert!(
+        vel.linear.length() > 16.0,
+        "Total launch velocity should be boosted to > 16.0 m/s on jump-throw, got {}",
+        vel.linear.length()
+    );
+}
+
+#[test]
+fn test_player_collision_box_spacing() {
+    use rust_tests::elf_game::player::controller::{spawn_elf_player, ElfPlayer};
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_systems(Startup, spawn_elf_player);
+    app.update();
+
+    let Ok((_, collider, controller)) = app
+        .world_mut()
+        .query::<(&ElfPlayer, &Collider, &KinematicCharacterController)>()
+        .single(app.world())
+    else {
+        panic!("ElfPlayer must be spawned with Collider and KinematicCharacterController");
+    };
+
+    // Verify collider shape has expanded radius (at least 0.45m)
+    let capsule = collider.as_capsule().expect("Player collider must be a capsule");
+    assert!(
+        capsule.radius() >= 0.45,
+        "Player collision box radius must be expanded to provide spacing before running into things, got {}",
+        capsule.radius()
+    );
+
+    // Verify character controller offset padding (spacing cushion)
+    let offset_val = match controller.offset {
+        CharacterLength::Absolute(v) => v,
+        CharacterLength::Relative(v) => v,
+    };
+    assert!(
+        offset_val >= 0.03,
+        "Player character controller offset cushion must be at least 0.03m (3cm), got {}",
+        offset_val
+    );
+}
+
+#[test]
 fn test_chandelier_candle_flicker() {
     use rust_tests::elf_game::workshop::room::{CandleChandelier, chandelier_candle_flicker_system};
 

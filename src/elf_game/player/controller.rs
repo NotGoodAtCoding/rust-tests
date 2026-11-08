@@ -93,14 +93,14 @@ pub fn spawn_elf_player(
             Transform::from_xyz(0.0, 1.2, 0.0),
             Visibility::default(),
             RigidBody::KinematicPositionBased,
-            Collider::capsule_y(0.5, 0.3),
+            Collider::capsule_y(0.42, 0.48),
             CollisionGroups::new(crate::elf_game::player::hands::GROUP_PLAYER, !crate::elf_game::player::hands::GROUP_HELD_ITEM),
             KinematicCharacterController {
                 filter_groups: Some(CollisionGroups::new(
                     crate::elf_game::player::hands::GROUP_PLAYER,
                     !crate::elf_game::player::hands::GROUP_HELD_ITEM,
                 )),
-                offset: CharacterLength::Absolute(0.01),
+                offset: CharacterLength::Absolute(0.04),
                 slide: true,
                 autostep: Some(CharacterAutostep {
                     max_height: CharacterLength::Absolute(0.25),

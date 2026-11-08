@@ -341,6 +341,18 @@ pub fn elf_player_controller_system(
             &mut movement,
         );
 
+        // Sprinting: holding Shift accelerates player above default speed cap (up to 1.35x base speed)
+        let is_sprinting = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+        if is_sprinting && movement.is_grounded && wish_world.length_squared() > 0.001 {
+            movement.current_max_speed = movement.base_speed * 1.35;
+            let target_vel = wish_world * movement.current_max_speed;
+            let current_h = Vec3::new(movement.velocity.x, 0.0, movement.velocity.z);
+            let diff = target_vel - current_h;
+            let step = diff.clamp_length_max(movement.ground_accel * dt);
+            movement.velocity.x += step.x;
+            movement.velocity.z += step.z;
+        }
+
         // Conveyor belt riding: if grounded on the conveyor belt, add conveyor velocity
         let mut conveyor_drift = Vec3::ZERO;
         if movement.is_grounded {

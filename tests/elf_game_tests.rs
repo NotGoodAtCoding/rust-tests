@@ -9459,3 +9459,104 @@ fn test_player_grab_direct_raycast_line_of_sight_reticle() {
         "Cannot grab an object through a solid obstacle blocking reticle line of sight"
     );
 }
+
+#[test]
+fn test_player_elf_collision_default_speed_vs_sprint_bhop_ragdoll() {
+    use rust_tests::elf_game::physics_sandbox::{
+        ElfAssistant, ElfNpcState, elf_assistant_ai_system,
+    };
+    use rust_tests::elf_game::player::ElfMovement;
+    use bevy_rapier3d::prelude::{ExternalImpulse, LockedAxes, Velocity};
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time);
+    app.add_systems(Update, elf_assistant_ai_system);
+
+    let elf_e = app.world_mut().spawn((
+        ElfAssistant::new(1, "TestElf", vec![Vec3::ZERO]),
+        Transform::from_xyz(0.0, 0.45, 0.0),
+        Velocity::zero(),
+        ExternalImpulse::default(),
+        LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
+    )).id();
+
+    // 1. Player running into elf at default speed cap (6.0 m/s)
+    let player_e = app.world_mut().spawn((
+        Transform::from_xyz(0.0, 0.45, 0.3), // Near elf (< 1.1m)
+        ElfMovement {
+            velocity: Vec3::new(6.0, 0.0, 0.0), // Exactly at default speed cap
+            base_speed: 6.0,
+            current_max_speed: 6.0,
+            ..default()
+        },
+    )).id();
+
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        let locked = app.world().get::<LockedAxes>(elf_e).unwrap();
+        let impulse = app.world().get::<ExternalImpulse>(elf_e).unwrap();
+
+        // At default speed cap, elf must NOT ragdoll
+        assert_ne!(
+            elf.state,
+            ElfNpcState::RagdollTumble,
+            "Elf must NOT ragdoll when player collides at default speed cap (6.0 m/s)"
+        );
+        assert!(
+            locked.contains(LockedAxes::ROTATION_LOCKED_X),
+            "Rotation axes must remain locked when hit at default speed cap"
+        );
+        // And must NOT receive a large impulse (small nudge <= 1.0 Ns, no upward lift)
+        assert!(
+            impulse.impulse.length() <= 1.0,
+            "Elf must not receive large impulse at default speed cap, got impulse = {:?}",
+            impulse.impulse
+        );
+        assert_eq!(
+            impulse.impulse.y, 0.0,
+            "Elf must not receive upward lift impulse at default speed cap"
+        );
+    }
+
+    // 2. Player running into elf above default speed cap (from sprinting or bunny hopping, e.g. 8.1 m/s)
+    {
+        let mut p_mov = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+        p_mov.velocity = Vec3::new(8.1, 0.0, 0.0);
+        p_mov.current_max_speed = 8.1;
+    }
+
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        let locked = app.world().get::<LockedAxes>(elf_e).unwrap();
+        let impulse = app.world().get::<ExternalImpulse>(elf_e).unwrap();
+
+        // Above default speed cap, elf MUST ragdoll and tumble
+        assert_eq!(
+            elf.state,
+            ElfNpcState::RagdollTumble,
+            "Elf must enter RagdollTumble when player collides above default speed cap (e.g. 8.1 m/s sprint/BHOP)"
+        );
+        assert_eq!(
+            *locked,
+            LockedAxes::empty(),
+            "Rotation axes must be completely unlocked for 6-DOF ragdoll tumbling"
+        );
+        // And receives large impulse (>= 10.0 Ns + upward lift)
+        assert!(
+            impulse.impulse.length() >= 10.0,
+            "Elf must receive large knock impulse when hit at high sprint/bhop speed, got {:?}",
+            impulse.impulse
+        );
+        assert!(
+            impulse.impulse.y >= 4.5,
+            "Elf must receive upward lift impulse when ragdolled, got vy = {}",
+            impulse.impulse.y
+        );
+    }
+}

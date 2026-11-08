@@ -1123,25 +1123,34 @@ pub fn elf_assistant_ai_system(
                     continue;
                 }
 
-                // Check for high-speed player collision (BHOP slapstick knockdown!)
+                // Check for player collision: only ragdoll if player is going above default speed cap (sprinting or bunny hopping)
                 for (player_tf, player_mov) in &q_player {
                     let player_dist = player_tf.translation.distance(elf_tf.translation);
                     let player_speed = player_mov.velocity.length();
-                    if player_dist < 1.1 && player_speed > 5.5 {
-                        elf.state = ElfNpcState::RagdollTumble;
-                        elf.tumble_timer = 0.0;
-                        *locked_axes = LockedAxes::empty();
+                    let default_speed_cap = player_mov.base_speed;
 
+                    if player_dist < 1.1 {
                         let mut knock_dir = player_mov.velocity;
                         knock_dir.y = 0.0;
                         let knock_dir = knock_dir.normalize_or_zero();
-                        impulse.impulse += knock_dir * 10.0 + Vec3::Y * 5.0;
-                        impulse.torque_impulse += Vec3::new(6.0, 4.0, 5.0);
 
-                        // Drop carried present or treat if knocked down
-                        elf.carried_present = None;
-                        elf.carried_treat = None;
-                        break;
+                        // Only ragdoll if going above the default speed cap (from sprinting or bunny hopping)
+                        if player_speed > default_speed_cap + 0.1 {
+                            elf.state = ElfNpcState::RagdollTumble;
+                            elf.tumble_timer = 0.0;
+                            *locked_axes = LockedAxes::empty();
+
+                            impulse.impulse += knock_dir * 10.0 + Vec3::Y * 5.0;
+                            impulse.torque_impulse += Vec3::new(6.0, 4.0, 5.0);
+
+                            // Drop carried present or treat if knocked down
+                            elf.carried_present = None;
+                            elf.carried_treat = None;
+                            break;
+                        } else if player_speed > 0.5 {
+                            // At or below default speed cap: do NOT ragdoll, apply only a small nudge (<= 1.0 Ns)
+                            impulse.impulse += knock_dir * 0.8;
+                        }
                     }
                 }
                 if elf.state == ElfNpcState::RagdollTumble {

@@ -36,14 +36,14 @@ impl Default for MooseRampageTracker {
             speed: 8.5,
             base_speed: 8.5,
             waypoints: vec![
-                Vec3::new(-6.5, 1.4, -10.0), // Leap into workshop through window
+                Vec3::new(-2.0, 1.4, -10.0), // Leap into workshop through stable door
                 Vec3::new(0.0, 1.4, -4.0),   // Slam into central workbench
                 Vec3::new(5.0, 1.4, 3.0),    // Charge across conveyor belt
                 Vec3::new(-3.0, 1.4, 6.0),   // Trample storage area
                 Vec3::new(3.0, 1.4, 6.0),    // Trample south corner
-                Vec3::new(-6.5, 1.4, -4.0),  // Charge back towards window
-                Vec3::new(-6.5, 1.4, -10.0), // Leap back out window sill
-                Vec3::new(-6.5, 1.8, -17.0), // Retreat to snowy hill behind shutters
+                Vec3::new(-2.0, 1.4, -4.0),  // Charge back towards stable door
+                Vec3::new(-2.0, 1.4, -10.0), // Leap back out stable door
+                Vec3::new(-2.0, 1.8, -17.0), // Retreat to resting area outside stable door
             ],
             buck_timer: 0.0,
             next_buck_interval: 1.2,
@@ -197,8 +197,9 @@ pub fn moose_rampage_path_and_physics_impulse_system(
 
     if hunger.stage != MooseHungerStage::BreachedRampage {
         // Fallback cleanup if hunger was reset out-of-band while moose was still tracking
-        for (moose_entity, mut moose_tf, _tracker) in &mut q_moose {
-            moose_tf.translation = Vec3::new(-6.5, 1.8, -17.0);
+        for (moose_entity, mut moose_tf, tracker) in &mut q_moose {
+            let retreat_pos = tracker.waypoints.last().copied().unwrap_or(Vec3::new(-2.0, 1.8, -17.0));
+            moose_tf.translation = retreat_pos;
             moose_tf.rotation = Quat::IDENTITY;
             moose_tf.scale = Vec3::ONE;
 

@@ -5304,7 +5304,7 @@ fn test_pause_freezes_moose_rampage_movement_and_bucking_animation() {
     let moose = app.world_mut().spawn((
         MrMoose,
         MooseRampageTracker::default(),
-        Transform::from_xyz(-6.5, 1.4, -10.0),
+        Transform::from_xyz(-2.0, 1.4, -10.0),
     )).id();
 
     // Advance 10 frames while unpaused so the moose is actively moving and bucking
@@ -8187,4 +8187,109 @@ fn test_mr_moose_center_wall_and_stable_door_mechanics() {
     assert!(hands.right_grabbed.is_none(), "Player cannot hold top door");
     assert!(app.world().get::<HeldByPlayer>(top_door_e).is_none());
     assert!(app.world().get::<HeldByPlayer>(bottom_door_e).is_none());
+}
+
+#[test]
+fn test_moose_no_shutters_new_resting_rampage_pathing_and_door_slam() {
+    use rust_tests::elf_game::moose::toy_model::{
+        MrMoose, WindowShutters, spawn_mr_moose, moose_feeding_trough_system,
+    };
+    use rust_tests::elf_game::moose::{
+        MooseHunger, MooseHungerStage, MooseFeedingTrough, MooseSnack,
+    };
+    use rust_tests::elf_game::workshop::events::MooseRampageTracker;
+    use rust_tests::elf_game::workshop::stable_door::{
+        StableDoorTopHalf, stable_door_system,
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.insert_resource(MooseHunger {
+        value: 0.0,
+        stage: MooseHungerStage::BehindShutters,
+        ..default()
+    });
+    app.add_systems(Startup, spawn_mr_moose);
+    app.update();
+
+    // 1. Double shutter window is REMOVED from spawn_mr_moose
+    let mut shutter_q = app.world_mut().query::<&WindowShutters>();
+    assert_eq!(shutter_q.iter(app.world()).count(), 0, "Previous double shutter window must be removed");
+
+    // 2. Moose default and resting location is at X = -2.0, Y = 1.8, Z = -17.0
+    let mut moose_q = app.world_mut().query::<(&MrMoose, &Transform)>();
+    let (_, moose_tf) = moose_q.iter(app.world()).next().expect("Mr Moose must exist");
+    assert!((moose_tf.translation.x - (-2.0)).abs() < 0.05, "Moose X must be -2.0, got {}", moose_tf.translation.x);
+    assert!((moose_tf.translation.y - 1.8).abs() < 0.05, "Moose Y must be 1.8");
+    assert!((moose_tf.translation.z - (-17.0)).abs() < 0.05, "Moose Z must be -17.0 resting outside door");
+
+    // 3. Rampage default waypoints use new coordinates around X = -2.0
+    let tracker = MooseRampageTracker::default();
+    assert_eq!(tracker.waypoints[0], Vec3::new(-2.0, 1.4, -10.0), "Leap into workshop at X = -2.0");
+    assert_eq!(tracker.waypoints[5], Vec3::new(-2.0, 1.4, -4.0), "Charge back to door at X = -2.0");
+    assert_eq!(tracker.waypoints[6], Vec3::new(-2.0, 1.4, -10.0), "Leap back out door at X = -2.0");
+    assert_eq!(tracker.waypoints[7], Vec3::new(-2.0, 1.8, -17.0), "Retreat to resting area at X = -2.0");
+
+    // 4. Food trough location is X = -2.0, Y = 0.3, Z = -12.0 in the center of the wall
+    let mut trough_q = app.world_mut().query::<(&MooseFeedingTrough, &Transform)>();
+    let (_, trough_tf) = trough_q.iter(app.world()).next().expect("Trough must exist");
+    assert!((trough_tf.translation.x - (-2.0)).abs() < 0.05, "Trough must be at X = -2.0");
+    assert!((trough_tf.translation.y - 0.3).abs() < 0.05, "Trough must be at Y = 0.3");
+    assert!((trough_tf.translation.z - (-12.0)).abs() < 0.05, "Trough must be at Z = -12.0");
+
+    // 5. Active area of food trough: Snack placed at X = -2.0 is detected and triggers feeding
+    let mut feed_app = App::new();
+    feed_app.insert_resource(MooseHunger {
+        value: 55.0,
+        stage: MooseHungerStage::AgitatedHuffing,
+        ..default()
+    });
+    feed_app.world_mut().spawn((MooseFeedingTrough, Transform::from_xyz(-2.0, 0.3, -12.0)));
+    feed_app.world_mut().spawn((MooseSnack { nutrition_value: 30.0 }, Transform::from_xyz(-2.0, 0.4, -12.0)));
+    feed_app.add_systems(Update, moose_feeding_trough_system);
+    feed_app.update();
+
+    let feed_hunger = feed_app.world().resource::<MooseHunger>();
+    assert_eq!(feed_hunger.value, 0.0, "Snack in active trough area at X = -2.0 must be consumed");
+
+    // 6. Top of stable door opens as Moose pokes head in, and slams shut when he goes back
+    let mut door_app = App::new();
+    door_app.init_resource::<Time>();
+    door_app.insert_resource(MooseHunger {
+        value: 30.0,
+        stage: MooseHungerStage::PeekingThrough,
+        ..default()
+    });
+    door_app.add_systems(Update, stable_door_system);
+
+    let top_door = door_app.world_mut().spawn((
+        StableDoorTopHalf {
+            current_angle: 0.0,
+            target_angle: 0.0,
+            angular_velocity: 0.0,
+            is_physics_driven: false,
+            hinge_pos: Vec3::new(-2.9, 1.78, -13.0),
+        },
+        Transform::from_xyz(-2.0, 1.78, -13.0),
+    )).id();
+
+    // Advance during peeking: door opens as Moose pokes his head in
+    for _ in 0..10 {
+        door_app.update();
+    }
+    let top_open = door_app.world().get::<StableDoorTopHalf>(top_door).unwrap();
+    assert!(top_open.current_angle > 0.5, "Top of stable door must open as Moose pokes head in, got {}", top_open.current_angle);
+
+    // Moose goes back (BehindShutters / WindowSlammed) -> top door slams shut!
+    {
+        let mut h = door_app.world_mut().resource_mut::<MooseHunger>();
+        h.stage = MooseHungerStage::WindowSlammed;
+    }
+    // Slam shut takes only ~3-4 frames at SLAM_SPEED = 25.0
+    for _ in 0..5 {
+        door_app.update();
+    }
+    let top_shut = door_app.world().get::<StableDoorTopHalf>(top_door).unwrap();
+    assert_eq!(top_shut.current_angle, 0.0, "Top of stable door must slam shut when Moose goes back");
 }

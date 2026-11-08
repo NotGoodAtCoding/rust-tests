@@ -251,7 +251,8 @@ pub fn spawn_stable_door(
 }
 
 /// Controls the opening and physics movement of the Stable Door top and bottom halves.
-/// - During peeking / hunger agitation: Only the top half opens!
+/// - During peeking / hunger agitation: Only the top half opens as Mr. Moose pokes his head in!
+/// - When Mr. Moose snaps back or retreats: The top half slams shut with high velocity and impact.
 /// - During rampage breach: Both top and bottom fly open with large impulse (2 radian range).
 /// - When fed / rampage ends: Both top and bottom set to fully closed.
 pub fn stable_door_system(
@@ -259,8 +260,25 @@ pub fn stable_door_system(
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     hunger: Option<Res<MooseHunger>>,
-    mut q_top: Query<(&mut StableDoorTopHalf, &mut Transform), Without<StableDoorBottomHalf>>,
-    mut q_bottom: Query<(&mut StableDoorBottomHalf, &mut Transform), Without<StableDoorTopHalf>>,
+    q_moose: Query<&Transform, With<crate::elf_game::moose::toy_model::MrMoose>>,
+    q_head: Query<&Transform, With<crate::elf_game::moose::toy_model::MooseHead>>,
+    mut slam_events: Option<MessageWriter<crate::elf_game::moose::MooseWindowSlamEvent>>,
+    mut q_top: Query<
+        (&mut StableDoorTopHalf, &mut Transform),
+        (
+            Without<StableDoorBottomHalf>,
+            Without<crate::elf_game::moose::toy_model::MrMoose>,
+            Without<crate::elf_game::moose::toy_model::MooseHead>,
+        ),
+    >,
+    mut q_bottom: Query<
+        (&mut StableDoorBottomHalf, &mut Transform),
+        (
+            Without<StableDoorTopHalf>,
+            Without<crate::elf_game::moose::toy_model::MrMoose>,
+            Without<crate::elf_game::moose::toy_model::MooseHead>,
+        ),
+    >,
 ) {
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
         return;
@@ -269,7 +287,7 @@ pub fn stable_door_system(
     let raw_dt = time.as_ref().map(|t| t.delta_secs()).unwrap_or(0.016);
     let dt = if raw_dt > 0.0 { raw_dt } else { 0.016 };
 
-    let (is_peeking, is_rampage, is_closed) = if let Some(h) = hunger {
+    let (is_peeking, is_rampage, is_closed) = if let Some(h) = hunger.as_ref() {
         let peeking = h.stage == MooseHungerStage::PeekingThrough
             || h.stage == MooseHungerStage::AgitatedHuffing
             || h.stage == MooseHungerStage::DeliberatingLateTreat
@@ -283,6 +301,12 @@ pub fn stable_door_system(
 
     const DOOR_HALF_WIDTH: f32 = 0.88;
     const MAX_OPEN_ANGLE: f32 = 2.0;
+
+    // Calculate how far Mr. Moose's head is poking forward through the doorway
+    let moose_snout_z = match (q_moose.iter().next(), q_head.iter().next()) {
+        (Some(moose_tf), Some(head_tf)) => Some(moose_tf.translation.z + head_tf.translation.z),
+        _ => None,
+    };
 
     // 1. Process Top Half
     for (mut top, mut tf) in &mut q_top {
@@ -307,18 +331,45 @@ pub fn stable_door_system(
         } else if is_peeking {
             top.is_physics_driven = false;
             top.angular_velocity = 0.0;
-            // Smoothly swing top half open for peeking (~1.57 rad = 90 deg)
-            top.target_angle = 1.57;
-            let speed = (1.0 - (-8.0 * dt).exp()).clamp(0.0, 1.0);
+
+            // Top half opens smoothly as Mr. Moose pokes his head into the workshop doorway
+            let open_factor = if let Some(snout_z) = moose_snout_z {
+                // At rest: Z ≈ -15.4. Poked in: Z ≈ -12.1. Door is at Z = -13.0
+                ((snout_z - (-15.2)) / 2.7).clamp(0.0, 1.0).max(0.35)
+            } else if let Some(ref h) = hunger {
+                if h.stage == MooseHungerStage::PeekingThrough {
+                    let progress = ((h.value - 20.0) / 30.0).clamp(0.0, 1.0);
+                    0.35 + 0.65 * progress
+                } else {
+                    1.0
+                }
+            } else {
+                1.0
+            };
+
+            top.target_angle = 1.57 * open_factor;
+            let speed = (1.0 - (-12.0 * dt).exp()).clamp(0.0, 1.0);
             top.current_angle += (top.target_angle - top.current_angle) * speed;
         } else if is_closed {
             top.is_physics_driven = false;
-            top.angular_velocity = 0.0;
-            top.target_angle = 0.0;
-            let speed = (1.0 - (-10.0 * dt).exp()).clamp(0.0, 1.0);
-            top.current_angle += (top.target_angle - top.current_angle) * speed;
-            if top.current_angle.abs() < 0.01 {
+            // Slam shut with high velocity when Mr. Moose snaps back or goes back outside!
+            const SLAM_SPEED: f32 = 25.0;
+            let prev_angle = top.current_angle;
+            if top.current_angle > 0.0 {
+                top.current_angle -= SLAM_SPEED * dt;
+                if top.current_angle <= 0.0 {
+                    top.current_angle = 0.0;
+                    top.angular_velocity = 0.0;
+                    // Trigger slam event / impact sound when striking frame
+                    if prev_angle > 0.08 {
+                        if let Some(ref mut writer) = slam_events {
+                            writer.write(crate::elf_game::moose::MooseWindowSlamEvent);
+                        }
+                    }
+                }
+            } else {
                 top.current_angle = 0.0;
+                top.angular_velocity = 0.0;
             }
         }
 

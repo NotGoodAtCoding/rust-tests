@@ -46,7 +46,7 @@ impl Default for MooseScarfMount {
         Self {
             left_tail_anchor: Vec3::new(-0.24, 0.85, 1.45),
             right_tail_anchor: Vec3::new(0.24, 0.85, 1.45),
-            last_moose_pos: Vec3::new(-6.5, 1.8, -17.0),
+            last_moose_pos: Vec3::new(-2.0, 1.8, -17.0),
         }
     }
 }
@@ -165,7 +165,7 @@ pub fn spawn_mr_moose(
         })
     });
 
-    let iron_hardware = workshop_mats.as_ref().map(|wm| wm.wrought_iron.clone()).unwrap_or_else(|| {
+    let _iron_hardware = workshop_mats.as_ref().map(|wm| wm.wrought_iron.clone()).unwrap_or_else(|| {
         materials.add(StandardMaterial {
             base_color: WROUGHT_IRON,
             metallic: 0.8,
@@ -177,101 +177,13 @@ pub fn spawn_mr_moose(
     commands.spawn((
         Mesh3d(meshes.add(Plane3d::default().mesh().size(30.0, 30.0))),
         MeshMaterial3d(snow_material),
-        Transform::from_xyz(-6.5, -0.5, -20.0),
+        Transform::from_xyz(-2.0, -0.5, -20.0),
         Collider::cuboid(15.0, 0.1, 15.0),
         RigidBody::Fixed,
         Name::new("OutsideSnowyHill"),
     ));
 
-    // Dual Window Shutters: Sized just large enough for Mr. Moose's head (1.8m x 1.8m opening)
-    // Left and Right hinged panels that rotate inward into the workshop room as Mr. Moose pokes in
-    let shutter_panel_mesh = meshes.add(Cuboid::new(0.88, 1.76, 0.06));
-    let shutter_batten_mesh = meshes.add(Cuboid::new(0.84, 0.10, 0.08));
-    let shutter_handle_mesh = meshes.add(Cuboid::new(0.04, 0.24, 0.08));
-
-    // Left Window Shutter Hinge (mounted at X = -7.4, Y = 2.9, Z = -13.0)
-    commands
-        .spawn((
-            Transform::from_xyz(-7.4, 2.9, -13.0),
-            Visibility::default(),
-            LeftWindowShutter,
-            WindowShutters,
-            RigidBody::KinematicPositionBased,
-            Name::new("LeftWindowShutterHinge"),
-        ))
-        .with_children(|shutter| {
-            // Main shutter leaf panel (hinged at x = 0, extends to +x = 0.88)
-            shutter.spawn((
-                Mesh3d(shutter_panel_mesh.clone()),
-                MeshMaterial3d(shutter_wood.clone()),
-                Transform::from_xyz(0.44, 0.0, 0.0),
-                Collider::cuboid(0.44, 0.88, 0.03),
-                Name::new("LeftShutterPanel"),
-            ));
-            // Decorative battens
-            shutter.spawn((
-                Mesh3d(shutter_batten_mesh.clone()),
-                MeshMaterial3d(shutter_trim_wood.clone()),
-                Transform::from_xyz(0.44, 0.65, 0.02),
-                Name::new("LeftShutterBattenTop"),
-            ));
-            shutter.spawn((
-                Mesh3d(shutter_batten_mesh.clone()),
-                MeshMaterial3d(shutter_trim_wood.clone()),
-                Transform::from_xyz(0.44, -0.65, 0.02),
-                Name::new("LeftShutterBattenBottom"),
-            ));
-            // Iron handle fixture
-            shutter.spawn((
-                Mesh3d(shutter_handle_mesh.clone()),
-                MeshMaterial3d(iron_hardware.clone()),
-                Transform::from_xyz(0.80, 0.0, 0.04),
-                Name::new("LeftShutterHandle"),
-            ));
-        });
-
-    // Right Window Shutter Hinge (mounted at X = -5.6, Y = 2.9, Z = -13.0)
-    commands
-        .spawn((
-            Transform::from_xyz(-5.6, 2.9, -13.0),
-            Visibility::default(),
-            RightWindowShutter,
-            WindowShutters,
-            RigidBody::KinematicPositionBased,
-            Name::new("RightWindowShutterHinge"),
-        ))
-        .with_children(|shutter| {
-            // Main shutter leaf panel (hinged at x = 0, extends to -x = -0.88)
-            shutter.spawn((
-                Mesh3d(shutter_panel_mesh),
-                MeshMaterial3d(shutter_wood.clone()),
-                Transform::from_xyz(-0.44, 0.0, 0.0),
-                Collider::cuboid(0.44, 0.88, 0.03),
-                Name::new("RightShutterPanel"),
-            ));
-            // Decorative battens
-            shutter.spawn((
-                Mesh3d(shutter_batten_mesh.clone()),
-                MeshMaterial3d(shutter_trim_wood.clone()),
-                Transform::from_xyz(-0.44, 0.65, 0.02),
-                Name::new("RightShutterBattenTop"),
-            ));
-            shutter.spawn((
-                Mesh3d(shutter_batten_mesh),
-                MeshMaterial3d(shutter_trim_wood.clone()),
-                Transform::from_xyz(-0.44, -0.65, 0.02),
-                Name::new("RightShutterBattenBottom"),
-            ));
-            // Iron handle fixture
-            shutter.spawn((
-                Mesh3d(shutter_handle_mesh),
-                MeshMaterial3d(iron_hardware),
-                Transform::from_xyz(-0.80, 0.0, 0.04),
-                Name::new("RightShutterHandle"),
-            ));
-        });
-
-    // 1. Realistic Anatomical Moose Model Root (Positioned at X = -6.5, Y = 1.8, Z = -17.0)
+    // 1. Realistic Anatomical Moose Model Root (Positioned at X = -2.0, Y = 1.8, Z = -17.0)
     let torso_mesh = meshes.add(Cuboid::new(1.7, 1.35, 2.7));
     let withers_hump_mesh = meshes.add(Cuboid::new(1.3, 0.6, 1.1));
     let neck_mesh = meshes.add(Cuboid::new(0.85, 0.95, 1.1));
@@ -883,7 +795,7 @@ pub fn animate_mr_moose_peeking_system(
             };
 
             (
-                Vec3::new(-6.5, 1.8, -14.5),
+                Vec3::new(moose_x, 1.8, -14.5),
                 head_pos,
                 head_rot,
                 MAX_PEEK_SHUTTER_ANGLE,

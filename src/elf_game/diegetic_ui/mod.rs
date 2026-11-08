@@ -4,6 +4,11 @@ pub mod hunger_dial;
 pub mod monitor;
 pub mod text_renderer;
 
+pub use hunger_dial::{
+    Gauge, GasPressureGauge, GaugeNeedle, GaugeWarningBeacon,
+    spawn_gas_pressure_gauge, spawn_gauge, update_gas_pressure_gauge_system, animate_gauge_system,
+};
+
 pub struct DiegeticUiPlugin;
 
 impl Plugin for DiegeticUiPlugin {
@@ -12,7 +17,7 @@ impl Plugin for DiegeticUiPlugin {
             Startup,
             (
                 monitor::spawn_diegetic_screens_and_signs,
-                hunger_dial::spawn_moose_hunger_dial_and_scale,
+                hunger_dial::spawn_gas_pressure_gauge,
             ),
         )
         .add_systems(
@@ -20,7 +25,8 @@ impl Plugin for DiegeticUiPlugin {
             (
                 monitor::update_diegetic_monitor_text,
                 monitor::animate_crt_scanlines,
-                hunger_dial::animate_moose_hunger_dial_system,
+                hunger_dial::update_gas_pressure_gauge_system,
+                hunger_dial::animate_gauge_system,
             ),
         );
     }

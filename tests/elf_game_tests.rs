@@ -2833,158 +2833,103 @@ fn test_moose_chain_physics_scarf_mount_and_tails() {
 #[test]
 fn test_physical_mechanical_hunger_dial_and_scale() {
     use rust_tests::elf_game::diegetic_ui::hunger_dial::{
-        MooseHungerDial, MooseHungerNeedle, MooseHungerWarningBeacon, MooseTroughScalePlate,
-        spawn_moose_hunger_dial_and_scale, animate_moose_hunger_dial_system,
+        spawn_gas_pressure_gauge, animate_gauge_system,
+        Gauge, GasPressureGauge, GaugeNeedle, GaugeWarningBeacon,
     };
-    use rust_tests::elf_game::moose::{MooseHunger, MooseHungerStage, MooseFeedingTrough, MooseSnack};
 
     let mut app = App::new();
     app.init_resource::<Assets<Mesh>>();
     app.init_resource::<Assets<StandardMaterial>>();
-    app.insert_resource(MooseHunger {
-        value: 0.0,
-        max_value: 60.0,
-        stage: MooseHungerStage::BehindShutters,
-        ..default()
-    });
 
-    app.add_systems(Startup, spawn_moose_hunger_dial_and_scale);
-    app.add_systems(Update, animate_moose_hunger_dial_system);
-
-    // Spawn feeding trough at default location
-    app.world_mut().spawn((
-        MooseFeedingTrough,
-        Transform::from_xyz(-2.0, 0.3, -12.0),
-    ));
+    app.add_systems(Startup, spawn_gas_pressure_gauge);
+    app.add_systems(Update, animate_gauge_system);
 
     // Run startup
     app.update();
 
     // 1. Verify all components exist
-    let mut dial_q = app.world_mut().query::<(&MooseHungerDial, &Transform)>();
-    let dial = dial_q.iter(app.world()).next();
-    assert!(dial.is_some(), "MooseHungerDial must be spawned outside window");
-    let (_, dial_tf) = dial.unwrap();
+    let mut gauge_q = app.world_mut().query::<(&GasPressureGauge, &Gauge, &Transform)>();
+    let dial = gauge_q.iter(app.world()).next();
+    assert!(dial.is_some(), "GasPressureGauge must be spawned beside stove");
+    let (_, _, dial_tf) = dial.unwrap();
     assert!(
         (dial_tf.translation.x - (-6.6)).abs() < 0.2 && (dial_tf.translation.z - (-12.75)).abs() < 0.2,
         "Dial must be mounted beside stove by the window, got {:?}",
         dial_tf.translation
     );
 
-    let mut needle_q = app.world_mut().query::<&MooseHungerNeedle>();
+    let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
     assert_eq!(needle_q.iter(app.world()).count(), 1, "Needle entity must exist");
 
-    let mut beacon_q = app.world_mut().query::<&MooseHungerWarningBeacon>();
+    let mut beacon_q = app.world_mut().query::<&GaugeWarningBeacon>();
     assert_eq!(beacon_q.iter(app.world()).count(), 1, "Warning beacon must exist");
 
-    let mut scale_q = app.world_mut().query::<&MooseTroughScalePlate>();
-    assert_eq!(scale_q.iter(app.world()).count(), 1, "Trough scale plate must exist under feeding trough");
-
-    // 2. Check initial rest needle angle (at hunger 0, angle ≈ -2.356 rad = -135 deg)
+    // 2. Initial state: value 1.0 (full) -> angle ≈ +2.356 rad = +135 deg
     {
-        let mut needle_q = app.world_mut().query::<&MooseHungerNeedle>();
+        let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
         let needle = needle_q.iter(app.world()).next().unwrap();
         assert!(
-            (needle.current_angle - (-2.356)).abs() < 0.1,
-            "Needle should be at far left green zone (≈ -2.356) at hunger 0, got {}",
+            (needle.current_angle - needle.max_angle).abs() < 0.1,
+            "Needle should be at maximum angle (≈ +2.356) at value 1.0, got {}",
             needle.current_angle
         );
         assert!(!needle.is_jittering, "Needle should not jitter when calm");
     }
 
-    // 3. Advance to Hunger 30.0 (PeekingThrough -> midpoint angle ≈ 0.0 rad)
+    // 3. Set value to 0.5 (midpoint angle ≈ 0.0 rad)
     {
-        let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
-        hunger.value = 30.0;
-        hunger.stage = MooseHungerStage::PeekingThrough;
+        let mut q = app.world_mut().query::<&mut Gauge>();
+        let mut gauge = q.single_mut(app.world_mut()).unwrap();
+        gauge.set_value(0.5);
     }
     app.update();
     {
-        let mut needle_q = app.world_mut().query::<&MooseHungerNeedle>();
+        let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
         let needle = needle_q.iter(app.world()).next().unwrap();
         assert!(
             needle.current_angle.abs() < 0.2,
-            "Needle should be at top center (≈ 0.0) at hunger 30, got {}",
+            "Needle should be at top center (≈ 0.0) at value 0.5, got {}",
             needle.current_angle
         );
     }
 
-    // 4. Advance to Hunger 55.0 (AgitatedHuffing -> warning zone angle > 1.2 rad, jitter enabled, beacon alert enabled)
+    // 4. Set value to 0.0 (far left angle ≈ -2.356 rad = -135 deg)
     {
-        let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
-        hunger.value = 55.0;
-        hunger.stage = MooseHungerStage::AgitatedHuffing;
+        let mut q = app.world_mut().query::<&mut Gauge>();
+        let mut gauge = q.single_mut(app.world_mut()).unwrap();
+        gauge.set_value(0.0);
     }
     app.update();
     {
-        let mut needle_q = app.world_mut().query::<&MooseHungerNeedle>();
+        let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
         let needle = needle_q.iter(app.world()).next().unwrap();
         assert!(
-            needle.current_angle > 1.2,
-            "Needle should be in orange/warning zone (> 1.2 rad) at hunger 55, got {}",
+            (needle.current_angle - needle.min_angle).abs() < 0.1,
+            "Needle should be at far left (≈ -2.356) at value 0.0, got {}",
             needle.current_angle
         );
-        assert!(needle.is_jittering, "Needle must jitter mechanically during AgitatedHuffing");
+        assert!(needle.is_jittering, "Needle must jitter when value <= critical_threshold");
 
-        let mut beacon_q = app.world_mut().query::<&MooseHungerWarningBeacon>();
+        let mut beacon_q = app.world_mut().query::<&GaugeWarningBeacon>();
         let beacon = beacon_q.iter(app.world()).next().unwrap();
-        assert!(beacon.is_alert, "Warning beacon must be in alert mode during AgitatedHuffing");
+        assert!(beacon.is_alert, "Warning beacon must be in alert mode when critical");
     }
 
-    // 5. Advance to Hunger 60.0 (WindowSlammed -> max angle ≈ +2.356 rad = +135 deg)
+    // 5. Reset value to 0.9 (safe calm state)
     {
-        let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
-        hunger.value = 60.0;
-        hunger.stage = MooseHungerStage::WindowSlammed;
+        let mut q = app.world_mut().query::<&mut Gauge>();
+        let mut gauge = q.single_mut(app.world_mut()).unwrap();
+        gauge.set_value(0.9);
     }
     app.update();
     {
-        let mut needle_q = app.world_mut().query::<&MooseHungerNeedle>();
+        let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
         let needle = needle_q.iter(app.world()).next().unwrap();
-        assert!(
-            (needle.current_angle - 2.356).abs() < 0.1,
-            "Needle should be at far right red breach zone (≈ 2.356 rad) at hunger 60, got {}",
-            needle.current_angle
-        );
-    }
+        assert!(!needle.is_jittering, "Needle must not jitter in safe state");
 
-    // 6. Test scale deflection when snack is placed in trough
-    let snack = app.world_mut().spawn((
-        MooseSnack { nutrition_value: 60.0 },
-        Transform::from_xyz(-2.0, 0.4, -12.0),
-    )).id();
-    app.update();
-
-    {
-        let mut scale_q = app.world_mut().query::<&MooseTroughScalePlate>();
-        let scale = scale_q.iter(app.world()).next().unwrap();
-        assert!(
-            scale.current_deflection > 0.01,
-            "Scale plate should deflect under the weight of food, got deflection {}",
-            scale.current_deflection
-        );
-    }
-
-    // Despawn snack (simulating consumption) and reset hunger to 0
-    app.world_mut().despawn(snack);
-    {
-        let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
-        hunger.value = 0.0;
-        hunger.stage = MooseHungerStage::BehindShutters;
-    }
-    app.update();
-
-    {
-        let mut needle_q = app.world_mut().query::<&MooseHungerNeedle>();
-        let needle = needle_q.iter(app.world()).next().unwrap();
-        assert!(
-            (needle.current_angle - (-2.356)).abs() < 0.1,
-            "Needle should reset to 0 (far left) after feeding, got {}",
-            needle.current_angle
-        );
-        let mut beacon_q = app.world_mut().query::<&MooseHungerWarningBeacon>();
+        let mut beacon_q = app.world_mut().query::<&GaugeWarningBeacon>();
         let beacon = beacon_q.iter(app.world()).next().unwrap();
-        assert!(!beacon.is_alert, "Warning beacon must return to calm state after feeding");
+        assert!(!beacon.is_alert, "Warning beacon must return to calm state");
     }
 }
 
@@ -3499,7 +3444,7 @@ fn test_workshop_palette_constants_and_material_assets() {
     use rust_tests::elf_game::moose::toy_model::spawn_mr_moose;
     use rust_tests::elf_game::player::hands::spawn_workshop_tools_and_materials;
     use rust_tests::elf_game::diegetic_ui::{
-        hunger_dial::spawn_moose_hunger_dial_and_scale,
+        hunger_dial::spawn_gas_pressure_gauge,
         monitor::spawn_diegetic_screens_and_signs,
     };
 
@@ -3543,7 +3488,7 @@ fn test_workshop_palette_constants_and_material_assets() {
         setup_workshop_scene,
         spawn_mr_moose,
         spawn_workshop_tools_and_materials,
-        spawn_moose_hunger_dial_and_scale,
+        spawn_gas_pressure_gauge,
         spawn_diegetic_screens_and_signs,
     ));
 
@@ -7848,8 +7793,8 @@ fn test_workshop_temperature_heating_and_freezing_spawner_halt() {
 #[test]
 fn test_repurposed_gas_pressure_gauge_needle_and_alert() {
     use rust_tests::elf_game::diegetic_ui::hunger_dial::{
-        spawn_moose_hunger_dial_and_scale, animate_moose_hunger_dial_system,
-        MooseHungerNeedle, MooseHungerWarningBeacon,
+        spawn_gas_pressure_gauge, update_gas_pressure_gauge_system, animate_gauge_system,
+        Gauge, GasPressureGauge, GaugeNeedle, GaugeWarningBeacon,
     };
     use rust_tests::elf_game::workshop::stove::WorkshopGasLine;
 
@@ -7862,20 +7807,25 @@ fn test_repurposed_gas_pressure_gauge_needle_and_alert() {
         leak_vent_rate: 2.5,
     });
 
-    app.add_systems(Startup, spawn_moose_hunger_dial_and_scale);
-    app.add_systems(Update, animate_moose_hunger_dial_system);
+    app.add_systems(Startup, spawn_gas_pressure_gauge);
+    app.add_systems(Update, (update_gas_pressure_gauge_system, animate_gauge_system));
     app.update();
+
+    // Verify GasPressureGauge component exists
+    let mut gauge_q = app.world_mut().query::<(&GasPressureGauge, &Gauge)>();
+    let (_, gauge) = gauge_q.iter(app.world()).next().expect("GasPressureGauge must exist");
+    assert_eq!(gauge.value, 1.0, "Gauge value should be 1.0 at 100 PSI");
 
     // Full pressure (100 PSI) -> needle at max_angle (+2.356 rad)
     {
-        let mut needle_q = app.world_mut().query::<&MooseHungerNeedle>();
+        let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
         let needle = needle_q.iter(app.world()).next().unwrap();
         assert!(
             (needle.current_angle - needle.max_angle).abs() < 0.1,
             "Needle should be at maximum angle (≈ +2.356) when gas tank is full (100 PSI), got {}",
             needle.current_angle
         );
-        let mut beacon_q = app.world_mut().query::<&MooseHungerWarningBeacon>();
+        let mut beacon_q = app.world_mut().query::<&GaugeWarningBeacon>();
         let beacon = beacon_q.iter(app.world()).next().unwrap();
         assert!(!beacon.is_alert, "Warning beacon must not alert when gas pressure is full");
     }
@@ -7888,11 +7838,11 @@ fn test_repurposed_gas_pressure_gauge_needle_and_alert() {
     app.update();
 
     {
-        let mut needle_q = app.world_mut().query::<&MooseHungerNeedle>();
+        let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
         let needle = needle_q.iter(app.world()).next().unwrap();
         assert!(needle.is_jittering, "Needle must jitter when gas pressure is critically low");
 
-        let mut beacon_q = app.world_mut().query::<&MooseHungerWarningBeacon>();
+        let mut beacon_q = app.world_mut().query::<&GaugeWarningBeacon>();
         let beacon = beacon_q.iter(app.world()).next().unwrap();
         assert!(beacon.is_alert, "Warning beacon must pulse in alert mode when gas pressure is < 15 PSI");
     }

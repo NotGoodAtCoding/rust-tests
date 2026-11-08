@@ -3,6 +3,8 @@ Bug descriptions will be added to the ACTIVE section. Fix the bug and move them 
 
 ACTIVE:
 
+Cleanup: Colors and materials should be defined in assets/materials instead of in the file where behavior is defined so that the files do not get too cluttered. This follows the limited color palette Principle under Artistic Direction. Move material definitions from stove.rs to the assets/materials.rs file, and audit other files for extra material definitions.
+
 The lighting from the candles is flickering. This may be just due to debug fastbuild in cargo rather than a full binary build.
 
 Feature: Dynamic waypoint targeting: Elves and NPCs should be able to target other NPCs and the Player location as an option. 
@@ -20,6 +22,8 @@ Idea: Elf Mischief behavior: Philosopher. If an elf gains this Mischief trait, i
 Update the KleptoStash behavior to add leaf nodes with one edge back to the main graph that are in the corners of the main room. The elf should put the stolen item in front of them when stashing it, and remember the last item stashed and not target that item again to prevent getting stuck in a loop. There should also be a longer cooldown between stashing items, like 15 seconds.
 
 DONE:
+
+The stable door top half opens slowly and smoothly with Mr. Moose as he slowly pokes his head in across the 30+ second peeking stage (hunger 20 to 50), tracking his forward snout progression from fully closed to open.
 
 When the player runs into elves at default speed cap, they should not get a large impulse. They should only ragdoll if the player is going above the default speed cap from sprinting or bunny hopping.
 

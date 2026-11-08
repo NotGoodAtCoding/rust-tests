@@ -332,17 +332,19 @@ pub fn stable_door_system(
             top.is_physics_driven = false;
             top.angular_velocity = 0.0;
 
-            // Top half opens smoothly as Mr. Moose pokes his head into the workshop doorway
-            let open_factor = if let Some(snout_z) = moose_snout_z {
-                // At rest: Z ≈ -15.4. Poked in: Z ≈ -12.1. Door is at Z = -13.0
-                ((snout_z - (-15.2)) / 2.7).clamp(0.0, 1.0).max(0.35)
-            } else if let Some(ref h) = hunger {
+            // Top half opens smoothly as Mr. Moose slowly pokes his head into the workshop doorway
+            let open_factor = if let Some(ref h) = hunger {
                 if h.stage == MooseHungerStage::PeekingThrough {
-                    let progress = ((h.value - 20.0) / 30.0).clamp(0.0, 1.0);
-                    0.35 + 0.65 * progress
+                    if let Some(snout_z) = moose_snout_z {
+                        ((snout_z - (-15.4)) / 3.4).clamp(0.0, 1.0)
+                    } else {
+                        ((h.value - 20.0) / 30.0).clamp(0.0, 1.0)
+                    }
                 } else {
                     1.0
                 }
+            } else if let Some(snout_z) = moose_snout_z {
+                ((snout_z - (-15.4)) / 3.4).clamp(0.0, 1.0)
             } else {
                 1.0
             };

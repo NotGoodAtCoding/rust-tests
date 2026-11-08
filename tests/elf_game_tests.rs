@@ -2643,10 +2643,10 @@ fn test_moose_snappy_state_animations() {
     // Settle in BehindShutters
     app.update();
 
-    // 1. Enter PeekingThrough stage
+    // 1. Enter PeekingThrough stage at hunger = 20.5 (barely entered PeekingThrough)
     {
         let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
-        hunger.value = 20.5; // Barely entered PeekingThrough!
+        hunger.value = 20.5;
         hunger.stage = MooseHungerStage::PeekingThrough;
     }
 
@@ -2656,7 +2656,70 @@ fn test_moose_snappy_state_animations() {
         app.update();
     }
 
-    // Verify Moose body snapped close to window (Z ≈ -14.5), head poked moderately into room (Z ≈ 2.4, reduced by 1/2), shutters open (> 1.0 rad)
+    // Verify Moose does NOT snap into the room immediately: body stays near resting outside (Z < -16.5),
+    // head stays near outside (Z < 1.8), and shutters have barely cracked open (yaw < 0.2 rad)
+    let m_tf = app.world().get::<Transform>(moose).unwrap();
+    let h_tf = app.world().get::<Transform>(head).unwrap();
+    let ls_tf = app.world().get::<Transform>(left_shutter).unwrap();
+    let (left_yaw, _, _) = ls_tf.rotation.to_euler(EulerRot::YXZ);
+
+    assert!(
+        m_tf.translation.z < -16.5,
+        "Moose body must NOT snap into room at start of peeking (Z < -16.5), got {}",
+        m_tf.translation.z
+    );
+    assert!(
+        h_tf.translation.z < 1.8,
+        "Moose head must NOT jump forward at start of peeking (Z < 1.8), got {}",
+        h_tf.translation.z
+    );
+    assert!(
+        left_yaw.abs() < 0.2,
+        "Left shutter must only barely start opening at start of peeking, got yaw {}",
+        left_yaw
+    );
+
+    // Advance hunger to halfway through peeking (hunger = 35.0, 15s in)
+    {
+        let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
+        hunger.value = 35.0;
+    }
+    for _ in 0..15 {
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(16));
+        app.update();
+    }
+
+    let m_tf = app.world().get::<Transform>(moose).unwrap();
+    let h_tf = app.world().get::<Transform>(head).unwrap();
+    let ls_tf = app.world().get::<Transform>(left_shutter).unwrap();
+    let (left_yaw, _, _) = ls_tf.rotation.to_euler(EulerRot::YXZ);
+
+    assert!(
+        m_tf.translation.z > -16.1 && m_tf.translation.z < -15.4,
+        "Moose body must be roughly halfway forward at hunger 35 (got {})",
+        m_tf.translation.z
+    );
+    assert!(
+        h_tf.translation.z > 1.9 && h_tf.translation.z < 2.2,
+        "Moose head must be roughly halfway forward at hunger 35 (got {})",
+        h_tf.translation.z
+    );
+    assert!(
+        left_yaw < -0.5,
+        "Left shutter must be roughly half open at hunger 35, got yaw {}",
+        left_yaw
+    );
+
+    // Advance hunger to end of peeking (hunger = 50.0, 30s in)
+    {
+        let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
+        hunger.value = 50.0;
+    }
+    for _ in 0..15 {
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(16));
+        app.update();
+    }
+
     let m_tf = app.world().get::<Transform>(moose).unwrap();
     let h_tf = app.world().get::<Transform>(head).unwrap();
     let ls_tf = app.world().get::<Transform>(left_shutter).unwrap();
@@ -2664,17 +2727,17 @@ fn test_moose_snappy_state_animations() {
 
     assert!(
         m_tf.translation.z > -14.7,
-        "Moose body must have snapped forward quickly to the window (Z > -14.7) within 0.25s, got {}",
+        "Moose body must reach window at hunger 50 (Z > -14.7), got {}",
         m_tf.translation.z
     );
     assert!(
-        h_tf.translation.z > 2.3 && h_tf.translation.z < 2.6,
-        "Moose head must have poked forward into room with reduced 1/2 distance (2.3 < Z < 2.6) within 0.25s, got {}",
+        h_tf.translation.z > 2.3,
+        "Moose head must reach full peek at hunger 50 (Z > 2.3), got {}",
         h_tf.translation.z
     );
     assert!(
         left_yaw < -1.0,
-        "Left shutter must have swung open inward within 0.25s, got yaw {}",
+        "Left shutter must be fully open at hunger 50, got yaw {}",
         left_yaw
     );
 
@@ -8266,7 +8329,7 @@ fn test_mr_moose_center_wall_and_stable_door_mechanics() {
     let mut app = App::new();
     app.init_resource::<Time>();
     let hunger = MooseHunger {
-        value: 25.0,
+        value: 35.0,
         max_value: 60.0,
         stage: MooseHungerStage::PeekingThrough,
         ..default()
@@ -8438,7 +8501,7 @@ fn test_moose_no_shutters_new_resting_rampage_pathing_and_door_slam() {
     let mut door_app = App::new();
     door_app.init_resource::<Time>();
     door_app.insert_resource(MooseHunger {
-        value: 30.0,
+        value: 35.0,
         stage: MooseHungerStage::PeekingThrough,
         ..default()
     });
@@ -9559,4 +9622,140 @@ fn test_player_elf_collision_default_speed_vs_sprint_bhop_ragdoll() {
             impulse.impulse.y
         );
     }
+}
+
+#[test]
+fn test_stable_door_and_moose_slow_peeking_over_30_seconds() {
+    use rust_tests::elf_game::moose::toy_model::{
+        MrMoose, MooseHead, animate_mr_moose_peeking_system,
+    };
+    use rust_tests::elf_game::moose::{MooseHunger, MooseHungerStage};
+    use rust_tests::elf_game::workshop::stable_door::{
+        StableDoorTopHalf, stable_door_system,
+    };
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(16));
+    app.insert_resource(time);
+
+    let hunger = MooseHunger {
+        value: 10.0,
+        max_value: 60.0,
+        stage: MooseHungerStage::BehindShutters,
+        ..default()
+    };
+    app.insert_resource(hunger);
+
+    app.add_systems(Update, (animate_mr_moose_peeking_system, stable_door_system));
+
+    let moose_e = app.world_mut().spawn((
+        MrMoose,
+        Transform::from_xyz(-2.0, 1.8, -17.0),
+    )).id();
+
+    let head_e = app.world_mut().spawn((
+        MooseHead,
+        Transform::from_xyz(0.0, 1.1, 1.6),
+    )).id();
+
+    let top_door_e = app.world_mut().spawn((
+        StableDoorTopHalf {
+            current_angle: 0.0,
+            target_angle: 0.0,
+            angular_velocity: 0.0,
+            is_physics_driven: false,
+            hinge_pos: Vec3::new(-2.9, 1.78, -13.0),
+        },
+        Transform::from_xyz(-2.0, 1.78, -13.0),
+    )).id();
+
+    // 1. In BehindShutters (hunger = 10.0), door is completely closed and Moose is far back outside
+    app.update();
+    {
+        let top = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+        let moose_tf = app.world().get::<Transform>(moose_e).unwrap();
+        let head_tf = app.world().get::<Transform>(head_e).unwrap();
+        assert_eq!(top.current_angle, 0.0);
+        assert!((moose_tf.translation.z - (-17.0)).abs() < 0.05);
+        assert!((head_tf.translation.z - 1.6).abs() < 0.05);
+    }
+
+    // 2. Step through peeking over 30 seconds as hunger increases from 20.0 to 50.0
+    // Verify monotonic forward progression and slow door opening
+    let check_points = [
+        (20.0, 0.0, -17.0, 1.6),
+        (25.0, 0.26, -16.58, 1.75),
+        (35.0, 0.785, -15.75, 2.05),
+        (45.0, 1.308, -14.92, 2.35),
+        (50.0, 1.57, -14.5, 2.5),
+    ];
+
+    let mut prev_angle = -0.01;
+    let mut prev_moose_z = -17.1;
+    let mut prev_head_z = 1.5;
+
+    for (hunger_val, expected_angle, expected_moose_z, expected_head_z) in check_points {
+        {
+            let mut h = app.world_mut().resource_mut::<MooseHunger>();
+            h.value = hunger_val;
+            h.stage = MooseHungerStage::PeekingThrough;
+        }
+
+        // Run several ticks for smooth follow
+        for _ in 0..20 {
+            app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(16));
+            app.update();
+        }
+
+        let top = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+        let moose_tf = app.world().get::<Transform>(moose_e).unwrap();
+        let head_tf = app.world().get::<Transform>(head_e).unwrap();
+
+        // Must be strictly monotonic
+        assert!(top.current_angle >= prev_angle, "Door angle must advance monotonically (at hunger {hunger_val}: got {}, prev {})", top.current_angle, prev_angle);
+        assert!(moose_tf.translation.z >= prev_moose_z, "Moose Z must advance monotonically (at hunger {hunger_val}: got {}, prev {})", moose_tf.translation.z, prev_moose_z);
+        assert!(head_tf.translation.z >= prev_head_z, "Head Z must advance monotonically (at hunger {hunger_val}: got {}, prev {})", head_tf.translation.z, prev_head_z);
+
+        // Approximate checks at key points
+        assert!(
+            (top.current_angle - expected_angle).abs() < 0.12,
+            "Door angle at hunger {hunger_val} expected ~{expected_angle}, got {}",
+            top.current_angle
+        );
+        assert!(
+            (moose_tf.translation.z - expected_moose_z).abs() < 0.15,
+            "Moose Z at hunger {hunger_val} expected ~{expected_moose_z}, got {}",
+            moose_tf.translation.z
+        );
+        assert!(
+            (head_tf.translation.z - expected_head_z).abs() < 0.15,
+            "Head Z at hunger {hunger_val} expected ~{expected_head_z}, got {}",
+            head_tf.translation.z
+        );
+
+        prev_angle = top.current_angle;
+        prev_moose_z = moose_tf.translation.z;
+        prev_head_z = head_tf.translation.z;
+    }
+
+    // 3. Fast slam when window is slammed at hunger = 60
+    {
+        let mut h = app.world_mut().resource_mut::<MooseHunger>();
+        h.value = 60.0;
+        h.stage = MooseHungerStage::WindowSlammed;
+    }
+
+    for _ in 0..15 {
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(16));
+        app.update();
+    }
+
+    let top_slammed = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+    let moose_slammed = app.world().get::<Transform>(moose_e).unwrap();
+    let head_slammed = app.world().get::<Transform>(head_e).unwrap();
+
+    assert!(top_slammed.current_angle < 0.05, "Top stable door must slam shut within 0.25s, got {}", top_slammed.current_angle);
+    assert!(moose_slammed.translation.z < -16.8, "Moose body must snap back outside within 0.25s, got {}", moose_slammed.translation.z);
+    assert!(head_slammed.translation.z < 1.7, "Moose head must snap back behind shutters within 0.25s, got {}", head_slammed.translation.z);
 }

@@ -779,14 +779,16 @@ pub fn animate_mr_moose_peeking_system(
             )
         }
         MooseHungerStage::PeekingThrough => {
-            // Fast, snappy step up to window with head poking through (head translation distance reduced by 1/2)
+            // Slowly poke head in as hunger meter increases from 20.0 to 50.0 over 30+ seconds
             let progress = ((hunger.value - 20.0) / 30.0).clamp(0.0, 1.0);
             let head_sway = (progress * std::f32::consts::PI * 2.0).sin() * 0.05;
+            let moose_z = -17.0 + 2.5 * progress;
+            let head_z = 1.6 + 0.9 * progress;
             (
-                Vec3::new(moose_x, 1.8, -14.5),
-                Vec3::new(head_sway, 1.1, 2.4 + progress * 0.1),
+                Vec3::new(moose_x, 1.8, moose_z),
+                Vec3::new(head_sway, 1.1, head_z),
                 Quat::IDENTITY,
-                MAX_PEEK_SHUTTER_ANGLE,
+                MAX_PEEK_SHUTTER_ANGLE * progress,
             )
         }
         MooseHungerStage::AgitatedHuffing => {

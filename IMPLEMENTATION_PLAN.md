@@ -97,7 +97,7 @@ This document tracks the short-form task breakdown for each section of [`PLAN.md
 ### 2.5 Dual-Hand Player Control & Physics Interaction
 | Task Description | Status | Reference Files |
 |---|:---:|---|
-| Independent dual-hand grab controls: Left Hand (`KeyQ`) and Right Hand (`KeyE`) | **DONE** | [`hands.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/hands.rs) |
+| Independent dual-hand grab controls: Left Hand (`KeyQ`) and Right Hand (`KeyE`) with direct raycasted Line of Sight reticle targeting and obstacle occlusion filtering | **DONE** | [`hands.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/hands.rs) |
 | **Floaty Hands & Physics Momentum**: Player hands are slightly floaty with spring-damped momentum, dynamically lagging and swaying with camera turning and movement inertia | **DONE** | [`controller.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/controller.rs) |
 | **Toggle Grab Controls (Q & E)**: Grab keys toggle grab on/off rather than requiring continuous hold | **DONE** | [`hands.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/hands.rs) |
 | **Set Down & Mouse 1 Throwing**: Pressing grab key again gracefully sets down held item; clicking Mouse 1 throws held item forward with physical impulse ($10\,\text{m/s}$) | **DONE** | [`hands.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/hands.rs) |

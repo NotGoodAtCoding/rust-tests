@@ -9325,3 +9325,137 @@ fn test_tractor_beam_player_force_and_activation_button_distance() {
         p_mov.velocity.y
     );
 }
+
+#[test]
+fn test_player_grab_direct_raycast_line_of_sight_reticle() {
+    use rust_tests::elf_game::player::hands::{Grabbable, dual_hand_interaction_system};
+    use rust_tests::elf_game::player::controller::{LeftHandVisual, RightHandVisual, FirstPersonCamera};
+    use rust_tests::elf_game::player::ElfHands;
+    use bevy_rapier3d::prelude::{Collider, Velocity};
+
+    // 1. Direct raycast priority over general cone objects
+    let mut app = App::new();
+    app.insert_resource(ButtonInput::<KeyCode>::default());
+    app.insert_resource(ButtonInput::<MouseButton>::default());
+    app.add_message::<rust_tests::elf_game::wrapping::UseToolOnPresentMessage>();
+    app.add_systems(Update, dual_hand_interaction_system);
+
+    let player_e = app.world_mut().spawn((
+        ElfHands::default(),
+        Transform::from_xyz(0.0, 1.0, 0.0),
+    )).id();
+
+    // Camera at (0.0, 1.2, 0.0) looking directly forward (-Z)
+    let cam_e = app.world_mut().spawn((
+        FirstPersonCamera,
+        GlobalTransform::from(Transform::from_xyz(0.0, 1.2, 0.0)),
+    )).id();
+
+    app.world_mut().spawn((
+        LeftHandVisual,
+        GlobalTransform::from(Transform::from_xyz(-0.35, 1.0, -0.6)),
+    ));
+    app.world_mut().spawn((
+        RightHandVisual,
+        GlobalTransform::from(Transform::from_xyz(0.35, 1.0, -0.6)),
+    ));
+
+    // Object A: Directly on reticle line of sight at (0.0, 1.2, -1.5)
+    let obj_reticle = app.world_mut().spawn((
+        Grabbable,
+        Transform::from_xyz(0.0, 1.2, -1.5),
+        Collider::cuboid(0.15, 0.15, 0.15),
+        Velocity::zero(),
+    )).id();
+
+    // Object B: Off-axis at (-0.8, 1.0, -1.0) closer to left hand (general cone / hand proximity)
+    let obj_cone = app.world_mut().spawn((
+        Grabbable,
+        Transform::from_xyz(-0.8, 1.0, -1.0),
+        Collider::cuboid(0.15, 0.15, 0.15),
+        Velocity::zero(),
+    )).id();
+
+    // Player presses KeyQ: must grab Object A (in direct reticle raycasted line of sight), NOT Object B
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyQ);
+    app.update();
+
+    let hands = app.world().get::<ElfHands>(player_e).unwrap();
+    assert_eq!(
+        hands.left_grabbed,
+        Some(obj_reticle),
+        "Grabbing must target the object in direct raycasted line of sight with reticle instead of general cone"
+    );
+
+    // Release KeyQ and set down
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::KeyQ);
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().reset(KeyCode::KeyQ);
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyQ);
+    app.update();
+    assert_eq!(app.world().get::<ElfHands>(player_e).unwrap().left_grabbed, None);
+
+    // 2. Aim reticle at Object B by rotating camera towards (-0.8, 1.0, -1.0)
+    let to_b = (Vec3::new(-0.8, 1.0, -1.0) - Vec3::new(0.0, 1.2, 0.0)).normalize();
+    let rot_b = Quat::from_rotation_arc(Vec3::NEG_Z, to_b);
+    *app.world_mut().get_mut::<GlobalTransform>(cam_e).unwrap() = GlobalTransform::from(
+        Transform::from_xyz(0.0, 1.2, 0.0).with_rotation(rot_b)
+    );
+
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::KeyQ);
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().reset(KeyCode::KeyQ);
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyQ);
+    app.update();
+
+    let hands = app.world().get::<ElfHands>(player_e).unwrap();
+    assert_eq!(
+        hands.left_grabbed,
+        Some(obj_cone),
+        "Aiming reticle directly at Object B must grab Object B"
+    );
+
+    // 3. Line of sight occlusion: an obstacle in front of the object blocks grab
+    let mut app2 = App::new();
+    app2.insert_resource(ButtonInput::<KeyCode>::default());
+    app2.insert_resource(ButtonInput::<MouseButton>::default());
+    app2.add_message::<rust_tests::elf_game::wrapping::UseToolOnPresentMessage>();
+    app2.add_systems(Update, dual_hand_interaction_system);
+
+    let player2_e = app2.world_mut().spawn((
+        ElfHands::default(),
+        Transform::from_xyz(0.0, 1.0, 0.0),
+    )).id();
+
+    app2.world_mut().spawn((
+        FirstPersonCamera,
+        GlobalTransform::from(Transform::from_xyz(0.0, 1.2, 0.0)),
+    ));
+    app2.world_mut().spawn((
+        LeftHandVisual,
+        GlobalTransform::from(Transform::from_xyz(-0.35, 1.0, -0.6)),
+    ));
+
+    // Target object behind wall at (0.0, 1.2, -2.0)
+    let _hidden_target = app2.world_mut().spawn((
+        Grabbable,
+        Transform::from_xyz(0.0, 1.2, -2.0),
+        Collider::cuboid(0.15, 0.15, 0.15),
+        Velocity::zero(),
+    )).id();
+
+    // Solid wall obstacle directly blocking line of sight at (0.0, 1.2, -1.0)
+    app2.world_mut().spawn((
+        Transform::from_xyz(0.0, 1.2, -1.0),
+        Collider::cuboid(0.5, 0.5, 0.1),
+    ));
+
+    // Press KeyQ: line of sight is blocked by the wall obstacle, so grab must fail
+    app2.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyQ);
+    app2.update();
+
+    let hands2 = app2.world().get::<ElfHands>(player2_e).unwrap();
+    assert_eq!(
+        hands2.left_grabbed,
+        None,
+        "Cannot grab an object through a solid obstacle blocking reticle line of sight"
+    );
+}

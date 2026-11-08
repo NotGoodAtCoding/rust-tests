@@ -140,6 +140,94 @@ pub fn spawn_workshop_tools_and_materials(
     }
 }
 
+/// Finds the best grabbable object in direct raycasted line of sight with the player's reticle.
+/// Prioritizes objects directly pierced by the reticle raycast (ordered by distance along ray to respect line-of-sight),
+/// rejects objects occluded by solid obstacles, and falls back to off-center crosshair alignment only if no direct hit exists.
+fn find_grabbable_in_reticle_los(
+    ray_origin: Vec3,
+    ray_dir: Vec3,
+    max_reach: f32,
+    excluded_entity: Option<Entity>,
+    q_grabbables: &Query<(Entity, &mut Transform, Option<&Collider>, Option<&ToolItem>), (With<Grabbable>, Without<ElfHands>)>,
+    q_obstacles: &Query<(&Transform, &Collider), (Without<Grabbable>, Without<ElfHands>, Without<ElfMovement>, Without<Sensor>)>,
+) -> Option<Entity> {
+    let mut best_candidate: Option<(Entity, u8, f32)> = None;
+
+    for (entity, tf, opt_collider, _) in q_grabbables {
+        if Some(entity) == excluded_entity {
+            continue;
+        }
+
+        let obj_pos = tf.translation;
+        let to_obj = obj_pos - ray_origin;
+        let t_proj = to_obj.dot(ray_dir);
+        if t_proj <= 0.0 || t_proj > max_reach {
+            continue;
+        }
+
+        // 1. Direct raycast check against collider if available
+        let mut direct_hit: Option<f32> = None;
+        if let Some(collider) = opt_collider {
+            if let Some(toi) = collider.cast_ray(obj_pos, tf.rotation, ray_origin, ray_dir, max_reach, true) {
+                direct_hit = Some(toi);
+            }
+        }
+
+        // 2. Direct raycast check against bounding sphere (radius 0.35m)
+        let d_perp_sq = to_obj.length_squared() - t_proj * t_proj;
+        if direct_hit.is_none() {
+            let radius = 0.35;
+            if d_perp_sq <= radius * radius {
+                let half_chord = (radius * radius - d_perp_sq).max(0.0).sqrt();
+                direct_hit = Some((t_proj - half_chord).max(0.0));
+            }
+        }
+
+        if let Some(hit_toi) = direct_hit {
+            // Line of sight check: verify no solid obstacle intersects the ray before the grabbable object
+            let is_occluded = q_obstacles.iter().any(|(obs_tf, obs_col)| {
+                obs_col.cast_ray(obs_tf.translation, obs_tf.rotation, ray_origin, ray_dir, hit_toi, true)
+                    .map(|obs_toi| obs_toi < hit_toi - 0.02)
+                    .unwrap_or(false)
+            });
+
+            if !is_occluded {
+                // Tier 0: Direct raycasted line-of-sight hit, prioritized by distance along the ray
+                let is_better = match best_candidate {
+                    None => true,
+                    Some((_, tier, dist)) => tier > 0 || hit_toi < dist,
+                };
+                if is_better {
+                    best_candidate = Some((entity, 0, hit_toi));
+                }
+                continue;
+            }
+        }
+
+        // 3. Fallback: within crosshair view window (d_perp <= 0.75m), only if no direct raycast hit exists
+        if d_perp_sq <= 0.75 * 0.75 {
+            let is_occluded = q_obstacles.iter().any(|(obs_tf, obs_col)| {
+                obs_col.cast_ray(obs_tf.translation, obs_tf.rotation, ray_origin, ray_dir, t_proj, true)
+                    .map(|obs_toi| obs_toi < t_proj - 0.05)
+                    .unwrap_or(false)
+            });
+
+            if !is_occluded {
+                let d_perp = d_perp_sq.sqrt();
+                let is_better = match best_candidate {
+                    None => true,
+                    Some((_, tier, dist)) => tier > 1 || (tier == 1 && d_perp < dist),
+                };
+                if is_better {
+                    best_candidate = Some((entity, 1, d_perp));
+                }
+            }
+        }
+    }
+
+    best_candidate.map(|(entity, _, _)| entity)
+}
+
 /// Handles Left Hand (Q) and Right Hand (E) toggle grabbing, setting down, and Mouse 1 throwing
 pub fn dual_hand_interaction_system(
     keys: Option<Res<ButtonInput<KeyCode>>>,
@@ -151,7 +239,8 @@ pub fn dual_hand_interaction_system(
     q_camera: Query<&GlobalTransform, With<crate::elf_game::player::controller::FirstPersonCamera>>,
     q_left_visual: Query<&GlobalTransform, With<LeftHandVisual>>,
     q_right_visual: Query<&GlobalTransform, With<RightHandVisual>>,
-    mut q_grabbables: Query<(Entity, &mut Transform, Option<&ToolItem>), (With<Grabbable>, Without<ElfHands>)>,
+    mut q_grabbables: Query<(Entity, &mut Transform, Option<&Collider>, Option<&ToolItem>), (With<Grabbable>, Without<ElfHands>)>,
+    q_obstacles: Query<(&Transform, &Collider), (Without<Grabbable>, Without<ElfHands>, Without<ElfMovement>, Without<Sensor>)>,
     mut q_velocities: Query<&mut Velocity, With<Grabbable>>,
     q_presents: Query<Entity, With<Present>>,
     mut tool_messages: MessageWriter<UseToolOnPresentMessage>,
@@ -221,6 +310,13 @@ pub fn dual_hand_interaction_system(
         }
     }
 
+    let (ray_origin, ray_dir) = if let Some(cam_gt) = q_camera.iter().next() {
+        (cam_gt.translation(), cam_gt.forward().into())
+    } else {
+        (_player_tf.translation + Vec3::new(0.0, 0.6, 0.0), _player_tf.rotation * Vec3::NEG_Z)
+    };
+    let max_reach = 2.8;
+
     // 2. Left Hand Toggle Grab & Set Down (KeyQ)
     if left_toggle {
         if let Some(held_e) = hands.left_grabbed {
@@ -233,25 +329,22 @@ pub fn dual_hand_interaction_system(
                 vel.angular = Vec3::ZERO;
             }
         } else {
-            // Find closest grabbable within reach (1.8m) not held by right hand
-            let mut closest: Option<(Entity, f32)> = None;
-            for (entity, tf, _) in &q_grabbables {
-                if Some(entity) == hands.right_grabbed {
-                    continue;
-                }
-                let dist = tf.translation.distance(left_hand_pos);
-                if dist < 1.8 && (closest.is_none() || dist < closest.unwrap().1) {
-                    closest = Some((entity, dist));
-                }
-            }
-            if let Some((e, _)) = closest {
-                hands.left_grabbed = Some(e);
-                commands.entity(e).insert((
+            // Find object in direct raycasted Line of Sight with player's reticle
+            if let Some(target_e) = find_grabbable_in_reticle_los(
+                ray_origin,
+                ray_dir,
+                max_reach,
+                hands.right_grabbed,
+                &q_grabbables,
+                &q_obstacles,
+            ) {
+                hands.left_grabbed = Some(target_e);
+                commands.entity(target_e).insert((
                     HeldByPlayer,
                     Sensor,
                     CollisionGroups::new(GROUP_HELD_ITEM, !GROUP_PLAYER),
                 ));
-                if let Ok(mut vel) = q_velocities.get_mut(e) {
+                if let Ok(mut vel) = q_velocities.get_mut(target_e) {
                     vel.linear = Vec3::ZERO;
                     vel.angular = Vec3::ZERO;
                 }
@@ -271,25 +364,22 @@ pub fn dual_hand_interaction_system(
                 vel.angular = Vec3::ZERO;
             }
         } else {
-            // Find closest grabbable within reach (1.8m) not held by left hand
-            let mut closest: Option<(Entity, f32)> = None;
-            for (entity, tf, _) in &q_grabbables {
-                if Some(entity) == hands.left_grabbed {
-                    continue;
-                }
-                let dist = tf.translation.distance(right_hand_pos);
-                if dist < 1.8 && (closest.is_none() || dist < closest.unwrap().1) {
-                    closest = Some((entity, dist));
-                }
-            }
-            if let Some((e, _)) = closest {
-                hands.right_grabbed = Some(e);
-                commands.entity(e).insert((
+            // Find object in direct raycasted Line of Sight with player's reticle
+            if let Some(target_e) = find_grabbable_in_reticle_los(
+                ray_origin,
+                ray_dir,
+                max_reach,
+                hands.left_grabbed,
+                &q_grabbables,
+                &q_obstacles,
+            ) {
+                hands.right_grabbed = Some(target_e);
+                commands.entity(target_e).insert((
                     HeldByPlayer,
                     Sensor,
                     CollisionGroups::new(GROUP_HELD_ITEM, !GROUP_PLAYER),
                 ));
-                if let Ok(mut vel) = q_velocities.get_mut(e) {
+                if let Ok(mut vel) = q_velocities.get_mut(target_e) {
                     vel.linear = Vec3::ZERO;
                     vel.angular = Vec3::ZERO;
                 }
@@ -306,7 +396,7 @@ pub fn dual_hand_interaction_system(
     let right_hold_pos = right_hand_pos + camera_fwd * hold_forward_offset;
 
     if let Some(left_e) = hands.left_grabbed {
-        let left_tool = if let Ok((_, mut tf, tool_opt)) = q_grabbables.get_mut(left_e) {
+        let left_tool = if let Ok((_, mut tf, _, tool_opt)) = q_grabbables.get_mut(left_e) {
             tf.translation = left_hold_pos;
             tf.rotation = camera_rot;
             tool_opt.map(|t| t.tool)
@@ -321,7 +411,7 @@ pub fn dual_hand_interaction_system(
 
         if let Some(tool) = left_tool {
             for present_e in &q_presents {
-                if let Ok((_, p_tf, _)) = q_grabbables.get(present_e) {
+                if let Ok((_, p_tf, _, _)) = q_grabbables.get(present_e) {
                     if p_tf.translation.distance(left_hold_pos) < 1.0 {
                         tool_messages.write(UseToolOnPresentMessage {
                             tool,
@@ -334,7 +424,7 @@ pub fn dual_hand_interaction_system(
     }
 
     if let Some(right_e) = hands.right_grabbed {
-        let right_tool = if let Ok((_, mut tf, tool_opt)) = q_grabbables.get_mut(right_e) {
+        let right_tool = if let Ok((_, mut tf, _, tool_opt)) = q_grabbables.get_mut(right_e) {
             tf.translation = right_hold_pos;
             tf.rotation = camera_rot;
             tool_opt.map(|t| t.tool)
@@ -349,7 +439,7 @@ pub fn dual_hand_interaction_system(
 
         if let Some(tool) = right_tool {
             for present_e in &q_presents {
-                if let Ok((_, p_tf, _)) = q_grabbables.get(present_e) {
+                if let Ok((_, p_tf, _, _)) = q_grabbables.get(present_e) {
                     if p_tf.translation.distance(right_hold_pos) < 1.0 {
                         tool_messages.write(UseToolOnPresentMessage {
                             tool,

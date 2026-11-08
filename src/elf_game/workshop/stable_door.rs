@@ -24,7 +24,7 @@ impl Default for StableDoorTopHalf {
             target_angle: 0.0,
             angular_velocity: 0.0,
             is_physics_driven: false,
-            hinge_pos: Vec3::new(-2.9, 1.78, -13.0),
+            hinge_pos: Vec3::new(-2.9, 2.61, -13.0),
         }
     }
 }
@@ -47,7 +47,7 @@ impl Default for StableDoorBottomHalf {
             target_angle: 0.0,
             angular_velocity: 0.0,
             is_physics_driven: false,
-            hinge_pos: Vec3::new(-2.9, 0.58, -13.0),
+            hinge_pos: Vec3::new(-2.9, 0.87, -13.0),
         }
     }
 }
@@ -95,22 +95,22 @@ pub fn spawn_stable_door(
     let half_w = width * 0.5;
     let thickness = 0.12;
 
-    // 1. Frame: Left jamb, right jamb, and upper header
+    // 1. Frame: Left jamb, right jamb, and upper header (Scaled up by 1.5 to 3.66m)
     commands.spawn((
-        Mesh3d(m.add(Cuboid::new(0.18, 2.45, 0.35))),
+        Mesh3d(m.add(Cuboid::new(0.18, 3.66, 0.35))),
         MeshMaterial3d(wood_mat.clone()),
-        Transform::from_xyz(hinge_x - 0.05, 1.225, door_z),
-        Collider::cuboid(0.09, 1.225, 0.175),
+        Transform::from_xyz(hinge_x - 0.05, 1.83, door_z),
+        Collider::cuboid(0.09, 1.83, 0.175),
         RigidBody::Fixed,
         StableDoorFrame,
         Name::new("StableDoorLeftJamb"),
     ));
 
     commands.spawn((
-        Mesh3d(m.add(Cuboid::new(0.18, 2.45, 0.35))),
+        Mesh3d(m.add(Cuboid::new(0.18, 3.66, 0.35))),
         MeshMaterial3d(wood_mat.clone()),
-        Transform::from_xyz(-1.05, 1.225, door_z),
-        Collider::cuboid(0.09, 1.225, 0.175),
+        Transform::from_xyz(-1.05, 1.83, door_z),
+        Collider::cuboid(0.09, 1.83, 0.175),
         RigidBody::Fixed,
         StableDoorFrame,
         Name::new("StableDoorRightJamb"),
@@ -119,16 +119,16 @@ pub fn spawn_stable_door(
     commands.spawn((
         Mesh3d(m.add(Cuboid::new(2.10, 0.18, 0.40))),
         MeshMaterial3d(wood_mat.clone()),
-        Transform::from_xyz(door_center_x, 2.49, door_z),
+        Transform::from_xyz(door_center_x, 3.57, door_z),
         Collider::cuboid(1.05, 0.09, 0.20),
         RigidBody::Fixed,
         StableDoorFrame,
         Name::new("StableDoorHeaderLintel"),
     ));
 
-    // 2. Bottom Half Section (Height: 1.16m, Y in [0.0, 1.18])
-    let bottom_hinge_pos = Vec3::new(hinge_x, 0.58, door_z);
-    let bottom_rest_pos = Vec3::new(door_center_x, 0.58, door_z);
+    // 2. Bottom Half Section (Height: 1.74m = 1.16m * 1.5, Y in [0.0, 1.74])
+    let bottom_hinge_pos = Vec3::new(hinge_x, 0.87, door_z);
+    let bottom_rest_pos = Vec3::new(door_center_x, 0.87, door_z);
 
     let bottom_half_e = commands
         .spawn((
@@ -142,14 +142,14 @@ pub fn spawn_stable_door(
             Transform::from_translation(bottom_rest_pos),
             Visibility::default(),
             Grabbable, // Grabbable by player, but not movable
-            Collider::cuboid(half_w, 0.58, thickness * 0.5),
+            Collider::cuboid(half_w, 0.87, thickness * 0.5),
             RigidBody::Fixed,
             Name::new("StableDoorBottomHalf"),
         ))
         .with_children(|door| {
-            // Main solid timber plank body
+            // Main solid timber plank body (Height: 1.74m)
             door.spawn((
-                Mesh3d(m.add(Cuboid::new(width, 1.16, thickness))),
+                Mesh3d(m.add(Cuboid::new(width, 1.74, thickness))),
                 MeshMaterial3d(wood_mat.clone()),
                 Transform::default(),
                 Name::new("DoorBottomPlanks"),
@@ -157,7 +157,7 @@ pub fn spawn_stable_door(
 
             // Diagonal Z-brace crossbeam
             door.spawn((
-                Mesh3d(m.add(Cuboid::new(width * 0.95, 0.12, 0.04))),
+                Mesh3d(m.add(Cuboid::new(width * 0.95, 0.14, 0.04))),
                 MeshMaterial3d(wood_mat.clone()),
                 Transform::from_xyz(0.0, 0.0, thickness * 0.55).with_rotation(Quat::from_rotation_z(0.45)),
                 Name::new("DoorBottomZBrace"),
@@ -167,13 +167,13 @@ pub fn spawn_stable_door(
             door.spawn((
                 Mesh3d(m.add(Cuboid::new(0.55, 0.08, 0.03))),
                 MeshMaterial3d(iron_mat.clone()),
-                Transform::from_xyz(-half_w + 0.25, 0.35, thickness * 0.55),
+                Transform::from_xyz(-half_w + 0.25, 0.525, thickness * 0.55),
                 Name::new("DoorBottomHingeStrapTop"),
             ));
             door.spawn((
                 Mesh3d(m.add(Cuboid::new(0.55, 0.08, 0.03))),
                 MeshMaterial3d(iron_mat.clone()),
-                Transform::from_xyz(-half_w + 0.25, -0.35, thickness * 0.55),
+                Transform::from_xyz(-half_w + 0.25, -0.525, thickness * 0.55),
                 Name::new("DoorBottomHingeStrapLow"),
             ));
 
@@ -181,15 +181,15 @@ pub fn spawn_stable_door(
             door.spawn((
                 Mesh3d(m.add(Cylinder::new(0.025, 0.25))),
                 MeshMaterial3d(iron_mat.clone()),
-                Transform::from_xyz(half_w - 0.18, 0.35, thickness * 0.65),
+                Transform::from_xyz(half_w - 0.18, 0.525, thickness * 0.65),
                 Name::new("DoorBottomLatchHandle"),
             ));
         })
         .id();
 
-    // 3. Top Half Section (Height: 1.16m, Y in [1.22, 2.40])
-    let top_hinge_pos = Vec3::new(hinge_x, 1.78, door_z);
-    let top_rest_pos = Vec3::new(door_center_x, 1.78, door_z);
+    // 3. Top Half Section (Height: 1.74m = 1.16m * 1.5, Y in [1.74, 3.48])
+    let top_hinge_pos = Vec3::new(hinge_x, 2.61, door_z);
+    let top_rest_pos = Vec3::new(door_center_x, 2.61, door_z);
 
     commands
         .spawn((
@@ -203,14 +203,14 @@ pub fn spawn_stable_door(
             Transform::from_translation(top_rest_pos),
             Visibility::default(),
             Grabbable, // Grabbable by player, but not movable
-            Collider::cuboid(half_w, 0.58, thickness * 0.5),
+            Collider::cuboid(half_w, 0.87, thickness * 0.5),
             RigidBody::Fixed,
             Name::new("StableDoorTopHalf"),
         ))
         .with_children(|door| {
-            // Main solid timber plank body
+            // Main solid timber plank body (Height: 1.74m)
             door.spawn((
-                Mesh3d(m.add(Cuboid::new(width, 1.16, thickness))),
+                Mesh3d(m.add(Cuboid::new(width, 1.74, thickness))),
                 MeshMaterial3d(wood_mat.clone()),
                 Transform::default(),
                 Name::new("DoorTopPlanks"),
@@ -218,7 +218,7 @@ pub fn spawn_stable_door(
 
             // Diagonal Z-brace crossbeam
             door.spawn((
-                Mesh3d(m.add(Cuboid::new(width * 0.95, 0.12, 0.04))),
+                Mesh3d(m.add(Cuboid::new(width * 0.95, 0.14, 0.04))),
                 MeshMaterial3d(wood_mat.clone()),
                 Transform::from_xyz(0.0, 0.0, thickness * 0.55).with_rotation(Quat::from_rotation_z(-0.45)),
                 Name::new("DoorTopZBrace"),
@@ -228,13 +228,13 @@ pub fn spawn_stable_door(
             door.spawn((
                 Mesh3d(m.add(Cuboid::new(0.55, 0.08, 0.03))),
                 MeshMaterial3d(iron_mat.clone()),
-                Transform::from_xyz(-half_w + 0.25, 0.35, thickness * 0.55),
+                Transform::from_xyz(-half_w + 0.25, 0.525, thickness * 0.55),
                 Name::new("DoorTopHingeStrapTop"),
             ));
             door.spawn((
                 Mesh3d(m.add(Cuboid::new(0.55, 0.08, 0.03))),
                 MeshMaterial3d(iron_mat.clone()),
-                Transform::from_xyz(-half_w + 0.25, -0.35, thickness * 0.55),
+                Transform::from_xyz(-half_w + 0.25, -0.525, thickness * 0.55),
                 Name::new("DoorTopHingeStrapLow"),
             ));
 
@@ -242,7 +242,7 @@ pub fn spawn_stable_door(
             door.spawn((
                 Mesh3d(m.add(Cylinder::new(0.025, 0.25))),
                 MeshMaterial3d(iron_mat),
-                Transform::from_xyz(half_w - 0.18, -0.35, thickness * 0.65),
+                Transform::from_xyz(half_w - 0.18, -0.525, thickness * 0.65),
                 Name::new("DoorTopLatchHandle"),
             ));
         });

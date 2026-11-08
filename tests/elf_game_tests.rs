@@ -7976,9 +7976,10 @@ fn test_climbable_windows_geometry() {
     app.add_systems(Startup, setup_workshop_scene);
     app.update();
 
-    // Verify climbable window sill and stable door are spawned
+    // Verify extra window between stove and door is removed and stable door is spawned
     let mut names_q = app.world_mut().query::<(&Name, &Transform)>();
     let mut found_window_sill = false;
+    let mut found_wall_between = false;
     let mut found_door_top = false;
     let mut found_door_bottom = false;
 
@@ -7986,22 +7987,27 @@ fn test_climbable_windows_geometry() {
         match name.as_str() {
             "WestClimbableWindowSill" => {
                 found_window_sill = true;
-                assert!((tf.translation.x - (-4.8)).abs() < 0.1);
-                assert_eq!(tf.translation.y, 0.85, "Window sill height must be 0.85m for player climbing");
+            }
+            "WallNorthBetweenStoveAndDoor" => {
+                found_wall_between = true;
+                assert!((tf.translation.x - (-4.25)).abs() < 0.1);
             }
             "StableDoorTopHalf" => {
                 found_door_top = true;
                 assert!((tf.translation.x - (-2.0)).abs() < 0.2);
+                assert!((tf.translation.y - 2.61).abs() < 0.1, "Top half must be scaled taller (Y = 2.61)");
             }
             "StableDoorBottomHalf" => {
                 found_door_bottom = true;
                 assert!((tf.translation.x - (-2.0)).abs() < 0.2);
+                assert!((tf.translation.y - 0.87).abs() < 0.1, "Bottom half must be scaled taller (Y = 0.87)");
             }
             _ => {}
         }
     }
 
-    assert!(found_window_sill, "Climbable window sill must be present");
+    assert!(!found_window_sill, "Extra window between moose and stove must be removed");
+    assert!(found_wall_between, "Solid wall between stove and door must be present");
     assert!(found_door_top, "Stable door top half must be present");
     assert!(found_door_bottom, "Stable door bottom half must be present");
 }
@@ -8342,27 +8348,27 @@ fn test_moose_no_shutters_new_resting_rampage_pathing_and_door_slam() {
     assert_eq!(tracker.waypoints[6], Vec3::new(-2.0, 1.4, -10.0), "Leap back out door at X = -2.0");
     assert_eq!(tracker.waypoints[7], Vec3::new(-2.0, 1.8, -17.0), "Retreat to resting area at X = -2.0");
 
-    // 4. Food trough location is X = -2.0, Y = 0.3, Z = -12.0 in the center of the wall
+    // 4. Food trough is now a bucket on the right side of the double door (X = -0.75, Y = 0.275, Z = -12.15)
     let mut trough_q = app.world_mut().query::<(&MooseFeedingTrough, &Transform)>();
-    let (_, trough_tf) = trough_q.iter(app.world()).next().expect("Trough must exist");
-    assert!((trough_tf.translation.x - (-2.0)).abs() < 0.05, "Trough must be at X = -2.0");
-    assert!((trough_tf.translation.y - 0.3).abs() < 0.05, "Trough must be at Y = 0.3");
-    assert!((trough_tf.translation.z - (-12.0)).abs() < 0.05, "Trough must be at Z = -12.0");
+    let (_, trough_tf) = trough_q.iter(app.world()).next().expect("Trough/Bucket must exist");
+    assert!((trough_tf.translation.x - (-0.75)).abs() < 0.05, "Bucket must be on right side of door at X = -0.75");
+    assert!((trough_tf.translation.y - 0.275).abs() < 0.05, "Bucket must be at Y = 0.275");
+    assert!((trough_tf.translation.z - (-12.15)).abs() < 0.05, "Bucket must be at Z = -12.15");
 
-    // 5. Active area of food trough: Snack placed at X = -2.0 is detected and triggers feeding
+    // 5. Active area of bucket: Snack placed at X = -0.75 is detected and triggers feeding
     let mut feed_app = App::new();
     feed_app.insert_resource(MooseHunger {
         value: 55.0,
         stage: MooseHungerStage::AgitatedHuffing,
         ..default()
     });
-    feed_app.world_mut().spawn((MooseFeedingTrough, Transform::from_xyz(-2.0, 0.3, -12.0)));
-    feed_app.world_mut().spawn((MooseSnack { nutrition_value: 30.0 }, Transform::from_xyz(-2.0, 0.4, -12.0)));
+    feed_app.world_mut().spawn((MooseFeedingTrough, Transform::from_xyz(-0.75, 0.275, -12.15)));
+    feed_app.world_mut().spawn((MooseSnack { nutrition_value: 30.0 }, Transform::from_xyz(-0.75, 0.4, -12.15)));
     feed_app.add_systems(Update, moose_feeding_trough_system);
     feed_app.update();
 
     let feed_hunger = feed_app.world().resource::<MooseHunger>();
-    assert_eq!(feed_hunger.value, 0.0, "Snack in active trough area at X = -2.0 must be consumed");
+    assert_eq!(feed_hunger.value, 0.0, "Snack in active bucket area at X = -0.75 must be consumed");
 
     // 6. Top of stable door opens as Moose pokes head in, and slams shut when he goes back
     let mut door_app = App::new();
@@ -8403,4 +8409,184 @@ fn test_moose_no_shutters_new_resting_rampage_pathing_and_door_slam() {
     }
     let top_shut = door_app.world().get::<StableDoorTopHalf>(top_door).unwrap();
     assert_eq!(top_shut.current_angle, 0.0, "Top of stable door must slam shut when Moose goes back");
+}
+
+#[test]
+fn test_taller_stable_door_feeding_bucket_and_gas_hose_visual_indicators() {
+    use bevy_rapier3d::prelude::Collider;
+    use rust_tests::elf_game::{
+        assets::AssetsPlugin,
+        workshop::{
+            room::setup_workshop_scene,
+            stove::{
+                spawn_oven_stove_and_propane_scene, appliance_visual_indicators_system,
+                gas_hose_interaction_system, ApplianceVisualMaterials, FurnaceFireboxWindow,
+                FurnaceFireGlowLight, GasHose,
+                HoseAttachment, OvenDoorWindow, OvenGasAnchor, StoveBurnerFlame, StoveGasAnchor,
+                WorkshopGasLine,
+            },
+        },
+        moose::{
+            toy_model::{
+                animate_mr_moose_peeking_system, spawn_mr_moose, MooseHead, MrMoose,
+            },
+            MooseFeedingBucket, MooseFeedingTrough, MooseHunger, MooseHungerStage,
+        },
+        player::{controller::FirstPersonCamera, hands::HeldByPlayer},
+    };
+
+    // 1. Double door scaled taller by 1.5 factor
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_plugins(AssetsPlugin);
+    app.add_systems(Startup, (setup_workshop_scene, spawn_mr_moose));
+    app.update();
+
+    let mut door_q = app.world_mut().query::<(&Name, &Transform, &Collider)>();
+    let mut found_top = false;
+    let mut found_bottom = false;
+    for (name, tf, _col) in door_q.iter(app.world()) {
+        match name.as_str() {
+            "StableDoorTopHalf" => {
+                found_top = true;
+                assert!((tf.translation.y - 2.61).abs() < 0.1, "Top half must be centered at Y ≈ 2.61");
+            }
+            "StableDoorBottomHalf" => {
+                found_bottom = true;
+                assert!((tf.translation.y - 0.87).abs() < 0.1, "Bottom half must be centered at Y ≈ 0.87");
+            }
+            _ => {}
+        }
+    }
+    assert!(found_top && found_bottom, "Both door sections must be present and scaled");
+
+    // 2. Feeding trough is a bucket on the right side of the double door
+    let mut bucket_q = app.world_mut().query::<(&MooseFeedingBucket, &MooseFeedingTrough, &Transform)>();
+    let (_, _, b_tf) = bucket_q.iter(app.world()).next().expect("Feeding bucket must exist");
+    assert!((b_tf.translation.x - (-0.75)).abs() < 0.15, "Bucket must be on the right side of the double door (X ≈ -0.75)");
+    assert!((b_tf.translation.z - (-12.15)).abs() < 0.15, "Bucket must be at Z ≈ -12.15");
+
+    // 3. Eating animation is centered on the bucket (local X = 1.25)
+    let mut anim_app = App::new();
+    anim_app.init_resource::<Time>();
+    anim_app.insert_resource(MooseHunger {
+        value: 55.0,
+        stage: MooseHungerStage::EatingTreat,
+        eating_timer: 1.0,
+        eating_duration: 2.2,
+        is_eating_fast: false,
+        ..default()
+    });
+    let _moose_e = anim_app.world_mut().spawn((MrMoose, Transform::from_xyz(-2.0, 1.8, -14.5))).id();
+    let head_e = anim_app.world_mut().spawn((MooseHead, Transform::IDENTITY)).id();
+    anim_app.add_systems(Update, animate_mr_moose_peeking_system);
+    anim_app.update();
+
+    let head_tf = anim_app.world().get::<Transform>(head_e).unwrap();
+    assert!((head_tf.translation.x - 1.25).abs() < 0.1, "Eating animation must be centered on the bucket at local X ≈ 1.25 (got {})", head_tf.translation.x);
+    assert!(head_tf.translation.y < 0.6, "Eating animation head must reach down into bucket (got Y = {})", head_tf.translation.y);
+
+    // 4. Gas hose anchor points have larger interaction areas
+    let mut stove_app = App::new();
+    stove_app.init_resource::<Assets<Mesh>>();
+    stove_app.init_resource::<Assets<StandardMaterial>>();
+    stove_app.add_systems(Startup, spawn_oven_stove_and_propane_scene);
+    stove_app.update();
+
+    let mut anchor_q = stove_app.world_mut().query::<(&StoveGasAnchor, &Collider)>();
+    let (_, _stove_col) = anchor_q.iter(stove_app.world()).next().expect("StoveGasAnchor must exist");
+    let mut oven_anchor_q = stove_app.world_mut().query::<(&OvenGasAnchor, &Collider)>();
+    let (_, _oven_col) = oven_anchor_q.iter(stove_app.world()).next().expect("OvenGasAnchor must exist");
+
+    // 5. Appliance visual indicators (Furnace window glowing vs cool dark gray, Stove blue burner flames)
+    let mut vis_app = App::new();
+    vis_app.init_resource::<Assets<Mesh>>();
+    vis_app.init_resource::<Assets<StandardMaterial>>();
+    vis_app.insert_resource(WorkshopGasLine { pressure_psi: 100.0, ..default() });
+    vis_app.add_systems(Startup, spawn_oven_stove_and_propane_scene);
+    vis_app.add_systems(Update, appliance_visual_indicators_system);
+    vis_app.update();
+
+    let mats = vis_app.world().resource::<ApplianceVisualMaterials>().clone();
+
+    // When attached to Stove (default):
+    let mut flame_q = vis_app.world_mut().query::<(&StoveBurnerFlame, &Visibility)>();
+    for (_, vis) in flame_q.iter(vis_app.world()) {
+        assert_eq!(*vis, Visibility::Inherited, "Stove burners must show blue flames when attached");
+    }
+    let mut furnace_win_q = vis_app.world_mut().query::<(&FurnaceFireboxWindow, &MeshMaterial3d<StandardMaterial>)>();
+    for (_, mat) in furnace_win_q.iter(vis_app.world()) {
+        assert_eq!(mat.0, mats.glowing_ember, "Furnace window must glow when attached");
+    }
+
+    // Detach hose to Neither:
+    let mut hose = vis_app.world_mut().query::<&mut GasHose>().single_mut(vis_app.world_mut()).unwrap();
+    hose.attached_to = HoseAttachment::Neither;
+    vis_app.update();
+
+    let mut flame_q = vis_app.world_mut().query::<(&StoveBurnerFlame, &Visibility)>();
+    for (_, vis) in flame_q.iter(vis_app.world()) {
+        assert_eq!(*vis, Visibility::Hidden, "Stove burners must be off when detached");
+    }
+    let mut furnace_win_q = vis_app.world_mut().query::<(&FurnaceFireboxWindow, &MeshMaterial3d<StandardMaterial>)>();
+    for (_, mat) in furnace_win_q.iter(vis_app.world()) {
+        assert_eq!(mat.0, mats.cool_dark_gray, "Furnace window must be cool dark gray when detached");
+    }
+    let mut light_q = vis_app.world_mut().query::<(&FurnaceFireGlowLight, &PointLight)>();
+    for (_, light) in light_q.iter(vis_app.world()) {
+        assert_eq!(light.intensity, 0.0, "Furnace fire light must be off when detached");
+    }
+
+    // Attach hose to Oven:
+    let mut hose = vis_app.world_mut().query::<&mut GasHose>().single_mut(vis_app.world_mut()).unwrap();
+    hose.attached_to = HoseAttachment::Oven;
+    vis_app.update();
+
+    let mut oven_win_q = vis_app.world_mut().query::<(&OvenDoorWindow, &MeshMaterial3d<StandardMaterial>)>();
+    for (_, mat) in oven_win_q.iter(vis_app.world()) {
+        assert_eq!(mat.0, mats.glowing_ember, "Oven window must glow when attached to Oven");
+    }
+
+    // 6. Automatic attach to anchor player is facing while holding hose
+    let mut auto_app = App::new();
+    auto_app.init_resource::<Assets<Mesh>>();
+    auto_app.init_resource::<Assets<StandardMaterial>>();
+    auto_app.init_resource::<ButtonInput<KeyCode>>();
+    auto_app.init_resource::<ButtonInput<MouseButton>>();
+    auto_app.insert_resource(WorkshopGasLine::default());
+    auto_app.add_systems(Startup, spawn_oven_stove_and_propane_scene);
+    auto_app.add_systems(Update, gas_hose_interaction_system);
+    auto_app.update();
+
+    let (nozzle_e, _stove_anchor_pos, oven_anchor_pos) = {
+        let mut q = auto_app.world_mut().query::<&GasHose>();
+        let h = q.single(auto_app.world()).unwrap();
+        (h.nozzle_entity.unwrap(), h.stove_anchor_pos, h.oven_anchor_pos)
+    };
+
+    // Detach hose, player holds nozzle
+    {
+        let mut h = auto_app.world_mut().query::<&mut GasHose>().single_mut(auto_app.world_mut()).unwrap();
+        h.attached_to = HoseAttachment::Neither;
+    }
+    auto_app.world_mut().entity_mut(nozzle_e).insert(HeldByPlayer);
+
+    // Player faces Oven anchor: cam at (-9.62, 1.2, -10.0), looking North towards oven_anchor_pos (-9.62, 0.85, -12.0)
+    let cam_pos = Vec3::new(-9.62, 1.2, -10.0);
+    let cam_target = oven_anchor_pos;
+    let cam_fwd = (cam_target - cam_pos).normalize();
+    auto_app.world_mut().spawn((
+        FirstPersonCamera,
+        GlobalTransform::from(Transform::from_translation(cam_pos).looking_to(cam_fwd, Vec3::Y)),
+    ));
+
+    // Player presses interact (KeyE) while holding hose
+    auto_app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyE);
+    auto_app.update();
+
+    let mut check_q = auto_app.world_mut().query::<&GasHose>();
+    let updated_h = check_q.single(auto_app.world()).unwrap();
+    assert_eq!(updated_h.attached_to, HoseAttachment::Oven, "Hose must automatically attach to the Oven anchor player is facing");
+    assert!(auto_app.world().get::<HeldByPlayer>(nozzle_e).is_none(), "Player hold must be released upon automatic attachment");
 }

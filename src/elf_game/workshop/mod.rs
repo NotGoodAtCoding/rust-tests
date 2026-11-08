@@ -76,6 +76,7 @@ impl Plugin for WorkshopPlugin {
                     stove::propane_gas_flow_system,
                     stove::gas_hose_chain_physics_system,
                     stove::gas_hose_interaction_system,
+                    stove::appliance_visual_indicators_system,
                     stove::propane_tank_refill_and_holder_system,
                     stove::gas_leak_flame_explosion_system,
                     stove::explosion_flash_fade_system,

@@ -94,7 +94,7 @@ impl Default for GasHose {
             oven_anchor_pos: Vec3::new(-9.62, 0.85, -12.0),
             loose_nozzle_pos: Vec3::new(-9.05, 0.05, -12.0),
             is_venting_gas: false,
-            snap_distance: 0.22,
+            snap_distance: 0.85,
             nozzle_entity: None,
         }
     }
@@ -108,7 +108,7 @@ pub struct GasHoseSegment {
 }
 
 /// The brass quick-connect coupler nozzle on the free end of the flexible yellow gas hose.
-/// Can be grabbed and carried by the player, snapping into place when within 0.2m of an anchor.
+/// Can be grabbed and carried by the player, snapping into place when within reach of an anchor.
 #[derive(Component, Debug, Clone)]
 pub struct GasHoseCouplerNozzle;
 
@@ -119,6 +119,30 @@ pub struct StoveGasAnchor;
 /// Anchor port on the baker's oven.
 #[derive(Component, Debug, Clone)]
 pub struct OvenGasAnchor;
+
+/// Firebox inspection window on the furnace stove. Glows if gas hose is attached, cool dark gray if not.
+#[derive(Component, Debug, Clone)]
+pub struct FurnaceFireboxWindow;
+
+/// Internal firebox glow light for the furnace stove.
+#[derive(Component, Debug, Clone)]
+pub struct FurnaceFireGlowLight;
+
+/// Blue flame jet effect on the stove cooking burners.
+#[derive(Component, Debug, Clone)]
+pub struct StoveBurnerFlame;
+
+/// Window / firebox on the baker's oven door.
+#[derive(Component, Debug, Clone)]
+pub struct OvenDoorWindow;
+
+/// Shared material handles for appliance visual indicators (glowing ember vs cool dark gray vs blue flame).
+#[derive(Resource, Clone)]
+pub struct ApplianceVisualMaterials {
+    pub glowing_ember: Handle<StandardMaterial>,
+    pub cool_dark_gray: Handle<StandardMaterial>,
+    pub blue_flame: Handle<StandardMaterial>,
+}
 
 /// Gas-burning furnace stove heating the workshop and keeping temperatures above freezing.
 #[derive(Component, Debug, Clone)]
@@ -235,6 +259,33 @@ pub fn spawn_oven_stove_and_propane_scene(
         ..default()
     });
 
+    // Appliance visual indicator materials: glowing ember vs cool dark gray vs blue flame
+    let glowing_ember_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.65, 0.20),
+        emissive: LinearRgba::new(4.5, 2.2, 0.4, 1.0),
+        perceptual_roughness: 0.2,
+        ..default()
+    });
+    let cool_dark_gray_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.18, 0.20, 0.22),
+        emissive: LinearRgba::BLACK,
+        perceptual_roughness: 0.8,
+        ..default()
+    });
+    let blue_flame_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.20, 0.65, 1.0, 0.85),
+        emissive: LinearRgba::new(0.5, 2.5, 7.0, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        perceptual_roughness: 0.1,
+        ..default()
+    });
+
+    commands.insert_resource(ApplianceVisualMaterials {
+        glowing_ember: glowing_ember_mat.clone(),
+        cool_dark_gray: cool_dark_gray_mat.clone(),
+        blue_flame: blue_flame_mat.clone(),
+    });
+
     // -------------------------------------------------------------------------
     // 1. Gas-Burning Furnace Stove (Bigger footprint: X = -7.6, Z = -12.0)
     // -------------------------------------------------------------------------
@@ -262,7 +313,7 @@ pub fn spawn_oven_stove_and_propane_scene(
                 Name::new("StoveBodyIron"),
             ));
 
-            // Four top cooking burner grates
+            // Four top cooking burner grates with blue flame effects
             let burner_offsets = [
                 (-0.40, -0.32),
                 (0.40, -0.32),
@@ -276,18 +327,30 @@ pub fn spawn_oven_stove_and_propane_scene(
                     Transform::from_xyz(bx, 1.38, bz),
                     Name::new("BurnerGrate"),
                 ));
+
+                // Blue flame effect jet atop each burner grate
+                stove.spawn((
+                    StoveBurnerFlame,
+                    Mesh3d(meshes.add(Cylinder::new(0.13, 0.035))),
+                    MeshMaterial3d(blue_flame_mat.clone()),
+                    Transform::from_xyz(bx, 1.41, bz),
+                    Visibility::Inherited,
+                    Name::new("StoveBurnerBlueFlame"),
+                ));
             }
 
             // Furnace firebox inspection window with glowing ember glass
             stove.spawn((
+                FurnaceFireboxWindow,
                 Mesh3d(meshes.add(Cuboid::new(0.65, 0.45, 0.08))),
-                MeshMaterial3d(warning_mat.clone()),
+                MeshMaterial3d(glowing_ember_mat.clone()),
                 Transform::from_xyz(0.0, 0.50, 0.61),
                 Name::new("FurnaceFireboxWindow"),
             ));
 
             // Internal firebox light (warm furnace glow)
             stove.spawn((
+                FurnaceFireGlowLight,
                 PointLight {
                     color: Color::srgb(1.0, 0.55, 0.15),
                     intensity: 1600.0,
@@ -307,12 +370,15 @@ pub fn spawn_oven_stove_and_propane_scene(
                 Name::new("StoveExhaustFluePipe"),
             ));
 
-            // Stove brass gas inlet anchor fitting on West flank
+            // Stove brass gas inlet anchor fitting on West flank with generous interaction area
             stove.spawn((
                 StoveGasAnchor,
-                Mesh3d(meshes.add(Cylinder::new(0.055, 0.16))),
+                Mesh3d(meshes.add(Cylinder::new(0.08, 0.22))),
                 MeshMaterial3d(brass_mat.clone()),
                 Transform::from_xyz(-0.84, 0.85, 0.0).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                Collider::cylinder(0.40, 0.45),
+                Sensor,
+                Grabbable,
                 Name::new("StoveGasAnchorFitting"),
             ));
         });
@@ -352,6 +418,15 @@ pub fn spawn_oven_stove_and_propane_scene(
                 Name::new("OvenDoor"),
             ));
 
+            // Oven door inspection window
+            oven.spawn((
+                OvenDoorWindow,
+                Mesh3d(meshes.add(Cuboid::new(0.70, 0.45, 0.06))),
+                MeshMaterial3d(cool_dark_gray_mat.clone()),
+                Transform::from_xyz(0.0, 0.75, 0.73),
+                Name::new("OvenDoorWindow"),
+            ));
+
             // Brass handle on door
             oven.spawn((
                 Mesh3d(meshes.add(Cylinder::new(0.035, 0.55))),
@@ -360,12 +435,15 @@ pub fn spawn_oven_stove_and_propane_scene(
                 Name::new("OvenDoorHandle"),
             ));
 
-            // Oven brass gas inlet anchor fitting on East flank
+            // Oven brass gas inlet anchor fitting on East flank with generous interaction area
             oven.spawn((
                 OvenGasAnchor,
-                Mesh3d(meshes.add(Cylinder::new(0.055, 0.16))),
+                Mesh3d(meshes.add(Cylinder::new(0.08, 0.22))),
                 MeshMaterial3d(brass_mat.clone()),
                 Transform::from_xyz(0.98, 0.85, 0.0).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                Collider::cylinder(0.40, 0.45),
+                Sensor,
+                Grabbable,
                 Name::new("OvenGasAnchorFitting"),
             ));
         });
@@ -924,14 +1002,20 @@ pub fn gas_hose_chain_physics_system(
 }
 
 /// Allows the player to interact with the flexible yellow hose coupler nozzle or anchor fittings
-/// to pull it off an anchor point or cycle its attachment.
+/// to pull it off an anchor point, cycle its attachment, or automatically attach to whichever
+/// anchor point the player is facing while holding the hose.
 pub fn gas_hose_interaction_system(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     mouse: Option<Res<ButtonInput<MouseButton>>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     dialogue_state: Option<Res<crate::elf_game::dialogue::ActiveDialogue>>,
+    mut commands: Commands,
+    mut q_hands: Query<&mut crate::elf_game::player::ElfHands>,
+    q_held: Query<Entity, With<crate::elf_game::player::hands::HeldByPlayer>>,
     q_camera: Query<&GlobalTransform, With<FirstPersonCamera>>,
+    q_stove_anchor: Query<Entity, With<StoveGasAnchor>>,
+    q_oven_anchor: Query<Entity, With<OvenGasAnchor>>,
     mut q_hose: Query<&mut GasHose>,
 ) {
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
@@ -939,6 +1023,70 @@ pub fn gas_hose_interaction_system(
     }
     if dialogue_state.as_ref().map(|d| d.is_active).unwrap_or(false) {
         return;
+    }
+
+    let Ok(mut hose) = q_hose.single_mut() else {
+        return;
+    };
+
+    let is_holding_nozzle = if let Some(nozzle_e) = hose.nozzle_entity {
+        q_held.get(nozzle_e).is_ok()
+            || q_hands.iter().any(|h| h.left_grabbed == Some(nozzle_e) || h.right_grabbed == Some(nozzle_e))
+    } else {
+        false
+    };
+
+    let stove_anchor_e = q_stove_anchor.iter().next();
+    let oven_anchor_e = q_oven_anchor.iter().next();
+
+    // Check if player grabbed an anchor point directly while holding the nozzle
+    if is_holding_nozzle {
+        let mut grabbed_stove = false;
+        let mut grabbed_oven = false;
+        for hands in &q_hands {
+            if let Some(left) = hands.left_grabbed {
+                if Some(left) == stove_anchor_e { grabbed_stove = true; }
+                if Some(left) == oven_anchor_e { grabbed_oven = true; }
+            }
+            if let Some(right) = hands.right_grabbed {
+                if Some(right) == stove_anchor_e { grabbed_stove = true; }
+                if Some(right) == oven_anchor_e { grabbed_oven = true; }
+            }
+        }
+
+        if grabbed_stove {
+            hose.attached_to = HoseAttachment::Stove;
+            hose.is_venting_gas = false;
+            hose.loose_nozzle_pos = hose.stove_anchor_pos;
+            if let Some(nozzle_e) = hose.nozzle_entity {
+                commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
+            }
+            for mut hands in &mut q_hands {
+                if hands.left_grabbed == hose.nozzle_entity || hands.left_grabbed == stove_anchor_e {
+                    hands.left_grabbed = None;
+                }
+                if hands.right_grabbed == hose.nozzle_entity || hands.right_grabbed == stove_anchor_e {
+                    hands.right_grabbed = None;
+                }
+            }
+            return;
+        } else if grabbed_oven {
+            hose.attached_to = HoseAttachment::Oven;
+            hose.is_venting_gas = false;
+            hose.loose_nozzle_pos = hose.oven_anchor_pos;
+            if let Some(nozzle_e) = hose.nozzle_entity {
+                commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
+            }
+            for mut hands in &mut q_hands {
+                if hands.left_grabbed == hose.nozzle_entity || hands.left_grabbed == oven_anchor_e {
+                    hands.left_grabbed = None;
+                }
+                if hands.right_grabbed == hose.nozzle_entity || hands.right_grabbed == oven_anchor_e {
+                    hands.right_grabbed = None;
+                }
+            }
+            return;
+        }
     }
 
     let Some(keys) = keys else { return; };
@@ -959,44 +1107,141 @@ pub fn gas_hose_interaction_system(
     let cam_pos = cam_gt.translation();
     let cam_fwd = cam_gt.forward();
 
-    for mut hose in &mut q_hose {
-        let stove_target = hose.stove_anchor_pos;
-        let oven_target = hose.oven_anchor_pos;
-        let loose_target = hose.loose_nozzle_pos;
+    let stove_target = hose.stove_anchor_pos;
+    let oven_target = hose.oven_anchor_pos;
+    let loose_target = hose.loose_nozzle_pos;
 
-        let dist_stove = cam_pos.distance(stove_target);
-        let dist_oven = cam_pos.distance(oven_target);
-        let dist_loose = cam_pos.distance(loose_target);
+    let dist_stove = cam_pos.distance(stove_target);
+    let dist_oven = cam_pos.distance(oven_target);
+    let dist_loose = cam_pos.distance(loose_target);
 
-        let dot_stove = cam_fwd.dot((stove_target - cam_pos).normalize());
-        let dot_oven = cam_fwd.dot((oven_target - cam_pos).normalize());
-        let dot_loose = cam_fwd.dot((loose_target - cam_pos).normalize());
+    let dot_stove = cam_fwd.dot((stove_target - cam_pos).normalize());
+    let dot_oven = cam_fwd.dot((oven_target - cam_pos).normalize());
+    let dot_loose = cam_fwd.dot((loose_target - cam_pos).normalize());
 
-        if dist_stove < 2.5 && dot_stove > 0.70 {
-            // Toggle / attach to Stove
-            if hose.attached_to == HoseAttachment::Stove {
-                hose.attached_to = HoseAttachment::Neither;
-            } else {
-                hose.attached_to = HoseAttachment::Stove;
+    // When the player interacts or grabs while holding the hose:
+    // Automatically attach to whichever anchor point the player is facing!
+    if is_holding_nozzle {
+        if dot_stove > 0.40 && dist_stove < 3.8 && (dot_stove >= dot_oven || dist_stove < dist_oven) {
+            hose.attached_to = HoseAttachment::Stove;
+            hose.is_venting_gas = false;
+            hose.loose_nozzle_pos = stove_target;
+            if let Some(nozzle_e) = hose.nozzle_entity {
+                commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
             }
-            break;
-        } else if dist_oven < 2.5 && dot_oven > 0.70 {
-            // Toggle / attach to Oven
-            if hose.attached_to == HoseAttachment::Oven {
-                hose.attached_to = HoseAttachment::Neither;
-            } else {
-                hose.attached_to = HoseAttachment::Oven;
+            for mut hands in &mut q_hands {
+                if hands.left_grabbed == hose.nozzle_entity {
+                    hands.left_grabbed = None;
+                }
+                if hands.right_grabbed == hose.nozzle_entity {
+                    hands.right_grabbed = None;
+                }
             }
-            break;
-        } else if (dist_loose < 2.5 && dot_loose > 0.65) || (cam_pos.distance(hose.wall_inlet_pos) < 2.5) {
-            // Cycle attachment: Neither -> Stove -> Oven -> Neither
-            hose.attached_to = match hose.attached_to {
-                HoseAttachment::Neither => HoseAttachment::Stove,
-                HoseAttachment::Stove => HoseAttachment::Oven,
-                HoseAttachment::Oven => HoseAttachment::Neither,
-            };
-            break;
+            return;
+        } else if dot_oven > 0.40 && dist_oven < 3.8 {
+            hose.attached_to = HoseAttachment::Oven;
+            hose.is_venting_gas = false;
+            hose.loose_nozzle_pos = oven_target;
+            if let Some(nozzle_e) = hose.nozzle_entity {
+                commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
+            }
+            for mut hands in &mut q_hands {
+                if hands.left_grabbed == hose.nozzle_entity {
+                    hands.left_grabbed = None;
+                }
+                if hands.right_grabbed == hose.nozzle_entity {
+                    hands.right_grabbed = None;
+                }
+            }
+            return;
         }
+    }
+
+    // Standard interaction when not holding the nozzle:
+    if dist_stove < 3.2 && dot_stove > 0.55 {
+        // Toggle / attach to Stove
+        if hose.attached_to == HoseAttachment::Stove {
+            hose.attached_to = HoseAttachment::Neither;
+        } else {
+            hose.attached_to = HoseAttachment::Stove;
+        }
+    } else if dist_oven < 3.2 && dot_oven > 0.55 {
+        // Toggle / attach to Oven
+        if hose.attached_to == HoseAttachment::Oven {
+            hose.attached_to = HoseAttachment::Neither;
+        } else {
+            hose.attached_to = HoseAttachment::Oven;
+        }
+    } else if (dist_loose < 3.0 && dot_loose > 0.55) || (cam_pos.distance(hose.wall_inlet_pos) < 3.0) {
+        // Cycle attachment: Neither -> Stove -> Oven -> Neither
+        hose.attached_to = match hose.attached_to {
+            HoseAttachment::Neither => HoseAttachment::Stove,
+            HoseAttachment::Stove => HoseAttachment::Oven,
+            HoseAttachment::Oven => HoseAttachment::Neither,
+        };
+    }
+}
+
+/// Updates visual indicators for the furnace and stove depending on gas hose connection and gas flow:
+/// - Furnace door window glows if attached, cool dark gray if not.
+/// - Stove burners show blue flame effects if connected, off if not.
+pub fn appliance_visual_indicators_system(
+    time: Option<Res<Time>>,
+    gas_line: Option<Res<WorkshopGasLine>>,
+    q_hose: Query<&GasHose>,
+    appliance_mats: Option<Res<ApplianceVisualMaterials>>,
+    mut q_burner_flames: Query<&mut Visibility, With<StoveBurnerFlame>>,
+    mut q_furnace_window: Query<&mut MeshMaterial3d<StandardMaterial>, With<FurnaceFireboxWindow>>,
+    mut q_furnace_light: Query<&mut PointLight, With<FurnaceFireGlowLight>>,
+    mut q_oven_window: Query<&mut MeshMaterial3d<StandardMaterial>, (With<OvenDoorWindow>, Without<FurnaceFireboxWindow>)>,
+) {
+    let Ok(hose) = q_hose.single() else {
+        return;
+    };
+
+    let has_gas = gas_line.as_ref().map(|g| g.pressure_psi > 0.0).unwrap_or(true);
+    let stove_active = hose.attached_to == HoseAttachment::Stove && has_gas;
+    let oven_active = hose.attached_to == HoseAttachment::Oven && has_gas;
+
+    let Some(mats) = appliance_mats else {
+        return;
+    };
+
+    // 1. Stove Burners: Blue flame effects if connected, off if not
+    for mut vis in &mut q_burner_flames {
+        *vis = if stove_active {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    // 2. Furnace Firebox Window: Glows if attached, cool dark gray if not
+    for mut mat in &mut q_furnace_window {
+        *mat = if stove_active {
+            MeshMaterial3d(mats.glowing_ember.clone())
+        } else {
+            MeshMaterial3d(mats.cool_dark_gray.clone())
+        };
+    }
+
+    // Furnace interior glow light
+    let flicker = time.as_ref().map(|t| (t.elapsed_secs() * 12.0).sin() * 80.0).unwrap_or(0.0);
+    for mut light in &mut q_furnace_light {
+        light.intensity = if stove_active {
+            1600.0 + flicker
+        } else {
+            0.0
+        };
+    }
+
+    // 3. Oven Door Window: Glows if attached to Oven, cool dark gray if not
+    for mut mat in &mut q_oven_window {
+        *mat = if oven_active {
+            MeshMaterial3d(mats.glowing_ember.clone())
+        } else {
+            MeshMaterial3d(mats.cool_dark_gray.clone())
+        };
     }
 }
 

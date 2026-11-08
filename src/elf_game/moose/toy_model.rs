@@ -563,7 +563,7 @@ pub fn spawn_mr_moose(
         ));
     });
 
-    // 4. Feeding Trough / Food Box in front of the stable door (X = -2.0, Z = -12.0)
+    // 4. Feeding Trough / Food Bucket on the right side of the stable double door (X = -0.75, Y = 0.275, Z = -12.15)
     let trough_metal = workshop_mats.as_ref().map(|wm| wm.sheet_metal.clone()).unwrap_or_else(|| {
         materials.add(StandardMaterial {
             base_color: SHEET_METAL,
@@ -571,16 +571,47 @@ pub fn spawn_mr_moose(
             ..default()
         })
     });
+    let iron_band_mat = materials.add(StandardMaterial {
+        base_color: CAST_IRON,
+        metallic: 0.85,
+        perceptual_roughness: 0.35,
+        ..default()
+    });
 
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(2.0, 0.5, 1.2))),
-        MeshMaterial3d(trough_metal),
-        Transform::from_xyz(-2.0, 0.3, -12.0),
-        Collider::cuboid(1.0, 0.25, 0.6),
-        RigidBody::Fixed,
-        MooseFeedingTrough,
-        Name::new("MooseFeedingTrough"),
-    ));
+    commands
+        .spawn((
+            Mesh3d(meshes.add(Cylinder::new(0.32, 0.55))),
+            MeshMaterial3d(trough_metal.clone()),
+            Transform::from_xyz(-0.75, 0.275, -12.15),
+            Collider::cylinder(0.275, 0.32),
+            RigidBody::Fixed,
+            MooseFeedingTrough,
+            crate::elf_game::moose::MooseFeedingBucket,
+            Name::new("MooseFeedingBucket"),
+        ))
+        .with_children(|bucket| {
+            // Upper iron rim band
+            bucket.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.33, 0.05))),
+                MeshMaterial3d(iron_band_mat.clone()),
+                Transform::from_xyz(0.0, 0.23, 0.0),
+                Name::new("BucketIronRim"),
+            ));
+            // Lower iron base band
+            bucket.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.33, 0.05))),
+                MeshMaterial3d(iron_band_mat.clone()),
+                Transform::from_xyz(0.0, -0.23, 0.0),
+                Name::new("BucketIronBase"),
+            ));
+            // Metal bail wire handle arched over the bucket
+            bucket.spawn((
+                Mesh3d(meshes.add(Torus::new(0.015, 0.32))),
+                MeshMaterial3d(iron_band_mat),
+                Transform::from_xyz(0.0, 0.26, 0.0).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                Name::new("BucketBailHandle"),
+            ));
+        });
 
     // 5. Main Workbench Table: Glass Jar Filled with Small Moose Snacks (X = 1.4, Y = 0.8, Z = -4.0)
     let jar_glass_mat = workshop_mats.as_ref().map(|wm| wm.snack_jar_glass.clone()).unwrap_or_else(|| {
@@ -740,57 +771,71 @@ pub fn animate_mr_moose_peeking_system(
             let progress = (hunger.eating_timer / hunger.eating_duration.max(0.01)).clamp(0.0, 1.0);
             let is_fast = hunger.is_eating_fast;
 
+            // Target bucket position relative to Moose body:
+            // Bucket is at X = -0.75, Moose body at X = -2.0 -> local delta X = +1.25
+            const BUCKET_LOCAL_X: f32 = 1.25;
+            const EATING_YAW: f32 = -0.42; // Yaw turns right towards the bucket
+
             let (head_pos, head_rot) = if !is_fast {
                 // Gentle Eating Animation (On-time treat):
-                // Smooth reach down into trough, rhythmic chewing bobs, gentle return
+                // Smooth reach down and to the right into the bucket, rhythmic chewing bobs, gentle return
                 if progress < 0.35 {
                     let t = progress / 0.35;
                     let s = t * t * (3.0 - 2.0 * t);
-                    let y = 1.1 + s * (0.15 - 1.1);
-                    let z = 2.4 + s * (2.75 - 2.4);
-                    let pitch = s * 0.48;
-                    (Vec3::new(0.0, y, z), Quat::from_rotation_x(pitch))
+                    let x = s * BUCKET_LOCAL_X;
+                    let y = 1.1 + s * (0.22 - 1.1);
+                    let z = 2.4 + s * (2.65 - 2.4);
+                    let pitch = s * 0.46;
+                    let yaw = s * EATING_YAW;
+                    (Vec3::new(x, y, z), Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0))
                 } else if progress < 0.75 {
                     let chew_timer = hunger.eating_timer;
                     let chew_bob = (chew_timer * 10.0).sin() * 0.04;
-                    let chew_pitch = 0.48 + (chew_timer * 10.0).cos() * 0.05;
+                    let chew_pitch = 0.46 + (chew_timer * 10.0).cos() * 0.05;
+                    let chew_yaw = EATING_YAW + (chew_timer * 10.0).sin() * 0.03;
                     (
-                        Vec3::new(0.0, 0.15 + chew_bob, 2.75),
-                        Quat::from_rotation_x(chew_pitch),
+                        Vec3::new(BUCKET_LOCAL_X, 0.22 + chew_bob, 2.65),
+                        Quat::from_euler(EulerRot::YXZ, chew_yaw, chew_pitch, 0.0),
                     )
                 } else {
                     let t = (progress - 0.75) / 0.25;
                     let s = t * t * (3.0 - 2.0 * t);
-                    let y = 0.15 + s * (1.1 - 0.15);
-                    let z = 2.75 + s * (2.4 - 2.75);
-                    let pitch = 0.48 * (1.0 - s);
-                    (Vec3::new(0.0, y, z), Quat::from_rotation_x(pitch))
+                    let x = BUCKET_LOCAL_X * (1.0 - s);
+                    let y = 0.22 + s * (1.1 - 0.22);
+                    let z = 2.65 + s * (2.4 - 2.65);
+                    let pitch = 0.46 * (1.0 - s);
+                    let yaw = EATING_YAW * (1.0 - s);
+                    (Vec3::new(x, y, z), Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0))
                 }
             } else {
                 // Fast & Annoyed Eating Animation (Late treat accepted):
-                // Snappy dive down, aggressive chomping with head shakes, snappy jerk up
+                // Snappy dive down towards the bucket on the right, aggressive chomping with head shakes, snappy jerk up
                 if progress < 0.25 {
                     let t = progress / 0.25;
-                    let y = 1.1 + t * (0.08 - 1.1);
-                    let z = 2.4 + t * (2.80 - 2.4);
-                    let pitch = t * 0.60;
-                    (Vec3::new(0.0, y, z), Quat::from_rotation_x(pitch))
+                    let x = t * BUCKET_LOCAL_X;
+                    let y = 1.1 + t * (0.15 - 1.1);
+                    let z = 2.4 + t * (2.70 - 2.4);
+                    let pitch = t * 0.55;
+                    let yaw = t * EATING_YAW;
+                    (Vec3::new(x, y, z), Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0))
                 } else if progress < 0.70 {
                     let chew_timer = hunger.eating_timer;
-                    let rapid_bob = (chew_timer * 28.0).sin() * 0.07;
+                    let rapid_bob = (chew_timer * 28.0).sin() * 0.06;
                     let rapid_shake_x = (chew_timer * 24.0).cos() * 0.05;
-                    let rapid_yaw = (chew_timer * 24.0).sin() * 0.08;
-                    let rapid_pitch = 0.60 + (chew_timer * 28.0).cos() * 0.08;
+                    let rapid_yaw = EATING_YAW + (chew_timer * 24.0).sin() * 0.08;
+                    let rapid_pitch = 0.55 + (chew_timer * 28.0).cos() * 0.08;
                     (
-                        Vec3::new(rapid_shake_x, 0.08 + rapid_bob, 2.80),
+                        Vec3::new(BUCKET_LOCAL_X + rapid_shake_x, 0.15 + rapid_bob, 2.70),
                         Quat::from_euler(EulerRot::YXZ, rapid_yaw, rapid_pitch, 0.0),
                     )
                 } else {
                     let t = (progress - 0.70) / 0.30;
-                    let y = 0.08 + t * (1.1 - 0.08);
-                    let z = 2.80 + t * (2.4 - 2.80);
-                    let pitch = 0.60 * (1.0 - t);
-                    (Vec3::new(0.0, y, z), Quat::from_rotation_x(pitch))
+                    let x = BUCKET_LOCAL_X * (1.0 - t);
+                    let y = 0.15 + t * (1.1 - 0.15);
+                    let z = 2.70 + t * (2.4 - 2.70);
+                    let pitch = 0.55 * (1.0 - t);
+                    let yaw = EATING_YAW * (1.0 - t);
+                    (Vec3::new(x, y, z), Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0))
                 }
             };
 

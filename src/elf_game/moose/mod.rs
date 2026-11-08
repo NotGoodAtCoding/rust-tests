@@ -91,6 +91,10 @@ impl Default for MooseSnack {
 #[derive(Component, Debug)]
 pub struct MooseFeedingTrough;
 
+/// Tag component for the feeding bucket on the right side of the stable double door
+#[derive(Component, Debug, Clone)]
+pub struct MooseFeedingBucket;
+
 #[derive(Message, Debug, Clone)]
 pub struct MooseHuffEvent;
 

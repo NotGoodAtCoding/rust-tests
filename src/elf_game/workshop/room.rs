@@ -283,7 +283,7 @@ pub fn setup_workshop_scene(
         })
     });
 
-    let window_frame_material = workshop_mats.as_ref().map(|wm| wm.pine_sign.clone()).unwrap_or_else(|| {
+    let _window_frame_material = workshop_mats.as_ref().map(|wm| wm.pine_sign.clone()).unwrap_or_else(|| {
         materials.add(StandardMaterial {
             base_color: PINE_SIGN_BOARD,
             perceptual_roughness: 0.7,
@@ -518,54 +518,23 @@ pub fn setup_workshop_scene(
         Name::new("WallNorthStoveBacking"),
     ));
 
-    // 2. Climbable Window Bay (from X = -5.6 to X = -4.0, width 1.6m, center X = -4.8)
-    // Low sill height at Y = 0.85m allows player to jump onto the sill and climb directly through into the snowy yard.
-    // - Low wall below window sill (Y = 0.0 to 0.85, height 0.85m)
+    // Solid wall section between Oven/Stove backing and Stable Door (from X = -5.6 to X = -2.9, width 2.7m)
+    // The previous window opening between the moose and the oven/stove is removed and sealed with solid timber wall.
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.6, 0.85, 0.4))),
+        Mesh3d(meshes.add(Cuboid::new(2.7, 5.5, 0.4))),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(-4.8, 0.425, -13.0),
-        Collider::cuboid(0.8, 0.425, 0.2),
+        Transform::from_xyz(-4.25, 2.75, -13.0),
+        Collider::cuboid(1.35, 2.75, 0.2),
         RigidBody::Fixed,
-        Name::new("WallNorthBelowWindow"),
+        Name::new("WallNorthBetweenStoveAndDoor"),
     ));
 
-    // - Upper wall lintel above window (Y = 2.70 to 5.50, height 2.80m)
+    // Upper lintel above Stable Door (from X = -2.9 to X = -1.1, width 1.8m, Y = 3.57 to 5.50, height 1.93m)
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.6, 2.80, 0.4))),
+        Mesh3d(meshes.add(Cuboid::new(1.8, 1.93, 0.4))),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(-4.8, 4.10, -13.0),
-        Collider::cuboid(0.8, 1.40, 0.2),
-        RigidBody::Fixed,
-        Name::new("WallNorthAboveWindow"),
-    ));
-
-    // Climbable Window Sill shelf (Wooden ledge protruding slightly for stepping/climbing)
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.6, 0.08, 0.6))),
-        MeshMaterial3d(window_frame_material.clone()),
-        Transform::from_xyz(-4.8, 0.85, -12.95),
-        Collider::cuboid(0.8, 0.04, 0.3),
-        RigidBody::Fixed,
-        Name::new("WestClimbableWindowSill"),
-    ));
-
-    // Wall section / timber post between climbable window and Stable Door (from X = -4.0 to X = -2.9, width 1.1m)
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.1, 5.5, 0.4))),
-        MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(-3.45, 2.75, -13.0),
-        Collider::cuboid(0.55, 2.75, 0.2),
-        RigidBody::Fixed,
-        Name::new("WallNorthWindowDoorMullion"),
-    ));
-
-    // Upper lintel above Stable Door (from X = -2.9 to X = -1.1, width 1.8m, Y = 2.45 to 5.50, height 3.05m)
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.8, 3.05, 0.4))),
-        MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(-2.0, 3.975, -13.0),
-        Collider::cuboid(0.9, 1.525, 0.2),
+        Transform::from_xyz(-2.0, 4.535, -13.0),
+        Collider::cuboid(0.9, 0.965, 0.2),
         RigidBody::Fixed,
         Name::new("WallNorthAboveStableDoor"),
     ));
@@ -573,7 +542,7 @@ pub fn setup_workshop_scene(
     // Breakable window / door breach state entity for event integration (at Stable Door X = -2.0)
     commands.spawn((
         BreakableWindowPane { is_broken: false },
-        Transform::from_xyz(-2.0, 1.78, -13.0),
+        Transform::from_xyz(-2.0, 2.61, -13.0),
         Visibility::default(),
         Name::new("MooseWindowBreachState"),
     ));

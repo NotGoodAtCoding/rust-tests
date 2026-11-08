@@ -231,6 +231,10 @@ pub fn spawn_moose_treat_jar(
             Collider::cylinder(0.025, 0.07),
             RigidBody::Dynamic,
             Velocity::zero(),
+            Damping {
+                linear_damping: 0.8,
+                angular_damping: 1.5,
+            },
             Grabbable,
             MooseSnack {
                 nutrition_value: 60.0,

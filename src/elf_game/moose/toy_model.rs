@@ -564,54 +564,104 @@ pub fn spawn_mr_moose(
         ));
     });
 
-    // 4. Feeding Trough / Food Bucket on the right side of the stable double door (X = -0.75, Y = 0.275, Z = -12.15)
-    let trough_metal = workshop_mats.as_ref().map(|wm| wm.sheet_metal.clone()).unwrap_or_else(|| {
+    // 4. Festive Cookie Plate on a Table next to the Stable Door (X = -0.75, Z = -12.15)
+    let table_wood_mat = workshop_mats.as_ref().map(|wm| wm.timber_beam.clone()).unwrap_or_else(|| {
         materials.add(StandardMaterial {
-            base_color: SHEET_METAL,
-            metallic: 0.7,
+            base_color: TIMBER_BEAM,
+            perceptual_roughness: 0.85,
             ..default()
         })
     });
-    let iron_band_mat = materials.add(StandardMaterial {
-        base_color: CAST_IRON,
-        metallic: 0.85,
-        perceptual_roughness: 0.35,
-        ..default()
+    let plate_ceramic_mat = workshop_mats.as_ref().map(|wm| wm.candy_cane_red.clone()).unwrap_or_else(|| {
+        materials.add(StandardMaterial {
+            base_color: CANDY_CANE_RED,
+            perceptual_roughness: 0.25,
+            ..default()
+        })
+    });
+    let plate_rim_mat = workshop_mats.as_ref().map(|wm| wm.polished_brass.clone()).unwrap_or_else(|| {
+        materials.add(StandardMaterial {
+            base_color: POLISHED_BRASS,
+            metallic: 0.8,
+            perceptual_roughness: 0.25,
+            ..default()
+        })
     });
 
+    // 4a. Rustic Wooden Table beside the Stable Door (Tabletop at Y = 0.65, legs down to floor)
     commands
         .spawn((
-            Mesh3d(meshes.add(Cylinder::new(0.32, 0.55))),
-            MeshMaterial3d(trough_metal.clone()),
-            Transform::from_xyz(-0.75, 0.275, -12.15),
-            Collider::cylinder(0.275, 0.32),
+            Mesh3d(meshes.add(Cuboid::new(0.85, 0.06, 0.85))),
+            MeshMaterial3d(table_wood_mat.clone()),
+            Transform::from_xyz(-0.75, 0.65, -12.15),
+            Collider::cuboid(0.425, 0.03, 0.425),
+            RigidBody::Fixed,
+            Name::new("StableDoorTable"),
+        ))
+        .with_children(|table| {
+            // 4 table legs
+            for (lx, lz) in [(-0.35, -0.35), (0.35, -0.35), (-0.35, 0.35), (0.35, 0.35)] {
+                table.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(0.08, 0.64, 0.08))),
+                    MeshMaterial3d(table_wood_mat.clone()),
+                    Transform::from_xyz(lx, -0.33, lz),
+                    Collider::cuboid(0.04, 0.32, 0.04),
+                    Name::new("TableLeg"),
+                ));
+            }
+        });
+
+    // 4b. Festive Cookie Plate on Table (Y = 0.70)
+    // High friction so thrown treats stick, plus raised rim to keep them contained!
+    commands
+        .spawn((
+            Mesh3d(meshes.add(Cylinder::new(0.36, 0.025))),
+            MeshMaterial3d(plate_ceramic_mat),
+            Transform::from_xyz(-0.75, 0.70, -12.15),
+            Collider::cylinder(0.0125, 0.36),
+            Friction {
+                coefficient: 3.5,
+                combine_rule: CoefficientCombineRule::Max,
+            },
+            Restitution {
+                coefficient: 0.05,
+                combine_rule: CoefficientCombineRule::Min,
+            },
             RigidBody::Fixed,
             MooseFeedingTrough,
             crate::elf_game::moose::MooseFeedingBucket,
-            Name::new("MooseFeedingBucket"),
+            crate::elf_game::moose::MooseCookiePlate,
+            Name::new("FestiveCookiePlate"),
         ))
-        .with_children(|bucket| {
-            // Upper iron rim band
-            bucket.spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.33, 0.05))),
-                MeshMaterial3d(iron_band_mat.clone()),
-                Transform::from_xyz(0.0, 0.23, 0.0),
-                Name::new("BucketIronRim"),
+        .with_children(|plate| {
+            // Raised outer rim mesh (festive gold / brass torus border)
+            plate.spawn((
+                Mesh3d(meshes.add(Torus::new(0.03, 0.36))),
+                MeshMaterial3d(plate_rim_mat),
+                Transform::from_xyz(0.0, 0.02, 0.0),
+                Name::new("PlateRimMesh"),
             ));
-            // Lower iron base band
-            bucket.spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.33, 0.05))),
-                MeshMaterial3d(iron_band_mat.clone()),
-                Transform::from_xyz(0.0, -0.23, 0.0),
-                Name::new("BucketIronBase"),
-            ));
-            // Metal bail wire handle arched over the bucket
-            bucket.spawn((
-                Mesh3d(meshes.add(Torus::new(0.015, 0.32))),
-                MeshMaterial3d(iron_band_mat),
-                Transform::from_xyz(0.0, 0.26, 0.0).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-                Name::new("BucketBailHandle"),
-            ));
+            // Raised rim perimeter colliders: physical barrier catching and trapping sliding treats
+            for (rx, rz, hx, hz, name) in [
+                (0.0, 0.35, 0.24, 0.03, "PlateRimNorth"),
+                (0.0, -0.35, 0.24, 0.03, "PlateRimSouth"),
+                (0.35, 0.0, 0.03, 0.24, "PlateRimEast"),
+                (-0.35, 0.0, 0.03, 0.24, "PlateRimWest"),
+            ] {
+                plate.spawn((
+                    Transform::from_xyz(rx, 0.025, rz),
+                    Collider::cuboid(hx, 0.035, hz),
+                    Friction {
+                        coefficient: 3.5,
+                        combine_rule: CoefficientCombineRule::Max,
+                    },
+                    Restitution {
+                        coefficient: 0.05,
+                        combine_rule: CoefficientCombineRule::Min,
+                    },
+                    Name::new(name),
+                ));
+            }
         });
 
     // 5. Main Workbench Table: Glass Jar Filled with Small Moose Snacks (X = 1.4, Y = 0.8, Z = -4.0)
@@ -671,6 +721,10 @@ pub fn spawn_mr_moose(
             Collider::cylinder(0.025, 0.07),
             RigidBody::Dynamic,
             Velocity::zero(),
+            Damping {
+                linear_damping: 0.8,
+                angular_damping: 1.5,
+            },
             Grabbable,
             MooseSnack {
                 nutrition_value: 60.0,
@@ -939,7 +993,7 @@ pub fn moose_feeding_trough_system(
     for (entity, s_tf, _snack) in &q_snacks {
         let inside_trough = (s_tf.translation.x - trough_tf.translation.x).abs() < 1.1
             && (s_tf.translation.z - trough_tf.translation.z).abs() < 0.8
-            && s_tf.translation.y < 1.4;
+            && s_tf.translation.y < 1.8;
 
         if inside_trough {
             // Case 1: Player is late and the window is already shut (WindowSlammed)

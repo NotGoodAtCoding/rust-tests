@@ -204,7 +204,7 @@ pub fn dual_hand_interaction_system(
 
             let camera_fwd = q_camera.single().map(|gt| gt.forward().into()).unwrap_or(Vec3::NEG_Z);
             let throw_dir = (camera_fwd + Vec3::Y * 0.15).normalize();
-            let throw_speed = 10.0;
+            let throw_speed = 13.5;
             let base_throw_vel = throw_dir * throw_speed;
             let throw_vel = base_throw_vel + player_vel;
             let tumble = Vec3::new(2.5, 1.2, -1.8);

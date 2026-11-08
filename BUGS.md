@@ -3,8 +3,6 @@ Bug descriptions will be added to the ACTIVE section. Fix the bug and move them 
 
 ACTIVE:
 
-Replace the moose treat bucket with a festive cookie plate on a table next to the Stable Door. It should have high friction so that treats thrown onto it are more likely to stick, and a raised rim as well. Make world gravity higher so physics objects feel less floaty, and give them some dampening. The player throw impulse should be scaled up slightly to compensate.
-
 The Tractor Beam does not give enough force on the player to fully suck them up, increase the force. Move the activation button further away from the tractor beam so that the player cannot activate it when in the tractor beam area.
 
 Player grabbing objects should find the object that is in direct raycasted Line of Sight with the player's reticle instead of being a general cone. 
@@ -28,6 +26,8 @@ Idea: Elf Mischief behavior: Philosopher. If an elf gains this Mischief trait, i
 Update the KleptoStash behavior to add leaf nodes with one edge back to the main graph that are in the corners of the main room. The elf should put the stolen item in front of them when stashing it, and remember the last item stashed and not target that item again to prevent getting stuck in a loop. There should also be a longer cooldown between stashing items, like 15 seconds.
 
 DONE:
+
+Replace the moose treat bucket with a festive cookie plate on a table next to the Stable Door. It should have high friction so that treats thrown onto it are more likely to stick, and a raised rim as well. Make world gravity higher so physics objects feel less floaty, and give them some dampening. The player throw impulse should be scaled up slightly to compensate.
 
 Moose body should have collision with the scarf.
 

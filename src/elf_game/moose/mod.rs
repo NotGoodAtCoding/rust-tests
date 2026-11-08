@@ -95,6 +95,10 @@ pub struct MooseFeedingTrough;
 #[derive(Component, Debug, Clone)]
 pub struct MooseFeedingBucket;
 
+/// Tag component for the festive cookie plate on the table next to the stable door
+#[derive(Component, Debug, Clone)]
+pub struct MooseCookiePlate;
+
 #[derive(Message, Debug, Clone)]
 pub struct MooseHuffEvent;
 

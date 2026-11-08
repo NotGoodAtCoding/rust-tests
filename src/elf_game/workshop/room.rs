@@ -1261,6 +1261,10 @@ pub fn conveyor_cube_spawner_system(
             angular: Vec3::ZERO,
         },
         ExternalImpulse::default(),
+        Damping {
+            linear_damping: 0.8,
+            angular_damping: 1.5,
+        },
         SoftBodyLattice::new_cube(Vec3::splat(0.3), 60.0, 6.0),
         Grabbable,
         Present::default(),

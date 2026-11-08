@@ -8412,12 +8412,12 @@ fn test_moose_no_shutters_new_resting_rampage_pathing_and_door_slam() {
     assert_eq!(tracker.waypoints[6], Vec3::new(-2.0, 1.4, -10.0), "Leap back out door at X = -2.0");
     assert_eq!(tracker.waypoints[7], Vec3::new(-2.0, 1.8, -17.0), "Retreat to resting area at X = -2.0");
 
-    // 4. Food trough is now a bucket on the right side of the double door (X = -0.75, Y = 0.275, Z = -12.15)
+    // 4. Food trough is replaced with festive cookie plate on table on the right side of the double door (X = -0.75, Y = 0.70, Z = -12.15)
     let mut trough_q = app.world_mut().query::<(&MooseFeedingTrough, &Transform)>();
     let (_, trough_tf) = trough_q.iter(app.world()).next().expect("Trough/Bucket must exist");
-    assert!((trough_tf.translation.x - (-0.75)).abs() < 0.05, "Bucket must be on right side of door at X = -0.75");
-    assert!((trough_tf.translation.y - 0.275).abs() < 0.05, "Bucket must be at Y = 0.275");
-    assert!((trough_tf.translation.z - (-12.15)).abs() < 0.05, "Bucket must be at Z = -12.15");
+    assert!((trough_tf.translation.x - (-0.75)).abs() < 0.05, "Plate must be on right side of door at X = -0.75");
+    assert!((trough_tf.translation.y - 0.70).abs() < 0.1, "Plate must be on table at Y ≈ 0.70");
+    assert!((trough_tf.translation.z - (-12.15)).abs() < 0.05, "Plate must be at Z = -12.15");
 
     // 5. Active area of bucket: Snack placed at X = -0.75 is detected and triggers feeding
     let mut feed_app = App::new();
@@ -9102,5 +9102,108 @@ fn test_moose_body_collision_with_scarf() {
         local_z_after >= 1.40,
         "Scarf segment must remain outside the Moose body during forward motion (local Z >= 1.40), got {}",
         local_z_after
+    );
+}
+
+#[test]
+fn test_festive_cookie_plate_table_and_world_physics_tuning() {
+    use rust_tests::elf_game::moose::{
+        MooseCookiePlate, MooseFeedingTrough, toy_model::spawn_mr_moose,
+    };
+    use rust_tests::elf_game::core::{
+        WORLD_GRAVITY, sync_world_gravity_system, apply_physics_damping_system,
+    };
+    use rust_tests::elf_game::player::hands::{Grabbable, dual_hand_interaction_system};
+    use rust_tests::elf_game::player::controller::{RightHandVisual, FirstPersonCamera};
+    use rust_tests::elf_game::player::ElfHands;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.insert_resource(ButtonInput::<KeyCode>::default());
+    app.insert_resource(ButtonInput::<MouseButton>::default());
+    app.add_message::<rust_tests::elf_game::wrapping::UseToolOnPresentMessage>();
+
+    // 1. Set up resources and systems
+    let rapier_entity = app.world_mut().spawn(RapierConfiguration::new(1.0)).id();
+    app.add_systems(Startup, spawn_mr_moose);
+    app.add_systems(Update, (sync_world_gravity_system, apply_physics_damping_system, dual_hand_interaction_system));
+    app.update();
+
+    let config = app.world().get::<RapierConfiguration>(rapier_entity).unwrap();
+    assert_eq!(config.gravity, WORLD_GRAVITY, "World gravity must be higher (-18.0 m/s^2)");
+
+    // Verify table next to Stable Door exists at X ≈ -0.75, Z ≈ -12.15
+    let mut table_found = false;
+    for (name, tf) in app.world_mut().query::<(&Name, &Transform)>().iter(app.world()) {
+        if name.as_str() == "StableDoorTable" {
+            table_found = true;
+            assert!((tf.translation.x - (-0.75)).abs() < 0.1);
+            assert!((tf.translation.z - (-12.15)).abs() < 0.1);
+            assert!((tf.translation.y - 0.65).abs() < 0.1);
+        }
+    }
+    assert!(table_found, "StableDoorTable must be spawned next to the Stable Door");
+
+    // 3. Verify FestiveCookiePlate on table
+    let mut plate_q = app.world_mut().query::<(&MooseCookiePlate, &MooseFeedingTrough, &Transform, &Friction, &Children)>();
+    let (_, _, plate_tf, friction, children) = plate_q.iter(app.world()).next().expect("FestiveCookiePlate must exist");
+    assert!((plate_tf.translation.x - (-0.75)).abs() < 0.1);
+    assert!((plate_tf.translation.z - (-12.15)).abs() < 0.1);
+    assert!((plate_tf.translation.y - 0.70).abs() < 0.1, "Plate must sit on table at Y ≈ 0.70");
+    assert!(friction.coefficient >= 3.0, "Cookie plate must have high friction (>= 3.0) to make treats stick, got {}", friction.coefficient);
+
+    // 4. Verify raised rim colliders
+    let mut rim_collider_count = 0;
+    for child in children.iter() {
+        if let Some(name) = app.world().get::<Name>(child) {
+            if name.as_str().starts_with("PlateRim") {
+                if app.world().get::<Collider>(child).is_some() {
+                    rim_collider_count += 1;
+                }
+            }
+        }
+    }
+    assert!(rim_collider_count >= 4, "Cookie plate must have raised rim colliders (>= 4), got {}", rim_collider_count);
+
+    // 5. Verify dynamic physics objects receive damping
+    let dynamic_cube = app.world_mut().spawn((
+        RigidBody::Dynamic,
+        Transform::from_xyz(0.0, 1.0, 0.0),
+    )).id();
+    app.update();
+    let damping = app.world().get::<Damping>(dynamic_cube).expect("Dynamic physics objects must be given dampening");
+    assert!(damping.linear_damping >= 0.5, "Dynamic object must have linear damping");
+
+    // 6. Verify scaled up throw impulse (throw_speed = 13.5 m/s)
+    let player_e = app.world_mut().spawn((
+        ElfHands::default(),
+        Transform::from_xyz(0.0, 1.0, 0.0),
+    )).id();
+    app.world_mut().spawn((
+        FirstPersonCamera,
+        GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0)),
+    ));
+    app.world_mut().spawn((
+        RightHandVisual,
+        GlobalTransform::from(Transform::from_xyz(0.35, 1.0, -0.6)),
+    ));
+
+    let thrown_cube = app.world_mut().spawn((
+        Grabbable,
+        Transform::from_xyz(0.35, 1.0, -0.7),
+        Velocity::zero(),
+    )).id();
+    app.world_mut().get_mut::<ElfHands>(player_e).unwrap().right_grabbed = Some(thrown_cube);
+
+    app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+    app.update();
+
+    let vel = app.world().get::<Velocity>(thrown_cube).unwrap();
+    assert!(
+        vel.linear.length() >= 13.0,
+        "Player throw impulse must be scaled up (>= 13.0 m/s) to compensate for higher gravity, got {}",
+        vel.linear.length()
     );
 }

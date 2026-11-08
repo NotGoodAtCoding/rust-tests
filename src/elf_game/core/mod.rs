@@ -44,6 +44,39 @@ impl Default for WorkshopQuota {
     }
 }
 
+pub const WORLD_GRAVITY: Vec3 = Vec3::new(0.0, -18.0, 0.0);
+
+/// Synchronizes world gravity in Rapier configuration so physics objects feel less floaty and more grounded.
+pub fn sync_world_gravity_system(
+    mut rapier_configs: Query<&mut bevy_rapier3d::prelude::RapierConfiguration>,
+) {
+    for mut config in &mut rapier_configs {
+        if config.gravity.y > -15.0 {
+            config.gravity = WORLD_GRAVITY;
+        }
+    }
+}
+
+/// Automatically ensures all dynamic physics objects have dampening applied so they do not feel floaty.
+pub fn apply_physics_damping_system(
+    mut commands: Commands,
+    q_dynamic_bodies: Query<
+        Entity,
+        (
+            With<bevy_rapier3d::prelude::RigidBody>,
+            Without<bevy_rapier3d::prelude::Damping>,
+            Without<crate::elf_game::player::controller::ElfPlayer>,
+        ),
+    >,
+) {
+    for entity in &q_dynamic_bodies {
+        commands.entity(entity).insert(bevy_rapier3d::prelude::Damping {
+            linear_damping: 0.8,
+            angular_damping: 1.5,
+        });
+    }
+}
+
 pub struct CorePlugin;
 
 impl Plugin for CorePlugin {
@@ -52,6 +85,8 @@ impl Plugin for CorePlugin {
             app.add_plugins(bevy::state::app::StatesPlugin);
         }
         app.init_state::<GameState>()
-            .init_resource::<WorkshopQuota>();
+            .init_resource::<WorkshopQuota>()
+            .add_systems(Startup, sync_world_gravity_system)
+            .add_systems(Update, (sync_world_gravity_system, apply_physics_damping_system));
     }
 }

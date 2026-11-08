@@ -25,6 +25,9 @@ impl Plugin for ElfGamePlugin {
         if !app.is_plugin_added::<RapierDebugRenderPlugin>() {
             app.add_plugins(RapierDebugRenderPlugin::default().disabled());
         }
+        if !app.is_plugin_added::<bevy::pbr::wireframe::WireframePlugin>() {
+            app.add_plugins(bevy::pbr::wireframe::WireframePlugin::default());
+        }
 
         app.add_plugins((
             assets::AssetsPlugin,

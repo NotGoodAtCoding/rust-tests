@@ -106,6 +106,25 @@ In this 3D first-person / third-person simulation game built with **Bevy 0.20** 
   * Positioned off-center on the North wall ($X = -6.5, Z = -13.0$) overlooking the snowy hill.
   * Head-sized opening ($1.8\,\text{m} \times 1.8\,\text{m}$) fitted with dual hinged wooden shutters that swing inward into the workshop as Mr. Moose pokes his head inside.
 
+* **Pantry Storage Wing & Self-Restocking Physics Door**:
+  * **Room Footprint & Shelving**: Generously sized storage room ($4.0\,\text{m} \times 4.0\,\text{m} \times 3.5\,\text{m}$) situated off the main workshop corridor, fitted with deep timber perimeter shelving units. The expansive floorplan provides plenty of capacity for current inventory as well as upcoming systems (such as cookie baking ingredients: flour sacks, sugar bags, butter blocks, and baking pans).
+  * **Interactive Physics Door**: Mounted on a Rapier `RevoluteJoint` / spring hinge that physically swings open and closed with momentum, capable of being pushed, pulled, or knocked by players and ragdoll elves.
+  * **Infinite Restock Mechanic**: Houses a never-ending supply of Moose Treat jars. Monitored via a door-closure sensor cycle: whenever the player completely closes the pantry door and reopens it (`Closed -> Opened` state transition), any depleted jar slots on the pantry shelves automatically restock with fresh Moose Treat jars.
+
+* **Progression Philosophy: Task Management Escalation**:
+  * **Core Gameplay Loop**: The core of Santa's Workshop is high-stakes physical **task management**. As the game progresses, tasks do not merely repeat; they become more numerous and build upon previous tasks, steadily compounding in systemic complexity:
+    * Stage 1: Solo wrapping and feeding manual conveyor.
+    * Stage 2: Packaging quota fulfillment + maintaining Mr. Moose's hunger threshold.
+    * Stage 3: Delegating jobs to unpredictable, ragdoll-prone elf helpers, managing pantry restocking, and juggling simultaneous production and kitchen/feeding loops.
+  * **Confounding Physics & Unreliable Helpers**: Crucially, completing these tasks is complicated and confounded by slapstick ragdoll physics, spring-mass soft bodies, dynamic momentum, and erratic, unreliable elf helpers with mischievous traits (lazy elves slacking, klepto elves hoarding presents, clumsy drops, and accidental physics collisions).
+  * **Mr. Moose Initial Dormancy & 1st Present Activation**:
+    * At game start, Mr. Moose is dormant behind the closed North window shutters. The workshop begins peacefully, allowing the player to learn movement, controls, and wrapping mechanics without time pressure.
+    * Only after the player successfully wraps and submits their **first present** through the pneumatic sending vacuum platform does Mr. Moose awaken, initiating his hunger timer (+1/s), gauge ticks, and the recurring feeding loop.
+  * **Easter Egg Elf Unlocks (Chandelier Sparky)**:
+    * Autonomous helper elves are not all active at the start; they are discovered and unlocked as environmental easter eggs throughout the workshop.
+    * **"Elf Sparky"**: Initially found inactive, perched fast asleep atop the high North or South dynamic candle chandelier ($Y = 5.2\,\text{m}$).
+    * Only when the player strikes the chandelier—via a thrown present, launched tool, or high-speed aerial BHOP collision—with sufficient impact impulse to set it swinging, does Sparky get knocked loose, ragdoll-tumbles to the floor, and awakens into the roaming elf pool.
+
 * **Progression Tiers**:
   * **Tier 1 (Main Workshop)**: Basic manual workbench, conveyor belt with raw cube spawner, paper rack, tape dispenser, delivery chute, Mr. Moose snack feeder.
   * **Tier 2 (Storage Wing Unlocked)**: Reached after $N$ successful presents. Unlocks bulk tape dispensers, motorized wrapping turntables, and elf assistants (NPCs).
@@ -159,6 +178,15 @@ In this 3D first-person / third-person simulation game built with **Bevy 0.20** 
   * When turning the camera quickly, hands sway and lag slightly behind the view direction before smoothly catching up.
   * Walking, jumping, and landing introduce vertical and horizontal inertial displacement (compression on landing, dipping on jump).
   * Breathing and idle micro-motions provide a floaty, organic, alive feel to the gloves.
+* **2D Sprite Viewmodel Hands & Grab Poses**:
+  * Replace the primitive 3D sphere gloves with expressive 2D sprite viewmodel hands rendered on a dedicated viewmodel/UI canvas layer or camera-anchored billboarding quad mesh.
+  * State machine driving sprite textures and poses based on player locomotion and grab state:
+    * **`Idle`**: Relaxed, slightly open glove resting in low-ready pose with gentle breathing micro-bobbing.
+    * **`Walking`**: Rhythmic procedural sway and alternating stride bobbing synced to footstep timing.
+    * **`Sprinting`** (or bunny-hop acceleration): Dynamic high-speed pumping / air-straining pose with angled forward lean and energetic stride motion.
+    * **`Grabbing`**: Reaching / anticipation pinch pose triggered when within interaction proximity of an item or holding grab key before latching.
+    * **`Holding`**: Clamped, firm grip pose wrapped around the held object (present, tool, tape dispenser, snack jar), locking fingers into a grasping clasp.
+  * Both hands operate independently: Left Hand can be `Holding` while Right Hand is `Grabbing` or `Idle`.
 * **Two-Handed Physical Gestures & Interactions**:
   * **Violent Ribbon Shaking (Bow Creation)**:
     * Grabbing the same ribbon with both hands (`Q` + `E`) enters a tension/knotting state.
@@ -183,12 +211,20 @@ In this 3D first-person / third-person simulation game built with **Bevy 0.20** 
     * Consecutive successful bunny hops build a combo streak (`consecutive_bhops`).
     * After 3+ consecutive successful hops, the maximum horizontal speed cap increases up to $\sqrt{2} \approx 1.414\times$ the base movement speed.
     * Failing a hop (landing without jumping in time, jumping too early, or touching ground friction for longer than the window) resets the combo streak and smoothly decays velocity back to base cap.
-* **Debug Menu Options**:
-  * Located under the Options / Debug menu (toggled via `Tab`):
-  * **BHOP Timing Window Setting**: Cycleable / selectable options:
+* **Debug Menu Options & Dedicated DEBUG Submenu**:
+  * Accessible via the in-game pause modal (`Tab`, `Escape`, `P`, or `Pause`), featuring dedicated `OPTIONS` and `DEBUG` tabs and navigation buttons:
+  * **1. BHOP Timing Window Setting**: Cycleable / selectable timing windows:
     * `1/60 sec` ($\approx 16.6\,\text{ms}$, hard / competitive precision)
     * `1/30 sec` ($\approx 33.3\,\text{ms}$, medium)
     * `1/10 sec` ($\approx 100\,\text{ms}$, forgiving / debug)
+  * **2. Noclip Toggle (Free 3D Flying)**:
+    * Bypasses character controller collision resolution and gravity (`velocity = 0`).
+    * Inserts Rapier `ColliderDisabled` on the player entity, allowing free traversal through any wall, ceiling, table, conveyor, or out into the exterior snowy rafters.
+    * 3D locomotion along sightline: `W`/`S` along look direction (including pitch angle), `A`/`D` strafe, `Space` ascend (+Y), `Left Ctrl` / `C` descend (-Y), and `Shift` fast boost ($2\times$, $24\,\text{m/s}$).
+    * Can also be toggled directly in-game via keyboard shortcut `[V]`.
+  * **3. Wireframe Toggle**:
+    * Toggles global wireframe rendering mode across the workshop.
+    * Synchronizes with both Rapier `DebugRenderContext.enabled` (physics colliders, sensors, joints) and Bevy PBR `WireframeConfig.global` (3D mesh polygon wireframes).
 
 ### 2.7 Autonomous NPC Elf Assistants: Navigation Graph, Mischief Traits & Job Hats
 * **Topological Navigation Graph & Clearance Paths (`ElfNavGraph`)**:
@@ -230,6 +266,41 @@ In this 3D first-person / third-person simulation game built with **Bevy 0.20** 
       * Removes hat from player's grasp.
       * Disables hat dynamic physics and parents it to the elf root at head position ($Y = 0.32\,\text{m}$).
       * Updates `elf.assigned_job = Some(job)`.
+
+* **Identifiable Navigation Nodes & Routine Job Paths (`ElfNodePurpose`, `ElfJob::MooseFeeder`)**:
+  * **Semantic Node Roles (`ElfNodePurpose`)**:
+    * Graph waypoints in `ElfNavGraph` carry semantic identifiers so elves can navigate contextually to perform assigned work:
+      * `ElfNodePurpose::Workbench`: Central present assembly station.
+      * `ElfNodePurpose::MainTableTreatJar`: Main workbench snack jar area.
+      * `ElfNodePurpose::MooseFeedingStation`: Trough active feeding pad outside observation window.
+      * `ElfNodePurpose::PantryShelves`: Deep pantry storage shelves for fetching supplies.
+      * `ElfNodePurpose::HatCloset`: Job hat dispensing wardrobe.
+      * `ElfNodePurpose::KleptoStash`: Mischievous stash node behind crates.
+  * **Moose Feeder Job Routine**:
+    * When equipped with the `Moose Feeder` hat, an elf executes a continuous autonomous feeding loop:
+      1. **Navigate to Source**: Computes path and walks to `ElfNodePurpose::MainTableTreatJar`.
+      2. **Inspect Node Area**: Scans within the node radius for an available `MooseTreatJar` containing at least one snack.
+      3. **Retrieve Treat**: Extracts a treat from the jar, holds it in hand, and sets destination to `ElfNodePurpose::MooseFeedingStation`.
+      4. **Deliver to Trough**: Pathfinds to the feeding station and deposits the treat directly onto the active feeding trigger area, reducing Mr. Moose's hunger meter.
+      5. **Repeat**: Loops back to retrieve the next treat.
+    * **Panic State Fallback**:
+      * If the Moose Feeder arrives at `MainTableTreatJar` and cannot find a Moose Treat jar containing treats (e.g. jar is empty, knocked away, or missing), the routine cannot proceed.
+      * The elf immediately transitions into **`ElfNpcState::Panicking`**: waves arms frantically overhead, utters high-pitched diegetic alarm squeaks, and paces erratically between nearby nodes.
+      * Remains in the Panic state until the player brings a fresh Moose Treat jar from the **Pantry** and places it within the node area.
+
+---
+
+### 2.8 Game State Persistence & Lightweight Save System
+* **Implementation Schedule**: Slated near the conclusion of the implementation roadmap (Milestone 8), ensuring all core systems are stabilized before finalizing schema.
+* **Selective Persistence Scope**:
+  * The system deliberately persists only major milestones, player stats, and key persistent items, intentionally omitting ephemeral dynamic physics clutter:
+    * **Major Progression Points**: Presents submitted count, unlocked doors and wings (Tier 2 Storage Wing, Tier 3 Forbidden Workshop), Mr. Moose awakened state, and unlocked easter egg elves (e.g. Sparky chandelier knock-down flag).
+    * **Player Stats & Records**: Total gifts wrapped, current quota score, best consecutive BHOP combo streak, play session elapsed time.
+    * **Key Item Transforms & State**: Coordinates, rotations, and contents of vital props (active Moose Treat jars on tables and pantry shelves, spawned job hats, tool dispenser placements, closet restock state).
+    * **Excluded Ephemeral Clutter**: Transient conveyor cubes, loose wrapping paper scraps, dynamic smoke/spark particles, and flying impact debris are regenerated deterministically at startup rather than serialized.
+* **Storage Architecture**:
+  * Serialized using lightweight, human-readable RON (Rusty Object Notation) or JSON (`workshop_save.ron`).
+  * Auto-saves on major progression milestones and provides quick-save / quick-load functionality from the in-game pause menu.
 
 ---
 
@@ -335,4 +406,26 @@ To keep the project continuously moving forward without exceeding your 5-hour qu
 | **M4: Chaotic Physics & Soft-Body Sandbox** | Soft bodies, ragdolls & extreme forces | Spring-mass squishy presents, bouncy toys, ragdoll elves, chaotic impulse machines. | **DONE** |
 | **M5: In-World Diegetic Displays & Player Agency** | In-world monitors, signs & player choices | In-world CRT monitors, warning signs, physical scales, alternate wrapping pipelines. | **DONE** |
 | **M6: Progression & The Forbidden Workshop** | Multi-tier workshop expansion | Door unlocks, quota tracker, forbidden overpowered volatile tools (Instant Plasma Wrapper, Ribbon Cannon, Cursed Candy-Cane Overclocker), Storage Wing turntable, NPC elves. | **DONE** |
+| **M6.1: Pantry Storage Wing & Autonomous Restock Loop** | Storage room, infinite treat restock, initial moose dormancy | Generously sized $4\,\text{m} \times 4\,\text{m} \times 3.5\,\text{m}$ Pantry Storage Wing off west corridor, deep perimeter timber shelving (North 3-tier shelves, West supply shelves, South baking staging counter), interactive swinging physics door on Rapier `RevoluteJoint` / spring hinge with momentum, automatic restock cycle on door `Closed -> Opened` transition, Mr. Moose initial dormancy behind shutters with 1st present vacuum dispatch wakeup, and semantic navigation role `ElfNodePurpose::PantryShelves` (Node 15). | **DONE** |
+| **M6.2: Autonomous Moose Feeder Routine & Panic Fallback** | Autonomous elf job loop & pantry treat reliance | Autonomous Moose Feeder routine with `ElfNpcState::FetchingMooseTreat` and `DeliveringMooseTreat`, retrieving treats from `MainTableTreatJar` (Node 1) with jar count decrement, pathfinding and delivering to `MooseFeedingStation` (Node 4) to reduce hunger by 60, carrying treat hand animations, and `ElfNpcState::Panicking` fallback when jars are empty/missing with recovery when fresh pantry jars are placed. | **DONE** |
 | **M7: Visual Polish & Custom Assets** | Audio, AI textures & procedural models | AI/procedural festive textures, particles (wrapping paper confetti, glass shards), sound effects. | Planned |
+| **M8: Game State Persistence & Progression Saving** | Lightweight save/load system | Save file serialization (`workshop_save.ron`), major milestone flags, player stats, key item positions, restore on startup. | Planned |
+
+---
+
+## 9. Idea Section & Future Concepts
+
+### 9.1 Cookie Baking, Outdoor Gas Infrastructure & Pyro Hazard Chain
+* **Cookie Baking Task Loop**:
+  * **Ingredient Retrieval**: The player retrieves recipe ingredients (flour sacks, sugar bags, butter blocks, and chocolate chip tins) from the newly expanded, spacious **Pantry**.
+  * **Kitchen Prep & Workshop Oven**: Ingredients are carried to the kitchen prep area, combined into cookie dough on a baking sheet, and placed into a newly constructed brick-and-iron **Workshop Oven**.
+* **Outdoor Propane Gas Valve**:
+  * The oven runs on external bottled gas.
+  * To fuel the oven burners, the player must open the exterior cabin door, run outside into the freezing snowy blizzard to turn on the heavy outdoor brass gas valve on the exterior wall, and sprint back inside before freezing or losing interior cabin heat.
+* **Elf Mischief & Pyro Hazard Chain**:
+  * **Unattended Oven Risk**: If the player leaves the oven unattended with the outdoor gas valve open for too long:
+    1. A **Mischievous elf** creeps over to the oven and turns on the burner knobs, allowing unignited flammable gas to steadily fill the workshop air.
+    2. After a **15-second delay** of unignited gas flow, a **Pyro elf** (`ElfMischiefTrait::Pyro`) detects the gas concentration.
+    3. The Pyro elf scouts the room for an active flame source (such as dynamic sparks drifting from the candle chandeliers, a workbench match, or a lighter).
+    4. Upon securing an ignition source, the Pyro elf gleefully rushes over to the oven.
+    5. **Slapstick Catastrophic Explosion**: Ignites a massive physics blast that blows open doors, shatters windows, and launches presents, snack jars, and ragdoll elves flying into the high ceiling rafters!

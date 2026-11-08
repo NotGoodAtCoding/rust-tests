@@ -4681,7 +4681,49 @@ fn test_elf_nav_graph_pathfinding_and_clearances() {
     use rust_tests::elf_game::physics_sandbox::ElfNavGraph;
 
     let graph = ElfNavGraph::default_workshop_graph();
-    assert_eq!(graph.nodes.len(), 15, "Graph must define 15 workshop nodes");
+    assert!(graph.nodes.len() >= 15, "Graph must define at least 15 workshop nodes (has {})", graph.nodes.len());
+    assert_eq!(graph.nodes[15].name, "PantryShelves");
+    assert_eq!(graph.nodes[15].neighbors, vec![8]);
+
+    // Verify West bypass corridor nodes (Nodes 7 and 8) are placed further towards the wall (X <= -10.5)
+    // to give plenty of clearance around the conveyor spawner duct at X = -8.5 .. -9.05
+    let west_bypass = &graph.nodes[7];
+    let west_south = &graph.nodes[8];
+    assert!(
+        west_bypass.position.x <= -10.5 && west_bypass.position.x > -12.8,
+        "West bypass node 7 must be placed near west wall (between -10.5 and -12.8), was {}",
+        west_bypass.position.x
+    );
+    assert!(
+        west_south.position.x <= -10.5 && west_south.position.x > -12.8,
+        "West south node 8 must be placed near west wall (between -10.5 and -12.8), was {}",
+        west_south.position.x
+    );
+    // Spawner duct extends to X = -9.05. Edge between 7 and 8 at X = -11.0 gives > 1.9m clearance.
+    assert!(
+        (west_bypass.position.x - (-9.05)).abs() >= 1.5,
+        "West bypass edge must clear spawner duct by at least 1.5m"
+    );
+
+    // Verify East bypass corridor nodes (Nodes 9 and 10) are placed further towards the wall (X >= 11.2)
+    // to give clearance around the conveyor despawner chute at X = 9.8 .. 10.47
+    let east_bypass = &graph.nodes[9];
+    let east_south = &graph.nodes[10];
+    assert!(
+        east_bypass.position.x >= 11.2 && east_bypass.position.x < 12.8,
+        "East bypass node 9 must be placed near east wall (between 11.2 and 12.8), was {}",
+        east_bypass.position.x
+    );
+    assert!(
+        east_south.position.x >= 11.2 && east_south.position.x < 12.8,
+        "East south node 10 must be placed near east wall (between 11.2 and 12.8), was {}",
+        east_south.position.x
+    );
+    // Despawner chute extends to X = 10.47. Edge between 9 and 10 at X = 11.5 gives > 1.0m clearance.
+    assert!(
+        east_bypass.position.x - 10.47 >= 0.9,
+        "East bypass edge must clear despawner chute by at least 0.9m"
+    );
 
     // Path from Moose Trough (Node 4) to Hat Closet (Node 12)
     let path_to_closet = graph.find_path(4, 12).expect("Path from Trough to Closet must exist");
@@ -5417,4 +5459,1081 @@ fn test_vacuum_button_activation_pedestal_player_inputs_and_physics_props() {
     app.update();
     let p = app.world().get::<PresentSendingPlatform>(platform_e).unwrap();
     assert!(!p.is_active, "Vacuum must turn off when physics object is removed from button");
+}
+
+#[test]
+fn test_pause_allows_lighting_flicker_and_particles_to_continue() {
+    use rust_tests::elf_game::core::GameState;
+    use rust_tests::elf_game::ui::MenuState;
+    use rust_tests::elf_game::workshop::room::{
+        CandleChandelier, CandleFlameEmitter, CandleParticle,
+        chandelier_candle_flicker_system, candle_particle_emitter_system, candle_particle_system,
+    };
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time);
+
+    let mut time_real = Time::<bevy::time::Real>::default();
+    time_real.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time_real);
+
+    app.insert_resource(MenuState { is_open: true, ..default() }); // Game is paused!
+    app.add_plugins(bevy::state::app::StatesPlugin);
+    app.init_state::<GameState>();
+
+    app.add_systems(
+        Update,
+        (
+            chandelier_candle_flicker_system,
+            candle_particle_emitter_system,
+            candle_particle_system,
+        ),
+    );
+
+    let chandelier_e = app.world_mut().spawn((
+        CandleChandelier {
+            base_intensity: 480_000.0,
+            flicker_seed: 1.0,
+        },
+        PointLight {
+            intensity: 480_000.0,
+            shadow_maps_enabled: true,
+            ..default()
+        },
+        Transform::from_xyz(0.0, 4.4, -4.5),
+        GlobalTransform::from(Transform::from_xyz(0.0, 4.4, -4.5)),
+        CandleFlameEmitter::default(),
+    )).id();
+
+    // 1. Advance real time across multiple frames while game is paused
+    let mut intensities = Vec::new();
+    for _ in 0..10 {
+        {
+            let mut tr = app.world_mut().resource_mut::<Time<bevy::time::Real>>();
+            tr.advance_by(std::time::Duration::from_millis(50));
+        }
+        app.update();
+
+        let light = app.world().get::<PointLight>(chandelier_e).unwrap();
+        intensities.push(light.intensity);
+    }
+
+    // Verify lighting flickered dynamically despite game being paused
+    let min_i = intensities.iter().cloned().fold(f32::INFINITY, f32::min);
+    let max_i = intensities.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        max_i - min_i > 1_000.0,
+        "Chandelier candle lighting must continue flickering dynamically while game is paused"
+    );
+
+    // 2. Verify particles were emitted while paused
+    let mut q_particles = app.world_mut().query::<(&Transform, &CandleParticle)>();
+    let count = q_particles.iter(app.world()).count();
+    assert!(
+        count >= 1,
+        "Candle particle emitter must continue spawning particles while game is paused"
+    );
+}
+
+#[test]
+fn test_player_hands_model_scale() {
+    use rust_tests::elf_game::player::controller::{spawn_elf_player, LeftHandVisual, RightHandVisual};
+
+    let mut app = App::new();
+    app.insert_resource(Assets::<Mesh>::default());
+    app.insert_resource(Assets::<StandardMaterial>::default());
+    app.add_systems(Startup, spawn_elf_player);
+    app.update();
+
+    let left_mesh_handle = {
+        let mut left_hand_q = app.world_mut().query::<(&Mesh3d, &LeftHandVisual)>();
+        let (left_h, _) = left_hand_q.single(app.world()).unwrap();
+        left_h.0.clone()
+    };
+    let right_mesh_handle = {
+        let mut right_hand_q = app.world_mut().query::<(&Mesh3d, &RightHandVisual)>();
+        let (right_h, _) = right_hand_q.single(app.world()).unwrap();
+        right_h.0.clone()
+    };
+
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    let left_mesh = meshes.get(&left_mesh_handle).expect("Left hand mesh must exist");
+    let right_mesh = meshes.get(&right_mesh_handle).expect("Right hand mesh must exist");
+
+    let positions = left_mesh.attribute(Mesh::ATTRIBUTE_POSITION).expect("Mesh must have positions");
+    let max_radius = match positions {
+        bevy::render::mesh::VertexAttributeValues::Float32x3(pts) => {
+            pts.iter().map(|[x, y, z]| (x * x + y * y + z * z).sqrt()).fold(0.0f32, f32::max)
+        }
+        _ => panic!("Expected Float32x3 position values"),
+    };
+
+    assert!(
+        max_radius <= 0.08,
+        "Player hand glove radius must be scaled down to <= 0.08m (was 0.12m), got {}",
+        max_radius
+    );
+    assert!(
+        (max_radius - 0.065).abs() < 0.005,
+        "Player hand glove radius should be ~0.065m, got {}",
+        max_radius
+    );
+
+    // Verify right hand mesh is also scaled down
+    let right_positions = right_mesh.attribute(Mesh::ATTRIBUTE_POSITION).expect("Right mesh must have positions");
+    let right_max_radius = match right_positions {
+        bevy::render::mesh::VertexAttributeValues::Float32x3(pts) => {
+            pts.iter().map(|[x, y, z]| (x * x + y * y + z * z).sqrt()).fold(0.0f32, f32::max)
+        }
+        _ => panic!("Expected Float32x3 position values"),
+    };
+    assert!(
+        (right_max_radius - 0.065).abs() < 0.005,
+        "Right player hand glove radius should be ~0.065m, got {}",
+        right_max_radius
+    );
+}
+
+#[test]
+fn test_menu_debug_submenu_navigation_and_panels() {
+    use bevy::ui_widgets::{Activate, Button};
+    use rust_tests::elf_game::ui::{
+        on_button_activate, sync_submenu_visibility, DebugSubmenuPanel, MainMenuPanel,
+        MenuButtonAction, MenuState, MenuSubmenu, MenuSubtitleText, MenuTitleText,
+    };
+
+    let mut app = App::new();
+    app.insert_resource(MenuState::default());
+    app.add_observer(on_button_activate);
+    app.add_systems(Update, sync_submenu_visibility);
+
+    // Spawn panels and title
+    let title_e = app.world_mut().spawn((
+        MenuTitleText,
+        Text::new("PAUSED - OPTIONS & MENU"),
+    )).id();
+    let _subtitle_e = app.world_mut().spawn((
+        MenuSubtitleText,
+        Text::new("Options Subtitle"),
+    )).id();
+    let main_panel_e = app.world_mut().spawn((
+        MainMenuPanel,
+        Node { display: Display::Flex, ..default() },
+    )).id();
+    let debug_panel_e = app.world_mut().spawn((
+        DebugSubmenuPanel,
+        Node { display: Display::None, ..default() },
+    )).id();
+
+    // Default: Main submenu
+    assert_eq!(app.world().resource::<MenuState>().active_submenu, MenuSubmenu::Main);
+
+    // Trigger switch to DEBUG submenu
+    let switch_to_debug_btn = app.world_mut().spawn((
+        Button,
+        MenuButtonAction::SwitchSubmenu(MenuSubmenu::Debug),
+    )).id();
+    app.world_mut().trigger(Activate { entity: switch_to_debug_btn });
+
+    assert_eq!(app.world().resource::<MenuState>().active_submenu, MenuSubmenu::Debug);
+
+    app.update();
+
+    // Verify Main panel is hidden (Display::None) and Debug panel is shown (Display::Flex)
+    let main_panel_node = app.world().get::<Node>(main_panel_e).unwrap();
+    let debug_panel_node = app.world().get::<Node>(debug_panel_e).unwrap();
+    assert_eq!(main_panel_node.display, Display::None);
+    assert_eq!(debug_panel_node.display, Display::Flex);
+
+    // Verify Title text updated
+    let title_text = app.world().get::<Text>(title_e).unwrap();
+    assert_eq!(title_text.0, "PAUSED - DEBUG MENU");
+
+    // Trigger switch back to MAIN submenu
+    let switch_to_main_btn = app.world_mut().spawn((
+        Button,
+        MenuButtonAction::SwitchSubmenu(MenuSubmenu::Main),
+    )).id();
+    app.world_mut().trigger(Activate { entity: switch_to_main_btn });
+
+    assert_eq!(app.world().resource::<MenuState>().active_submenu, MenuSubmenu::Main);
+
+    app.update();
+
+    let main_panel_node = app.world().get::<Node>(main_panel_e).unwrap();
+    let debug_panel_node = app.world().get::<Node>(debug_panel_e).unwrap();
+    assert_eq!(main_panel_node.display, Display::Flex);
+    assert_eq!(debug_panel_node.display, Display::None);
+
+    let title_text = app.world().get::<Text>(title_e).unwrap();
+    assert_eq!(title_text.0, "PAUSED - OPTIONS & MENU");
+}
+
+#[test]
+fn test_debug_submenu_bhop_window_adjustment() {
+    use bevy::ui_widgets::{Activate, Button};
+    use rust_tests::elf_game::player::{BhopConfig, BhopWindow};
+    use rust_tests::elf_game::ui::{on_button_activate, update_menu_button_labels, MenuButtonAction, MenuState};
+
+    let mut app = App::new();
+    app.insert_resource(MenuState::default());
+    app.insert_resource(BhopConfig::default());
+    app.add_observer(on_button_activate);
+    app.add_systems(Update, update_menu_button_labels);
+
+    let text_child = app.world_mut().spawn(Text::new("BHOP Timing: Initial")).id();
+    let bhop_btn = app.world_mut().spawn((
+        Button,
+        MenuButtonAction::CycleBhopWindow,
+    )).add_child(text_child).id();
+
+    // 1. Initial window is Sixtieth (1/60s)
+    assert_eq!(app.world().resource::<BhopConfig>().window, BhopWindow::Sixtieth);
+
+    // 2. Click button to cycle to Thirtieth (1/30s)
+    app.world_mut().trigger(Activate { entity: bhop_btn });
+    assert_eq!(app.world().resource::<BhopConfig>().window, BhopWindow::Thirtieth);
+
+    app.update();
+    let text = app.world().get::<Text>(text_child).unwrap();
+    assert_eq!(text.0, "BHOP Timing: 1/30s (Medium)");
+
+    // 3. Click button to cycle to Tenth (1/10s)
+    app.world_mut().trigger(Activate { entity: bhop_btn });
+    assert_eq!(app.world().resource::<BhopConfig>().window, BhopWindow::Tenth);
+
+    app.update();
+    let text = app.world().get::<Text>(text_child).unwrap();
+    assert_eq!(text.0, "BHOP Timing: 1/10s (Forgiving)");
+
+    // 4. Click button to cycle back to Sixtieth (1/60s)
+    app.world_mut().trigger(Activate { entity: bhop_btn });
+    assert_eq!(app.world().resource::<BhopConfig>().window, BhopWindow::Sixtieth);
+
+    app.update();
+    let text = app.world().get::<Text>(text_child).unwrap();
+    assert_eq!(text.0, "BHOP Timing: 1/60s (Strict)");
+}
+
+#[test]
+fn test_debug_submenu_noclip_mode_and_collider_bypass() {
+    use bevy::ui_widgets::{Activate, Button};
+    use bevy_rapier3d::prelude::*;
+    use rust_tests::elf_game::player::controller::{
+        elf_player_controller_system, sync_noclip_collider_system, toggle_noclip_system,
+        CameraPivot, ElfPlayer,
+    };
+    use rust_tests::elf_game::player::{BhopConfig, ElfMovement};
+    use rust_tests::elf_game::ui::{
+        on_button_activate, update_menu_button_labels, MenuButtonAction, MenuState,
+    };
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time);
+    app.insert_resource(ButtonInput::<KeyCode>::default());
+    app.insert_resource(BhopConfig::default());
+    app.insert_resource(MenuState::default());
+
+    app.add_observer(on_button_activate);
+    app.add_systems(
+        Update,
+        (
+            toggle_noclip_system,
+            sync_noclip_collider_system,
+            elf_player_controller_system,
+            update_menu_button_labels,
+        ).chain(),
+    );
+
+    // Spawn player entity and camera pivot
+    let player_e = app.world_mut().spawn((
+        ElfPlayer,
+        Transform::from_xyz(0.0, 1.5, 0.0),
+        ElfMovement::default(),
+        KinematicCharacterController::default(),
+        Collider::capsule_y(0.5, 0.3),
+    )).id();
+
+    app.world_mut().spawn(CameraPivot { pitch: 0.0 });
+
+    let text_child = app.world_mut().spawn(Text::new("Noclip Mode: OFF")).id();
+    let noclip_btn = app.world_mut().spawn((
+        Button,
+        MenuButtonAction::ToggleNoclip,
+    )).add_child(text_child).id();
+
+    // 1. Initial state: noclip is OFF, player does not have ColliderDisabled
+    assert!(!app.world().resource::<MenuState>().noclip);
+    assert!(!app.world().entity(player_e).contains::<ColliderDisabled>());
+
+    // 2. Trigger ToggleNoclip button in DEBUG submenu
+    app.world_mut().trigger(Activate { entity: noclip_btn });
+    assert!(app.world().resource::<MenuState>().noclip);
+
+    // 3. Run update to sync collider disabled and update label
+    app.update();
+    assert!(
+        app.world().entity(player_e).contains::<ColliderDisabled>(),
+        "Player must have ColliderDisabled inserted when noclip is enabled"
+    );
+    let text = app.world().get::<Text>(text_child).unwrap();
+    assert_eq!(text.0, "Noclip Mode: ON (Flying)");
+
+    // 4. Press W to fly forward in 3D noclip mode
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::KeyW);
+    }
+    app.update();
+
+    let player_tf = app.world().get::<Transform>(player_e).unwrap();
+    let controller = app.world().get::<KinematicCharacterController>(player_e).unwrap();
+    let movement = app.world().get::<ElfMovement>(player_e).unwrap();
+
+    // In noclip, character controller translation is None (direct Transform movement)
+    assert!(controller.translation.is_none(), "Controller translation must be None during noclip");
+    // Forward in 3D (-Z)
+    assert!(player_tf.translation.z < 0.0, "Player must have translated forward in Z, was {}", player_tf.translation.z);
+    // Gravity is bypassed
+    assert_eq!(movement.velocity, Vec3::ZERO, "Velocity must remain zero with no gravity during noclip");
+
+    // 5. Test KeyCode::KeyV keyboard shortcut toggles noclip back OFF
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.clear();
+        keys.press(KeyCode::KeyV);
+    }
+    app.update();
+
+    assert!(!app.world().resource::<MenuState>().noclip, "KeyCode::KeyV must toggle noclip OFF");
+    assert!(
+        !app.world().entity(player_e).contains::<ColliderDisabled>(),
+        "ColliderDisabled must be removed when noclip is disabled"
+    );
+    let text = app.world().get::<Text>(text_child).unwrap();
+    assert_eq!(text.0, "Noclip Mode: OFF");
+}
+
+#[test]
+fn test_debug_submenu_wireframe_toggle() {
+    use bevy::pbr::wireframe::WireframeConfig;
+    use bevy::ui_widgets::{Activate, Button};
+    use bevy_rapier3d::prelude::DebugRenderContext;
+    use rust_tests::elf_game::ui::{
+        on_button_activate, sync_hud_visibility, update_menu_button_labels, MenuButtonAction,
+        MenuState,
+    };
+
+    let mut app = App::new();
+    app.insert_resource(MenuState::default());
+    app.insert_resource(WireframeConfig::default());
+    app.insert_resource(DebugRenderContext::default());
+    app.add_observer(on_button_activate);
+    app.add_systems(Update, (sync_hud_visibility, update_menu_button_labels));
+
+    let text_child = app.world_mut().spawn(Text::new("Wireframe Mode: OFF")).id();
+    let wireframe_btn = app.world_mut().spawn((
+        Button,
+        MenuButtonAction::ToggleWireframes,
+    )).add_child(text_child).id();
+
+    // 1. Initial state: wireframes OFF
+    assert!(!app.world().resource::<MenuState>().show_wireframes);
+
+    // 2. Trigger wireframe toggle in DEBUG submenu
+    app.world_mut().trigger(Activate { entity: wireframe_btn });
+    assert!(app.world().resource::<MenuState>().show_wireframes);
+
+    app.update();
+
+    // Verify label and rendering contexts updated
+    let text = app.world().get::<Text>(text_child).unwrap();
+    assert_eq!(text.0, "Wireframe Mode: ON");
+    assert!(app.world().resource::<DebugRenderContext>().enabled);
+    assert!(app.world().resource::<WireframeConfig>().global);
+
+    // 3. Toggle back OFF
+    app.world_mut().trigger(Activate { entity: wireframe_btn });
+    assert!(!app.world().resource::<MenuState>().show_wireframes);
+
+    app.update();
+
+    let text = app.world().get::<Text>(text_child).unwrap();
+    assert_eq!(text.0, "Wireframe Mode: OFF");
+    assert!(!app.world().resource::<DebugRenderContext>().enabled);
+    assert!(!app.world().resource::<WireframeConfig>().global);
+}
+
+#[test]
+fn test_pantry_storage_wing_geometry_and_shelving() {
+    use rust_tests::elf_game::workshop::{
+        pantry::{PantryWing, PantryShelvingUnit, PantryDoor, PantryRestockTracker},
+        room::setup_workshop_scene,
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_systems(Startup, setup_workshop_scene);
+    app.update();
+
+    // 1. Verify Pantry Storage Wing root entity and spatial bounds
+    let Ok((pantry, p_tf)) = app.world_mut().query::<(&PantryWing, &Transform)>().single(app.world()) else {
+        panic!("PantryWing must be spawned");
+    };
+    assert_eq!(pantry.bounds_min, Vec3::new(-17.0, 0.0, 3.5));
+    assert_eq!(pantry.bounds_max, Vec3::new(-13.0, 3.5, 7.5));
+    assert_eq!(p_tf.translation, Vec3::new(-15.0, 1.75, 5.5));
+
+    // 2. Verify Floor, Ceiling, Walls, Header, and Lantern
+    let names: Vec<String> = app
+        .world_mut()
+        .query::<&Name>()
+        .iter(app.world())
+        .map(|n| n.to_string())
+        .collect();
+
+    assert!(names.contains(&"PantryFloor".to_string()), "Must spawn PantryFloor");
+    assert!(names.contains(&"PantryCeiling".to_string()), "Must spawn PantryCeiling");
+    assert!(names.contains(&"PantryNorthWall".to_string()), "Must spawn PantryNorthWall");
+    assert!(names.contains(&"PantrySouthWall".to_string()), "Must spawn PantrySouthWall");
+    assert!(names.contains(&"PantryWestWall".to_string()), "Must spawn PantryWestWall");
+    assert!(names.contains(&"PantryDoorHeaderLintel".to_string()), "Must spawn PantryDoorHeaderLintel");
+    assert!(names.contains(&"PantryCeilingLantern".to_string()), "Must spawn warm ambient ceiling lantern");
+
+    // 3. Verify Deep Perimeter Shelving Units
+    let mut shelves_q = app.world_mut().query::<(&PantryShelvingUnit, &Transform)>();
+    let shelves: Vec<(String, usize, Vec3)> = shelves_q
+        .iter(app.world())
+        .map(|(s, tf)| (s.unit_name.clone(), s.tier_count, tf.translation))
+        .collect();
+
+    let north_unit = shelves.iter().find(|(n, _, _)| n == "NorthMooseTreatShelves").expect("North treat shelves must exist");
+    assert_eq!(north_unit.1, 3, "North treat shelves must have 3 tiers");
+    assert!((north_unit.2.x - (-15.0)).abs() < 0.1 && (north_unit.2.z - 3.80).abs() < 0.1);
+
+    let west_unit = shelves.iter().find(|(n, _, _)| n == "WestSupplyShelves").expect("West supply shelves must exist");
+    assert_eq!(west_unit.1, 2, "West supply shelves must have 2 tiers");
+
+    assert!(names.contains(&"PantryBakingStagingCounter".to_string()), "Must spawn South baking prep staging counter");
+
+    // 4. Verify Pantry Door & Tracker resource
+    assert!(app.world_mut().query::<&PantryDoor>().iter(app.world()).next().is_some());
+    assert!(app.world().get_resource::<PantryRestockTracker>().is_some());
+}
+
+#[test]
+fn test_pantry_revolute_joint_door_and_spring_limits() {
+    use rust_tests::elf_game::workshop::pantry::{
+        PantryDoor, PantryDoorHingePost, pantry_door_spring_system,
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(16));
+    app.insert_resource(time);
+
+    // Spawn fixed hinge post
+    let hinge_post = app.world_mut().spawn((
+        Transform::from_xyz(-13.0, 1.35, 4.75),
+        RigidBody::Fixed,
+        PantryDoorHingePost,
+    )).id();
+
+    // Spawn dynamic door leaf with RevoluteJointBuilder
+    let joint = RevoluteJointBuilder::new(Vec3::Y)
+        .local_anchor1(Vec3::ZERO)
+        .local_anchor2(Vec3::new(0.0, 0.0, -0.75))
+        .limits([-1.65, 0.05]);
+
+    let door_entity = app.world_mut().spawn((
+        Transform::from_xyz(-13.0, 1.35, 5.50),
+        RigidBody::Dynamic,
+        Velocity::zero(),
+        ExternalImpulse::default(),
+        ImpulseJoint::new(hinge_post, joint),
+        PantryDoor {
+            spring_stiffness: 20.0,
+            spring_damping: 4.0,
+            ..default()
+        },
+    )).id();
+
+    app.add_systems(Update, pantry_door_spring_system);
+
+    // 1. Verify ImpulseJoint component is attached and configured
+    let imp_joint = app.world().get::<ImpulseJoint>(door_entity).expect("Door must have ImpulseJoint");
+    assert_eq!(imp_joint.parent, hinge_post);
+
+    // 2. Displace door open by -0.80 rad (~46 deg into pantry)
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+        tf.rotation = Quat::from_rotation_y(-0.80);
+    }
+
+    app.update();
+
+    // 3. Verify spring system applied positive torque impulse to swing door back toward closed (0.0 rad)
+    let ext = app.world().get::<ExternalImpulse>(door_entity).unwrap();
+    assert!(
+        ext.torque_impulse.y > 0.0,
+        "Spring torque should push door back toward 0.0 (closed), got {}",
+        ext.torque_impulse.y
+    );
+}
+
+#[test]
+fn test_pantry_infinite_restock_cycle_closed_to_opened() {
+    use rust_tests::elf_game::workshop::pantry::{
+        PantryDoor, PantryRestockTracker, PantryRestockEvent, MooseTreatJar,
+        pantry_door_restock_cycle_system, spawn_pantry_storage_wing,
+    };
+    use bevy::ecs::message::Messages;
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_message::<PantryRestockEvent>();
+
+    // Spawn pantry wing and initial jars
+    let mut commands = app.world_mut().commands();
+    spawn_pantry_storage_wing(&mut commands, &mut None, &mut None, None);
+    app.update();
+
+    // 1. Verify initial jars spawned at all 6 slots
+    let initial_jars_count = app.world_mut().query::<&MooseTreatJar>().iter(app.world()).count();
+    assert_eq!(initial_jars_count, 6, "Must initially spawn 6 MooseTreatJar entities at shelf slots");
+
+    let tracker = app.world().resource::<PantryRestockTracker>().clone();
+    assert_eq!(tracker.slots.len(), 6);
+    assert_eq!(tracker.restock_cycle_count, 0);
+
+    // 2. Player takes 2 jars from the shelves (despawn 2 jars to simulate carrying them away)
+    let jars_to_remove: Vec<Entity> = app
+        .world_mut()
+        .query_filtered::<Entity, With<MooseTreatJar>>()
+        .iter(app.world())
+        .take(2)
+        .collect();
+
+    for j in jars_to_remove {
+        app.world_mut().despawn(j);
+    }
+    app.update();
+
+    let remaining_jars = app.world_mut().query::<&MooseTreatJar>().iter(app.world()).count();
+    assert_eq!(remaining_jars, 4, "Should have 4 jars remaining after 2 were taken");
+
+    app.add_systems(Update, pantry_door_restock_cycle_system);
+
+    // Find door entity
+    let Ok((door_entity, _)) = app.world_mut().query::<(Entity, &PantryDoor)>().single(app.world()) else {
+        panic!("PantryDoor must be spawned");
+    };
+
+    // 3. Step with door still OPEN (yaw = -0.6 rad) -> no restock yet!
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+        tf.rotation = Quat::from_rotation_y(-0.6);
+        let mut door = app.world_mut().get_mut::<PantryDoor>(door_entity).unwrap();
+        door.was_closed = false;
+    }
+    app.update();
+
+    assert_eq!(
+        app.world_mut().query::<&MooseTreatJar>().iter(app.world()).count(),
+        4,
+        "No restock while door remains open without a close cycle"
+    );
+
+    // 4. Player completely closes the door (yaw = 0.0 rad, <= closed_threshold)
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+        tf.rotation = Quat::from_rotation_y(0.0);
+    }
+    app.update();
+
+    // Verify door recorded was_closed = true
+    let door = app.world().get::<PantryDoor>(door_entity).unwrap();
+    assert!(door.was_closed, "Door must record was_closed = true when closed");
+
+    // 5. Player reopens the door (yaw = -0.55 rad, >= open_threshold) -> Closed -> Opened transition!
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+        tf.rotation = Quat::from_rotation_y(-0.55);
+    }
+    app.update();
+
+    // 6. Verify depleted slots restocked: all 6 slots now occupied again!
+    let jars_after_restock = app.world_mut().query::<&MooseTreatJar>().iter(app.world()).count();
+    assert_eq!(
+        jars_after_restock, 6,
+        "Exactly 6 jars must exist after restock (the 2 missing slots were replenished)"
+    );
+
+    let updated_tracker = app.world().resource::<PantryRestockTracker>();
+    assert_eq!(updated_tracker.restock_cycle_count, 1);
+    assert_eq!(updated_tracker.total_restocked_jars, 2);
+
+    // 7. Verify PantryRestockEvent was emitted
+    let events = app.world().resource::<Messages<PantryRestockEvent>>();
+    assert_eq!(events.len(), 1, "Must emit PantryRestockEvent on restock");
+}
+
+#[test]
+fn test_pantry_door_player_interaction() {
+    use rust_tests::elf_game::workshop::pantry::{
+        PantryDoor, PantryDoorInteractMessage, pantry_door_interaction_system,
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.add_message::<PantryDoorInteractMessage>();
+
+    let door_entity = app.world_mut().spawn((
+        Transform::from_xyz(-13.0, 1.35, 5.50),
+        ExternalImpulse::default(),
+        PantryDoor::default(),
+    )).id();
+
+    app.add_systems(Update, pantry_door_interaction_system);
+
+    // 1. Send Open command message
+    app.world_mut().write_message(PantryDoorInteractMessage { open: true });
+
+    app.update();
+
+    let ext = app.world().get::<ExternalImpulse>(door_entity).unwrap();
+    assert!(ext.torque_impulse.y < 0.0, "Open message must impart negative Y torque to swing inward");
+
+    // 2. Send Close command message
+    app.world_mut().write_message(PantryDoorInteractMessage { open: false });
+
+    app.update();
+
+    let ext2 = app.world().get::<ExternalImpulse>(door_entity).unwrap();
+    assert!(ext2.torque_impulse.y > 0.0, "Close message must impart positive Y torque to swing shut");
+}
+
+#[test]
+fn test_elf_nav_graph_pantry_node_and_purposes() {
+    use rust_tests::elf_game::physics_sandbox::{ElfNavGraph, ElfNodePurpose};
+
+    let graph = ElfNavGraph::default_workshop_graph();
+
+    // 1. Verify Node 15 is PantryShelves inside Pantry Storage Wing
+    assert!(graph.nodes.len() >= 16);
+    let pantry_node = &graph.nodes[15];
+    assert_eq!(pantry_node.name, "PantryShelves");
+    assert_eq!(pantry_node.position, Vec3::new(-15.0, 0.45, 5.5));
+    assert_eq!(pantry_node.purpose, Some(ElfNodePurpose::PantryShelves));
+
+    // 2. Verify bidirectional connection between WestSouthCorridor (Node 8) and Pantry (Node 15)
+    assert!(pantry_node.neighbors.contains(&8));
+    assert!(graph.nodes[8].neighbors.contains(&15));
+
+    // 3. Verify semantic purposes lookups
+    assert_eq!(graph.find_node_by_purpose(ElfNodePurpose::PantryShelves), Some(15));
+    assert_eq!(graph.find_node_by_purpose(ElfNodePurpose::HatCloset), Some(12));
+    assert_eq!(graph.find_node_by_purpose(ElfNodePurpose::KleptoStash), Some(13));
+    assert_eq!(graph.find_node_by_purpose(ElfNodePurpose::MooseFeedingStation), Some(4));
+    assert!(graph.find_node_by_purpose(ElfNodePurpose::Workbench).is_some());
+    assert!(graph.find_node_by_purpose(ElfNodePurpose::MainTableTreatJar).is_some());
+
+    // 4. Verify pathfinding routes from Workbench (Node 0) to Pantry Shelves (Node 15)
+    let path = graph.find_path(0, 15).expect("Path from Workbench to Pantry must exist");
+    assert_eq!(*path.first().unwrap(), 0);
+    assert_eq!(*path.last().unwrap(), 15);
+    // Must pass through corridor Node 8 before entering Pantry Node 15
+    assert_eq!(path[path.len() - 2], 8);
+
+    // 5. Verify path from Pantry (15) to Moose Feeding Trough (4)
+    let path_to_trough = graph.find_path(15, 4).expect("Path from Pantry to Trough must exist");
+    assert_eq!(*path_to_trough.first().unwrap(), 15);
+    assert_eq!(*path_to_trough.last().unwrap(), 4);
+}
+
+#[test]
+fn test_moose_initial_dormancy_and_first_present_wakeup() {
+    use rust_tests::elf_game::moose::{
+        MooseHunger, MooseHungerStage, MooseAwakenedMessage, update_moose_hunger_system,
+    };
+    use rust_tests::elf_game::workshop::room::{
+        TubeTravellingLump, tube_travelling_lump_system,
+    };
+    use rust_tests::elf_game::core::WorkshopQuota;
+    use bevy::ecs::message::Messages;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(16));
+    app.insert_resource(time);
+
+    // Insert dormant MooseHunger
+    app.insert_resource(MooseHunger::new_dormant());
+    app.insert_resource(WorkshopQuota::default());
+    app.add_message::<MooseAwakenedMessage>();
+
+    app.add_systems(Update, (update_moose_hunger_system, tube_travelling_lump_system));
+
+    // 1. Advance time while Mr. Moose is dormant: hunger remains 0.0, stage remains BehindShutters
+    for _ in 0..100 {
+        app.update();
+    }
+
+    let hunger = app.world().resource::<MooseHunger>();
+    assert!(hunger.is_dormant, "Mr. Moose must remain dormant initially");
+    assert_eq!(hunger.value, 0.0, "Hunger must stay at 0.0 while dormant");
+    assert_eq!(hunger.stage, MooseHungerStage::BehindShutters);
+
+    // 2. Dispatch a present through the pneumatic tube (progress = 0.99)
+    app.world_mut().spawn(TubeTravellingLump {
+        progress: 0.99,
+        speed: 1.0,
+        mass: 1.5,
+        size: 0.3,
+    });
+
+    app.update();
+
+    // 3. Delivery completed! Verify Mr. Moose has awakened
+    let updated_hunger = app.world().resource::<MooseHunger>();
+    assert!(!updated_hunger.is_dormant, "Mr. Moose must awaken when first present is delivered");
+
+    // Verify MooseAwakenedMessage was emitted
+    let events = app.world().resource::<Messages<MooseAwakenedMessage>>();
+    assert_eq!(events.len(), 1, "Must emit MooseAwakenedMessage on wakeup");
+
+    // 4. Now that Mr. Moose is awake, ticking time increments hunger normally (+1/s)
+    let initial_val = app.world().resource::<MooseHunger>().value;
+    for _ in 0..50 {
+        app.update();
+    }
+    let final_val = app.world().resource::<MooseHunger>().value;
+    assert!(
+        final_val > initial_val,
+        "Hunger must accumulate after awakening: was {}, now {}",
+        initial_val,
+        final_val
+    );
+}
+
+#[test]
+fn test_moose_feeder_job_routine_loop() {
+    use rust_tests::elf_game::physics_sandbox::{
+        ElfAssistant, ElfJob, ElfNavGraph, ElfNpcState, elf_assistant_ai_system,
+    };
+    use rust_tests::elf_game::moose::{MooseHunger, MooseHungerStage, FeedMooseMessage};
+    use rust_tests::elf_game::workshop::pantry::MooseTreatJar;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time);
+
+    let hunger_res = MooseHunger {
+        value: 45.0,
+        stage: MooseHungerStage::PeekingThrough,
+        ..default()
+    };
+    app.insert_resource(hunger_res);
+    app.init_resource::<ElfNavGraph>();
+    app.add_message::<FeedMooseMessage>();
+    app.add_systems(Update, elf_assistant_ai_system);
+
+    // Spawn Moose Feeder elf at Workbench Front (Node 0 at 0.0, 0.45, -1.8)
+    let mut elf_assistant = ElfAssistant::new(1, "SparkyFeeder", vec![Vec3::ZERO]);
+    elf_assistant.assigned_job = Some(ElfJob::MooseFeeder);
+    elf_assistant.current_node = 0;
+    elf_assistant.state = ElfNpcState::Wandering;
+
+    let elf_entity = app.world_mut().spawn((
+        elf_assistant,
+        Transform::from_xyz(0.0, 0.45, -1.8),
+        Velocity::default(),
+        ExternalImpulse::default(),
+        LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
+    )).id();
+
+    // Spawn a MooseTreatJar near Node 1 (WorkbenchWest: -3.8, 0.45, -4.0) with 2 treats
+    let jar_entity = app.world_mut().spawn((
+        MooseTreatJar { treat_count: 2, max_treats: 4 },
+        Transform::from_xyz(-3.5, 0.98, -4.0),
+    )).id();
+
+    // 1. Initial update: Elf recognizes job and starts FetchingMooseTreat toward Node 1
+    app.update();
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_entity).unwrap();
+        assert_eq!(elf.state, ElfNpcState::FetchingMooseTreat, "Elf must enter FetchingMooseTreat");
+        assert_eq!(elf.target_node, 1, "Target node must be MainTableTreatJar (Node 1)");
+    }
+
+    // Advance elf until reaching Node 1 (-3.8, 0.45, -4.0)
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(elf_entity).unwrap();
+        tf.translation = Vec3::new(-3.7, 0.45, -4.0);
+    }
+    app.update();
+
+    // 2. Arrived at Node 1: Elf inspects area, retrieves 1 treat, decrements jar, and switches to DeliveringMooseTreat
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_entity).unwrap();
+        assert_eq!(elf.state, ElfNpcState::DeliveringMooseTreat, "Elf must transition to DeliveringMooseTreat");
+        assert!(elf.carried_treat.is_some(), "Elf must be carrying a treat entity");
+        assert_eq!(elf.target_node, 4, "Destination must be MooseFeedingStation (Node 4)");
+
+        let jar = app.world().get::<MooseTreatJar>(jar_entity).unwrap();
+        assert_eq!(jar.treat_count, 1, "Jar treat_count must be decremented from 2 to 1");
+    }
+
+    // 3. Move elf to MooseFeedingStation (Node 4 at -6.5, 0.45, -10.5)
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(elf_entity).unwrap();
+        tf.translation = Vec3::new(-6.5, 0.45, -10.5);
+    }
+    app.update();
+
+    // 4. Treat deposited: Mr. Moose hunger reduced, carried treat despawned, loops back to FetchingMooseTreat
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_entity).unwrap();
+        assert_eq!(elf.state, ElfNpcState::FetchingMooseTreat, "Elf must loop back to FetchingMooseTreat");
+        assert!(elf.carried_treat.is_none(), "Carried treat must be cleared after delivery");
+        assert_eq!(elf.target_node, 1, "Destination must be back to Node 1 for next treat");
+
+        let hunger = app.world().resource::<MooseHunger>();
+        assert_eq!(hunger.value, 0.0, "Hunger (45) must be reduced by 60 down to 0");
+        assert_eq!(hunger.stage, MooseHungerStage::BehindShutters);
+    }
+}
+
+#[test]
+fn test_moose_feeder_panic_when_treat_jar_missing_or_empty() {
+    use rust_tests::elf_game::physics_sandbox::{
+        ElfAssistant, ElfJob, ElfNavGraph, ElfNpcState, elf_assistant_ai_system,
+    };
+    use rust_tests::elf_game::moose::{MooseHunger, MooseHungerStage, FeedMooseMessage};
+    use rust_tests::elf_game::workshop::pantry::MooseTreatJar;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time);
+
+    let hunger_res = MooseHunger {
+        value: 10.0,
+        stage: MooseHungerStage::BehindShutters,
+        ..default()
+    };
+    app.insert_resource(hunger_res);
+    app.init_resource::<ElfNavGraph>();
+    app.add_message::<FeedMooseMessage>();
+    app.add_systems(Update, elf_assistant_ai_system);
+
+    // Spawn Moose Feeder elf arriving at Node 1 (-3.8, 0.45, -4.0) with an EMPTY jar (treat_count: 0)
+    let mut elf_assistant = ElfAssistant::new(1, "SparkyPanic", vec![Vec3::ZERO]);
+    elf_assistant.assigned_job = Some(ElfJob::MooseFeeder);
+    elf_assistant.current_node = 1;
+    elf_assistant.target_node = 1;
+    elf_assistant.path = vec![1];
+    elf_assistant.path_step = 0;
+    elf_assistant.state = ElfNpcState::FetchingMooseTreat;
+
+    let elf_entity = app.world_mut().spawn((
+        elf_assistant,
+        Transform::from_xyz(-3.8, 0.45, -4.0),
+        Velocity::default(),
+        ExternalImpulse::default(),
+        LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
+    )).id();
+
+    // Empty jar
+    let empty_jar = app.world_mut().spawn((
+        MooseTreatJar { treat_count: 0, max_treats: 4 },
+        Transform::from_xyz(-3.8, 0.98, -4.0),
+    )).id();
+
+    // 1. Update: Elf arrives at Node 1, finds no treats, immediately enters Panicking with missing_treats_panic
+    app.update();
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_entity).unwrap();
+        assert_eq!(elf.state, ElfNpcState::Panicking, "Elf must transition into Panicking");
+        assert!(elf.missing_treats_panic, "missing_treats_panic flag must be set to true");
+    }
+
+    // 2. While still missing treats, elf continues panicking and pacing between nodes
+    for _ in 0..10 {
+        app.update();
+    }
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_entity).unwrap();
+        assert_eq!(elf.state, ElfNpcState::Panicking, "Elf must remain in Panicking while treats are missing");
+        assert!(elf.missing_treats_panic);
+    }
+
+    // 3. Player brings a fresh jar with 4 treats from the Pantry into the Node 1 area!
+    app.world_mut().despawn(empty_jar);
+    app.world_mut().spawn((
+        MooseTreatJar { treat_count: 4, max_treats: 4 },
+        Transform::from_xyz(-3.6, 0.98, -4.0),
+    ));
+
+    app.update();
+
+    // 4. Panic resolved! Elf detects fresh jar and switches back to FetchingMooseTreat
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_entity).unwrap();
+        assert_eq!(elf.state, ElfNpcState::FetchingMooseTreat, "Elf must recover from panic and resume FetchingMooseTreat");
+        assert!(!elf.missing_treats_panic, "missing_treats_panic must be cleared");
+        assert_eq!(elf.target_node, 1, "Must target Node 1 to retrieve treat");
+    }
+}
+
+#[test]
+fn test_moose_feeder_knockdown_drops_treat_and_recovers() {
+    use rust_tests::elf_game::physics_sandbox::{
+        ElfAssistant, ElfJob, ElfNavGraph, ElfNpcState, elf_assistant_ai_system,
+    };
+    use rust_tests::elf_game::moose::{MooseHunger, MooseHungerStage, MooseSnack, FeedMooseMessage};
+    use rust_tests::elf_game::player::hands::Grabbable;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time);
+
+    let hunger_res = MooseHunger {
+        value: 10.0,
+        stage: MooseHungerStage::BehindShutters,
+        ..default()
+    };
+    app.insert_resource(hunger_res);
+    app.init_resource::<ElfNavGraph>();
+    app.add_message::<FeedMooseMessage>();
+    app.add_systems(Update, elf_assistant_ai_system);
+
+    // Spawn carried treat
+    let treat_entity = app.world_mut().spawn((
+        MooseSnack { nutrition_value: 60.0 },
+        Transform::from_xyz(0.0, 0.5, 0.0),
+        Velocity::default(),
+    )).id();
+
+    let mut elf_assistant = ElfAssistant::new(1, "SparkyDrop", vec![Vec3::ZERO]);
+    elf_assistant.assigned_job = Some(ElfJob::MooseFeeder);
+    elf_assistant.state = ElfNpcState::DeliveringMooseTreat;
+    elf_assistant.carried_treat = Some(treat_entity);
+
+    let elf_entity = app.world_mut().spawn((
+        elf_assistant,
+        Transform::from_xyz(0.0, 0.45, 0.0),
+        Velocity::default(),
+        ExternalImpulse::default(),
+        LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
+    )).id();
+
+    // Dynamic prop flying fast towards elf to cause knockdown
+    app.world_mut().spawn((
+        Grabbable,
+        Transform::from_xyz(0.3, 0.45, 0.0),
+        Velocity {
+            linear: Vec3::new(-4.0, 0.0, 0.0),
+            angular: Vec3::ZERO,
+        },
+    ));
+
+    app.update();
+
+    // 1. Hit! Elf enters RagdollTumble and drops carried treat
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_entity).unwrap();
+        assert_eq!(elf.state, ElfNpcState::RagdollTumble, "Impulse must send elf into RagdollTumble");
+        assert!(elf.carried_treat.is_none(), "Carried treat must be dropped upon knockdown");
+    }
+
+    // 2. Advance time past tumble duration (2.2s)
+    {
+        let mut elf = app.world_mut().get_mut::<ElfAssistant>(elf_entity).unwrap();
+        elf.tumble_timer = 2.5;
+        let mut vel = app.world_mut().get_mut::<Velocity>(elf_entity).unwrap();
+        vel.linear = Vec3::ZERO;
+    }
+    app.update();
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_entity).unwrap();
+        assert_eq!(elf.state, ElfNpcState::Recovering);
+    }
+
+    // 3. Complete recovery duration (0.8s) -> elf resumes FetchingMooseTreat to get a replacement treat!
+    {
+        let mut elf = app.world_mut().get_mut::<ElfAssistant>(elf_entity).unwrap();
+        elf.recovery_timer = 0.9;
+    }
+    app.update();
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_entity).unwrap();
+        assert_eq!(elf.state, ElfNpcState::FetchingMooseTreat, "Elf must resume FetchingMooseTreat after recovery");
+    }
+}
+
+#[test]
+fn test_moose_feeder_hat_equipping_activates_routine() {
+    use rust_tests::elf_game::physics_sandbox::{
+        ElfAssistant, ElfJob, ElfJobHat, ElfNpcState, elf_hat_assignment_system,
+    };
+    use rust_tests::elf_game::player::ElfHands;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut key_inputs = ButtonInput::<KeyCode>::default();
+    key_inputs.press(KeyCode::KeyE);
+    app.insert_resource(key_inputs);
+    app.insert_resource(ButtonInput::<MouseButton>::default());
+    app.add_systems(Update, elf_hat_assignment_system);
+
+    // Player holding MooseFeeder hat
+    let player_entity = app.world_mut().spawn((
+        ElfHands::default(),
+        Transform::from_xyz(-4.0, 0.45, 10.0),
+    )).id();
+
+    let feeder_hat_e = app.world_mut().spawn((
+        ElfJobHat {
+            job: ElfJob::MooseFeeder,
+            worn_by: None,
+        },
+        Transform::from_xyz(-4.0, 0.45, 10.0),
+        Velocity::default(),
+    )).id();
+
+    {
+        let mut hands = app.world_mut().get_mut::<ElfHands>(player_entity).unwrap();
+        hands.right_grabbed = Some(feeder_hat_e);
+    }
+
+    let elf_entity = app.world_mut().spawn((
+        ElfAssistant::new(1, "RecipientElf", vec![Vec3::ZERO]),
+        Transform::from_xyz(-4.0, 0.45, 11.0),
+        Velocity::default(),
+    )).id();
+
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_entity).unwrap();
+        assert_eq!(elf.assigned_job, Some(ElfJob::MooseFeeder), "Elf must receive MooseFeeder job");
+        assert_eq!(elf.state, ElfNpcState::FetchingMooseTreat, "Equipping MooseFeeder hat must set state to FetchingMooseTreat");
+        assert_eq!(elf.worn_hat_entity, Some(feeder_hat_e));
+
+        let hands = app.world().get::<ElfHands>(player_entity).unwrap();
+        assert_eq!(hands.right_grabbed, None, "Player hand must release the hat upon placing it");
+    }
 }

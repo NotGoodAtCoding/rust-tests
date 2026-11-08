@@ -1,12 +1,14 @@
 use bevy::prelude::*;
+use bevy::ecs::message::MessageWriter;
 use bevy_rapier3d::prelude::*;
 use crate::elf_game::{
     assets::WorkshopMaterials,
-    moose::{toy_model::MrMoose, MooseHunger, MooseHungerStage},
+    moose::{toy_model::MrMoose, FeedMooseMessage, MooseHunger, MooseHungerStage, MooseSnack},
     player::{
         ElfHands, ElfMovement,
         hands::{Grabbable, HeldByPlayer},
     },
+    workshop::pantry::MooseTreatJar,
     wrapping::Present,
 };
 
@@ -27,6 +29,10 @@ pub enum ElfNpcState {
     RagdollTumble,
     /// Standing back up, dusting off snow/sawdust, and restoring upright balance.
     Recovering,
+    /// Autonomous Moose Feeder moving towards the main table snack jar to retrieve a treat.
+    FetchingMooseTreat,
+    /// Autonomous Moose Feeder holding a treat and moving towards the feeding trough.
+    DeliveringMooseTreat,
 }
 
 /// Mischievous behavioral traits assigned to workshop elves.
@@ -62,6 +68,17 @@ pub struct ElfHatCloset {
     pub cooldown: f32,
 }
 
+/// Semantic roles and purposes for workshop navigation waypoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ElfNodePurpose {
+    Workbench,
+    MainTableTreatJar,
+    MooseFeedingStation,
+    PantryShelves,
+    HatCloset,
+    KleptoStash,
+}
+
 /// Node in the workshop waypoint pathfinding graph.
 #[derive(Debug, Clone)]
 pub struct ElfNavNode {
@@ -71,6 +88,7 @@ pub struct ElfNavNode {
     /// Free movement radius when arriving at this node.
     pub radius: f32,
     pub neighbors: Vec<usize>,
+    pub purpose: Option<ElfNodePurpose>,
 }
 
 /// Topological pathfinding navigation graph around Santa's workshop obstacles.
@@ -97,6 +115,7 @@ impl ElfNavGraph {
                 position: Vec3::new(0.0, 0.45, -1.8),
                 radius: 0.8,
                 neighbors: vec![1, 2, 6],
+                purpose: Some(ElfNodePurpose::Workbench),
             },
             // Node 1: Workbench West Pass
             ElfNavNode {
@@ -105,6 +124,7 @@ impl ElfNavGraph {
                 position: Vec3::new(-3.8, 0.45, -4.0),
                 radius: 0.8,
                 neighbors: vec![0, 5, 6, 7],
+                purpose: Some(ElfNodePurpose::MainTableTreatJar),
             },
             // Node 2: Workbench East Pass
             ElfNavNode {
@@ -113,6 +133,7 @@ impl ElfNavGraph {
                 position: Vec3::new(3.8, 0.45, -4.0),
                 radius: 0.8,
                 neighbors: vec![0, 3, 6, 9],
+                purpose: Some(ElfNodePurpose::Workbench),
             },
             // Node 3: Present Sending Platform
             ElfNavNode {
@@ -121,6 +142,7 @@ impl ElfNavGraph {
                 position: Vec3::new(5.5, 0.45, -4.0),
                 radius: 0.9,
                 neighbors: vec![2, 9],
+                purpose: None,
             },
             // Node 4: Moose Feeding Trough
             ElfNavNode {
@@ -129,6 +151,7 @@ impl ElfNavGraph {
                 position: Vec3::new(-6.5, 0.45, -10.5),
                 radius: 1.2,
                 neighbors: vec![5],
+                purpose: Some(ElfNodePurpose::MooseFeedingStation),
             },
             // Node 5: Northwest Rafters Pass
             ElfNavNode {
@@ -137,6 +160,7 @@ impl ElfNavGraph {
                 position: Vec3::new(-6.5, 0.45, -5.5),
                 radius: 1.0,
                 neighbors: vec![1, 4, 7],
+                purpose: None,
             },
             // Node 6: Central Crossing
             ElfNavNode {
@@ -145,38 +169,43 @@ impl ElfNavGraph {
                 position: Vec3::new(0.0, 0.45, 0.5),
                 radius: 1.0,
                 neighbors: vec![0, 1, 2, 7, 9],
+                purpose: None,
             },
-            // Node 7: West Conveyor Bypass (clears X = -8.5 belt start)
+            // Node 7: West Conveyor Bypass (clears X = -8.5 belt start & spawner duct)
             ElfNavNode {
                 id: 7,
                 name: "WestConveyorBypass".to_string(),
-                position: Vec3::new(-9.2, 0.45, 0.5),
-                radius: 1.0,
+                position: Vec3::new(-11.0, 0.45, 0.5),
+                radius: 0.8,
                 neighbors: vec![1, 5, 6, 8],
+                purpose: None,
             },
             // Node 8: West South Corridor
             ElfNavNode {
                 id: 8,
                 name: "WestSouthCorridor".to_string(),
-                position: Vec3::new(-9.2, 0.45, 5.5),
-                radius: 1.0,
-                neighbors: vec![7, 11, 12, 13],
+                position: Vec3::new(-11.0, 0.45, 5.5),
+                radius: 0.8,
+                neighbors: vec![7, 11, 12, 13, 15],
+                purpose: None,
             },
-            // Node 9: East Conveyor Bypass (clears X = 9.5 belt end and despawner)
+            // Node 9: East Conveyor Bypass (clears X = 9.8 despawner chute & top rim)
             ElfNavNode {
                 id: 9,
                 name: "EastConveyorBypass".to_string(),
-                position: Vec3::new(10.2, 0.45, 0.5),
-                radius: 1.0,
+                position: Vec3::new(11.5, 0.45, 0.5),
+                radius: 0.7,
                 neighbors: vec![2, 3, 6, 10],
+                purpose: None,
             },
             // Node 10: East South Corridor
             ElfNavNode {
                 id: 10,
                 name: "EastSouthCorridor".to_string(),
-                position: Vec3::new(10.2, 0.45, 5.5),
-                radius: 1.0,
+                position: Vec3::new(11.5, 0.45, 5.5),
+                radius: 0.7,
                 neighbors: vec![9, 11, 14],
+                purpose: None,
             },
             // Node 11: South Central Hallway
             ElfNavNode {
@@ -185,6 +214,7 @@ impl ElfNavGraph {
                 position: Vec3::new(0.0, 0.45, 7.0),
                 radius: 1.2,
                 neighbors: vec![8, 10, 12, 14],
+                purpose: None,
             },
             // Node 12: Back Wall Hat Closet
             ElfNavNode {
@@ -193,6 +223,7 @@ impl ElfNavGraph {
                 position: Vec3::new(-4.5, 0.45, 10.5),
                 radius: 1.0,
                 neighbors: vec![8, 11, 13],
+                purpose: Some(ElfNodePurpose::HatCloset),
             },
             // Node 13: Secluded Klepto Stash Node
             ElfNavNode {
@@ -201,6 +232,7 @@ impl ElfNavGraph {
                 position: Vec3::new(-10.5, 0.45, 10.5),
                 radius: 1.0,
                 neighbors: vec![8, 12],
+                purpose: Some(ElfNodePurpose::KleptoStash),
             },
             // Node 14: Southeast Rest Area
             ElfNavNode {
@@ -209,6 +241,16 @@ impl ElfNavGraph {
                 position: Vec3::new(5.5, 0.45, 10.0),
                 radius: 1.0,
                 neighbors: vec![10, 11],
+                purpose: None,
+            },
+            // Node 15: Pantry Shelves (inside Pantry Storage Wing at X = -15.0, Z = 5.5)
+            ElfNavNode {
+                id: 15,
+                name: "PantryShelves".to_string(),
+                position: Vec3::new(-15.0, 0.45, 5.5),
+                radius: 1.1,
+                neighbors: vec![8],
+                purpose: Some(ElfNodePurpose::PantryShelves),
             },
         ];
 
@@ -216,6 +258,11 @@ impl ElfNavGraph {
             nodes,
             debug_visible: false,
         }
+    }
+
+    /// Finds the node index associated with a given semantic purpose.
+    pub fn find_node_by_purpose(&self, purpose: ElfNodePurpose) -> Option<usize> {
+        self.nodes.iter().find(|n| n.purpose == Some(purpose)).map(|n| n.id)
     }
 
     /// Finds the shortest sequence of node indices from `start_idx` to `goal_idx` using breadth-first search.
@@ -305,6 +352,10 @@ pub struct ElfAssistant {
     // Mischief specific state
     pub slacking_cooldown: f32,
     pub carried_present: Option<Entity>,
+
+    // Job specific state (Moose Feeder loop)
+    pub carried_treat: Option<Entity>,
+    pub missing_treats_panic: bool,
 }
 
 impl ElfAssistant {
@@ -341,6 +392,8 @@ impl ElfAssistant {
             recovery_duration: 0.8,
             slacking_cooldown: 8.0,
             carried_present: None,
+            carried_treat: None,
+            missing_treats_panic: false,
         }
     }
 }
@@ -926,6 +979,11 @@ pub fn elf_hat_assignment_system(
             }
             elf.assigned_job = Some(hat_job);
             elf.worn_hat_entity = Some(hat_entity);
+            if hat_job == ElfJob::MooseFeeder {
+                elf.state = ElfNpcState::FetchingMooseTreat;
+                elf.path.clear();
+                elf.path_step = 0;
+            }
         }
     }
 }
@@ -937,7 +995,7 @@ pub fn elf_assistant_ai_system(
     time: Option<Res<Time>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
-    hunger: Option<Res<MooseHunger>>,
+    mut hunger: Option<ResMut<MooseHunger>>,
     nav_graph: Option<Res<ElfNavGraph>>,
     mut q_elves: Query<(
         Entity,
@@ -957,12 +1015,51 @@ pub fn elf_assistant_ai_system(
     >,
     q_dynamic_props: Query<
         (Entity, &Transform, &Velocity),
-        (With<Grabbable>, Without<Present>, Without<ElfAssistant>, Without<MrMoose>, Without<ElfMovement>),
+        (
+            With<Grabbable>,
+            Without<Present>,
+            Without<MooseSnack>,
+            Without<MooseTreatJar>,
+            Without<ElfAssistant>,
+            Without<MrMoose>,
+            Without<ElfMovement>,
+        ),
     >,
     mut q_presents: Query<
         (Entity, &mut Transform, &mut Velocity),
-        (With<Present>, Without<ElfAssistant>, Without<MrMoose>, Without<ElfMovement>),
+        (
+            With<Present>,
+            Without<MooseSnack>,
+            Without<MooseTreatJar>,
+            Without<ElfAssistant>,
+            Without<MrMoose>,
+            Without<ElfMovement>,
+        ),
     >,
+    mut q_jars: Query<
+        (Entity, &Transform, &mut MooseTreatJar),
+        (
+            With<MooseTreatJar>,
+            Without<MooseSnack>,
+            Without<Present>,
+            Without<ElfAssistant>,
+            Without<ElfMovement>,
+            Without<MrMoose>,
+        ),
+    >,
+    mut q_snacks: Query<
+        (Entity, &mut Transform, &mut Velocity),
+        (
+            With<MooseSnack>,
+            Without<Present>,
+            Without<MooseTreatJar>,
+            Without<ElfAssistant>,
+            Without<MrMoose>,
+            Without<ElfMovement>,
+        ),
+    >,
+    mut feed_messages: Option<MessageWriter<FeedMooseMessage>>,
+    mut commands: Commands,
 ) {
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
         return;
@@ -991,8 +1088,23 @@ pub fn elf_assistant_ai_system(
             }
         }
 
+        // Carry treat follow if Moose Feeder is delivering
+        if let Some(treat_e) = elf.carried_treat {
+            if let Ok((_, mut treat_tf, mut treat_vel)) = q_snacks.get_mut(treat_e) {
+                let forward = elf_tf.forward();
+                treat_tf.translation = elf_tf.translation + forward * 0.42 + Vec3::Y * 0.05;
+                treat_vel.linear = Vec3::ZERO;
+                treat_vel.angular = Vec3::ZERO;
+            }
+        }
+
         match elf.state {
-            ElfNpcState::Wandering | ElfNpcState::Inspecting | ElfNpcState::Slacking | ElfNpcState::StashingPresent => {
+            ElfNpcState::Wandering
+            | ElfNpcState::Inspecting
+            | ElfNpcState::Slacking
+            | ElfNpcState::StashingPresent
+            | ElfNpcState::FetchingMooseTreat
+            | ElfNpcState::DeliveringMooseTreat => {
                 // If Moose is agitated or rampaging, panic immediately!
                 if moose_breached || moose_agitated {
                     elf.state = ElfNpcState::Panicking;
@@ -1022,8 +1134,9 @@ pub fn elf_assistant_ai_system(
                         impulse.impulse += knock_dir * 10.0 + Vec3::Y * 5.0;
                         impulse.torque_impulse += Vec3::new(6.0, 4.0, 5.0);
 
-                        // Drop carried present if knocked down
+                        // Drop carried present or treat if knocked down
                         elf.carried_present = None;
+                        elf.carried_treat = None;
                         break;
                     }
                 }
@@ -1044,8 +1157,9 @@ pub fn elf_assistant_ai_system(
                         impulse.impulse += knock_dir * 8.0 + Vec3::Y * 4.5;
                         impulse.torque_impulse += Vec3::new(5.0, 3.0, 4.0);
 
-                        // Drop carried present if knocked down
+                        // Drop carried present or treat if knocked down
                         elf.carried_present = None;
+                        elf.carried_treat = None;
                         break;
                     }
                 }
@@ -1071,7 +1185,7 @@ pub fn elf_assistant_ai_system(
                 }
 
                 // 2. Klepto Trait Present Finding & Stashing Logic
-                if elf.mischief_trait == ElfMischiefTrait::Klepto && elf.carried_present.is_none() {
+                if elf.mischief_trait == ElfMischiefTrait::Klepto && elf.carried_present.is_none() && elf.assigned_job.is_none() {
                     // Check if there is an unheld present nearby to steal
                     for (pres_e, pres_tf, _) in &q_presents {
                         let dist = pres_tf.translation.distance(elf_tf.translation);
@@ -1092,8 +1206,254 @@ pub fn elf_assistant_ai_system(
                     }
                 }
 
+                // 3. Moose Feeder job activation from Wandering
+                if elf.assigned_job == Some(ElfJob::MooseFeeder) && elf.state == ElfNpcState::Wandering {
+                    elf.state = ElfNpcState::FetchingMooseTreat;
+                    elf.path.clear();
+                    elf.path_step = 0;
+                }
+
                 // Navigation execution
-                if elf.state == ElfNpcState::StashingPresent {
+                if elf.state == ElfNpcState::FetchingMooseTreat {
+                    elf.walk_timer += dt;
+                    let jar_node_idx = nav_graph
+                        .as_ref()
+                        .and_then(|g| g.find_node_by_purpose(ElfNodePurpose::MainTableTreatJar))
+                        .unwrap_or(1);
+
+                    if elf.path.is_empty() || elf.target_node != jar_node_idx {
+                        if let Some(ref graph) = nav_graph {
+                            if let Some(path) = graph.find_path(elf.current_node, jar_node_idx) {
+                                elf.path = path;
+                                elf.path_step = 0;
+                                elf.target_node = jar_node_idx;
+                            }
+                        }
+                    }
+
+                    let target_pos = if let Some(ref graph) = nav_graph {
+                        if elf.path_step < elf.path.len() {
+                            graph.nodes[elf.path[elf.path_step]].position
+                        } else {
+                            graph.nodes.get(jar_node_idx).map(|n| n.position).unwrap_or(elf.target_waypoint)
+                        }
+                    } else {
+                        elf.target_waypoint
+                    };
+
+                    let flat_diff = Vec3::new(
+                        target_pos.x - elf_tf.translation.x,
+                        0.0,
+                        target_pos.z - elf_tf.translation.z,
+                    );
+                    let dist = flat_diff.length();
+
+                    let dest_pos = if let Some(ref graph) = nav_graph {
+                        graph.nodes.get(jar_node_idx).map(|n| n.position).unwrap_or(elf.target_waypoint)
+                    } else {
+                        elf.target_waypoint
+                    };
+                    let dist_to_dest = Vec3::new(
+                        dest_pos.x - elf_tf.translation.x,
+                        0.0,
+                        dest_pos.z - elf_tf.translation.z,
+                    ).length();
+
+                    if dist_to_dest < 0.8 || (dist < 0.6 && elf.path_step + 1 >= elf.path.len()) {
+                        if let Some(ref graph) = nav_graph {
+                            // Arrived at MainTableTreatJar node! Inspect node area
+                            elf.current_node = jar_node_idx;
+                            let node_pos = graph.nodes[jar_node_idx].position;
+                            let scan_radius = (graph.nodes[jar_node_idx].radius + 1.5).max(5.5);
+
+                            let mut found_jar: Option<(Entity, f32)> = None;
+                            for (jar_e, jar_tf, jar) in &q_jars {
+                                if jar.treat_count > 0 {
+                                    let d = jar_tf
+                                        .translation
+                                        .distance(node_pos)
+                                        .min(jar_tf.translation.distance(elf_tf.translation));
+                                    if d <= scan_radius {
+                                        if found_jar.is_none() || d < found_jar.unwrap().1 {
+                                            found_jar = Some((jar_e, d));
+                                        }
+                                    }
+                                }
+                            }
+
+                            if let Some((jar_e, _)) = found_jar {
+                                if let Ok((_, _, mut jar)) = q_jars.get_mut(jar_e) {
+                                    jar.treat_count = jar.treat_count.saturating_sub(1);
+                                }
+
+                                let forward = elf_tf.forward();
+                                let treat_pos = elf_tf.translation + forward * 0.42 + Vec3::Y * 0.1;
+                                let treat_entity = commands
+                                    .spawn((
+                                        Transform::from_translation(treat_pos),
+                                        Velocity::default(),
+                                        MooseSnack { nutrition_value: 60.0 },
+                                        Grabbable,
+                                        Name::new("CarriedMooseTreat"),
+                                    ))
+                                    .id();
+                                elf.carried_treat = Some(treat_entity);
+                                elf.missing_treats_panic = false;
+
+                                // Pathfind to MooseFeedingStation
+                                let feeding_node_idx = graph
+                                    .find_node_by_purpose(ElfNodePurpose::MooseFeedingStation)
+                                    .unwrap_or(4);
+                                if let Some(path) = graph.find_path(jar_node_idx, feeding_node_idx) {
+                                    elf.path = path;
+                                    elf.path_step = 0;
+                                    elf.target_node = feeding_node_idx;
+                                }
+                                elf.state = ElfNpcState::DeliveringMooseTreat;
+                                vel.linear.x = 0.0;
+                                vel.linear.z = 0.0;
+                            } else {
+                                // Panic Fallback: No jar with treats found in node area!
+                                elf.state = ElfNpcState::Panicking;
+                                elf.missing_treats_panic = true;
+                                elf.state_timer = 0.0;
+                                if let Some(node) = graph.nodes.get(jar_node_idx) {
+                                    if !node.neighbors.is_empty() {
+                                        let next_node = node.neighbors[(elf.id as usize) % node.neighbors.len()];
+                                        if let Some(path) = graph.find_path(jar_node_idx, next_node) {
+                                            elf.path = path;
+                                            elf.path_step = 0;
+                                            elf.target_node = next_node;
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            vel.linear.x = 0.0;
+                            vel.linear.z = 0.0;
+                        }
+                    } else if dist < 0.6 {
+                        if let Some(ref _graph) = nav_graph {
+                            if elf.path_step + 1 < elf.path.len() {
+                                elf.current_node = elf.path[elf.path_step];
+                                elf.path_step += 1;
+                            }
+                        }
+                    } else {
+                        let dir = flat_diff / dist;
+                        vel.linear.x = dir.x * elf.walk_speed;
+                        vel.linear.z = dir.z * elf.walk_speed;
+                        if dir.length_squared() > 0.001 {
+                            let target_rot = Quat::from_rotation_y(dir.x.atan2(dir.z));
+                            elf_tf.rotation = elf_tf.rotation.slerp(target_rot, (dt * 8.0).min(1.0));
+                        }
+                    }
+                } else if elf.state == ElfNpcState::DeliveringMooseTreat {
+                    elf.walk_timer += dt;
+                    let feeding_node_idx = nav_graph
+                        .as_ref()
+                        .and_then(|g| g.find_node_by_purpose(ElfNodePurpose::MooseFeedingStation))
+                        .unwrap_or(4);
+
+                    if elf.path.is_empty() || elf.target_node != feeding_node_idx {
+                        if let Some(ref graph) = nav_graph {
+                            if let Some(path) = graph.find_path(elf.current_node, feeding_node_idx) {
+                                elf.path = path;
+                                elf.path_step = 0;
+                                elf.target_node = feeding_node_idx;
+                            }
+                        }
+                    }
+
+                    let target_pos = if let Some(ref graph) = nav_graph {
+                        if elf.path_step < elf.path.len() {
+                            graph.nodes[elf.path[elf.path_step]].position
+                        } else {
+                            graph.nodes.get(feeding_node_idx).map(|n| n.position).unwrap_or(elf.target_waypoint)
+                        }
+                    } else {
+                        elf.target_waypoint
+                    };
+
+                    let flat_diff = Vec3::new(
+                        target_pos.x - elf_tf.translation.x,
+                        0.0,
+                        target_pos.z - elf_tf.translation.z,
+                    );
+                    let dist = flat_diff.length();
+
+                    let dest_pos = if let Some(ref graph) = nav_graph {
+                        graph.nodes.get(feeding_node_idx).map(|n| n.position).unwrap_or(elf.target_waypoint)
+                    } else {
+                        elf.target_waypoint
+                    };
+                    let dist_to_dest = Vec3::new(
+                        dest_pos.x - elf_tf.translation.x,
+                        0.0,
+                        dest_pos.z - elf_tf.translation.z,
+                    ).length();
+
+                    if dist_to_dest < 0.8 || (dist < 0.8 && elf.path_step + 1 >= elf.path.len()) {
+                        if let Some(ref graph) = nav_graph {
+                            // Arrived at MooseFeedingStation! Deposit treat and reduce hunger
+                            elf.current_node = feeding_node_idx;
+
+                            if let Some(ref mut h) = hunger {
+                                h.value = (h.value - 60.0).max(0.0);
+                                h.breach_delay_remaining = None;
+                                h.is_breached = false;
+                                if h.value < 20.0 {
+                                    h.stage = MooseHungerStage::BehindShutters;
+                                } else if h.value < 50.0 {
+                                    h.stage = MooseHungerStage::PeekingThrough;
+                                } else {
+                                    h.stage = MooseHungerStage::AgitatedHuffing;
+                                }
+                            }
+
+                            if let Some(ref mut writer) = feed_messages {
+                                if let Some(treat_e) = elf.carried_treat {
+                                    writer.write(FeedMooseMessage { snack_entity: treat_e });
+                                }
+                            }
+
+                            if let Some(treat_e) = elf.carried_treat.take() {
+                                commands.entity(treat_e).despawn();
+                            }
+
+                            // Loop back to retrieve next treat from MainTableTreatJar
+                            let jar_node_idx = graph
+                                .find_node_by_purpose(ElfNodePurpose::MainTableTreatJar)
+                                .unwrap_or(1);
+                            if let Some(path) = graph.find_path(feeding_node_idx, jar_node_idx) {
+                                elf.path = path;
+                                elf.path_step = 0;
+                                elf.target_node = jar_node_idx;
+                            }
+                            elf.state = ElfNpcState::FetchingMooseTreat;
+                            vel.linear.x = 0.0;
+                            vel.linear.z = 0.0;
+                        } else {
+                            vel.linear.x = 0.0;
+                            vel.linear.z = 0.0;
+                        }
+                    } else if dist < 0.8 {
+                        if let Some(ref _graph) = nav_graph {
+                            if elf.path_step + 1 < elf.path.len() {
+                                elf.current_node = elf.path[elf.path_step];
+                                elf.path_step += 1;
+                            }
+                        }
+                    } else {
+                        let dir = flat_diff / dist;
+                        vel.linear.x = dir.x * elf.walk_speed;
+                        vel.linear.z = dir.z * elf.walk_speed;
+                        if dir.length_squared() > 0.001 {
+                            let target_rot = Quat::from_rotation_y(dir.x.atan2(dir.z));
+                            elf_tf.rotation = elf_tf.rotation.slerp(target_rot, (dt * 8.0).min(1.0));
+                        }
+                    }
+                } else if elf.state == ElfNpcState::StashingPresent {
                     // Pathfind towards Klepto stash node (Node 13: -10.5, 0.45, 10.5)
                     let stash_pos = Vec3::new(-10.5, 0.45, 10.5);
                     let target_pos = if let Some(ref graph) = nav_graph {
@@ -1259,12 +1619,105 @@ pub fn elf_assistant_ai_system(
                         impulse.impulse += away * 16.0 + Vec3::Y * 9.0;
                         impulse.torque_impulse += Vec3::new(10.0, 12.0, 8.0);
                         elf.carried_present = None;
+                        elf.carried_treat = None;
+                        continue;
+                    }
+                }
+
+                if elf.missing_treats_panic {
+                    // Check if fresh MooseTreatJar with treats has arrived in the node area
+                    let jar_node_idx = nav_graph
+                        .as_ref()
+                        .and_then(|g| g.find_node_by_purpose(ElfNodePurpose::MainTableTreatJar))
+                        .unwrap_or(1);
+                    let node_pos = nav_graph
+                        .as_ref()
+                        .map(|g| g.nodes[jar_node_idx].position)
+                        .unwrap_or(Vec3::new(-3.8, 0.45, -4.0));
+                    let scan_radius = nav_graph
+                        .as_ref()
+                        .map(|g| (g.nodes[jar_node_idx].radius + 1.5).max(5.5))
+                        .unwrap_or(5.5);
+
+                    let fresh_jar_found = q_jars.iter().any(|(_, jar_tf, jar)| {
+                        jar.treat_count > 0
+                            && (jar_tf.translation.distance(node_pos) <= scan_radius
+                                || jar_tf.translation.distance(elf_tf.translation) <= scan_radius)
+                    });
+
+                    if fresh_jar_found {
+                        // Fresh jar placed by player! Panic resolved!
+                        elf.missing_treats_panic = false;
+                        elf.state = ElfNpcState::FetchingMooseTreat;
+                        if let Some(ref graph) = nav_graph {
+                            if let Some(path) = graph.find_path(elf.current_node, jar_node_idx) {
+                                elf.path = path;
+                                elf.path_step = 0;
+                                elf.target_node = jar_node_idx;
+                            }
+                        }
+                        continue;
+                    } else {
+                        // Erratic pacing between neighbor nodes
+                        let target_pos = if let Some(ref graph) = nav_graph {
+                            if elf.path_step < elf.path.len() {
+                                graph.nodes[elf.path[elf.path_step]].position
+                            } else {
+                                if let Some(node) = graph.nodes.get(elf.current_node) {
+                                    if !node.neighbors.is_empty() {
+                                        let next_node = node.neighbors[(elf.id as usize + (elf.state_timer as usize)) % node.neighbors.len()];
+                                        if let Some(path) = graph.find_path(elf.current_node, next_node) {
+                                            elf.path = path;
+                                            elf.path_step = 0;
+                                            elf.target_node = next_node;
+                                        }
+                                    }
+                                }
+                                if elf.path_step < elf.path.len() {
+                                    graph.nodes[elf.path[elf.path_step]].position
+                                } else {
+                                    elf.target_waypoint
+                                }
+                            }
+                        } else {
+                            elf.target_waypoint
+                        };
+
+                        let flat_diff = Vec3::new(target_pos.x - elf_tf.translation.x, 0.0, target_pos.z - elf_tf.translation.z);
+                        let dist = flat_diff.length();
+                        if dist < 0.6 {
+                            if elf.path_step + 1 < elf.path.len() {
+                                elf.path_step += 1;
+                                if let Some(ref _graph) = nav_graph {
+                                    elf.current_node = elf.path[elf.path_step];
+                                }
+                            } else {
+                                elf.path.clear();
+                                elf.path_step = 0;
+                            }
+                        } else {
+                            let dir = flat_diff / dist;
+                            vel.linear.x = dir.x * (elf.run_speed * 0.7);
+                            vel.linear.z = dir.z * (elf.run_speed * 0.7);
+                            if dir.length_squared() > 0.001 {
+                                let target_rot = Quat::from_rotation_y(dir.x.atan2(dir.z));
+                                elf_tf.rotation = elf_tf.rotation.slerp(target_rot, (dt * 10.0).min(1.0));
+                            }
+                        }
                         continue;
                     }
                 }
 
                 if !moose_breached && !moose_agitated {
-                    elf.state = ElfNpcState::Wandering;
+                    elf.state = if elf.assigned_job == Some(ElfJob::MooseFeeder) {
+                        if elf.carried_treat.is_some() {
+                            ElfNpcState::DeliveringMooseTreat
+                        } else {
+                            ElfNpcState::FetchingMooseTreat
+                        }
+                    } else {
+                        ElfNpcState::Wandering
+                    };
                     continue;
                 }
 
@@ -1307,6 +1760,14 @@ pub fn elf_assistant_ai_system(
                     elf.slacking_cooldown = 12.0;
                     elf.state = if moose_breached || moose_agitated {
                         ElfNpcState::Panicking
+                    } else if elf.missing_treats_panic {
+                        ElfNpcState::Panicking
+                    } else if elf.assigned_job == Some(ElfJob::MooseFeeder) {
+                        if elf.carried_treat.is_some() {
+                            ElfNpcState::DeliveringMooseTreat
+                        } else {
+                            ElfNpcState::FetchingMooseTreat
+                        }
                     } else {
                         ElfNpcState::Wandering
                     };
@@ -1338,7 +1799,10 @@ pub fn elf_ragdoll_limb_animation_system(
         };
 
         match elf.state {
-            ElfNpcState::Wandering | ElfNpcState::StashingPresent => {
+            ElfNpcState::Wandering
+            | ElfNpcState::StashingPresent
+            | ElfNpcState::FetchingMooseTreat
+            | ElfNpcState::DeliveringMooseTreat => {
                 let walk_t = elf.walk_timer;
                 let gait_sin = (walk_t * 7.5).sin();
 
@@ -1349,8 +1813,8 @@ pub fn elf_ragdoll_limb_animation_system(
                         limb_tf.rotation = limb.rest_local_rotation;
                     }
                     ElfLimbType::LeftArm => {
-                        if elf.carried_present.is_some() {
-                            // Holding present in front
+                        if elf.carried_present.is_some() || elf.carried_treat.is_some() {
+                            // Holding present or treat in front
                             limb_tf.translation = limb.rest_local_translation;
                             limb_tf.rotation = Quat::from_rotation_x(-0.8) * Quat::from_rotation_y(0.3);
                         } else {
@@ -1359,8 +1823,8 @@ pub fn elf_ragdoll_limb_animation_system(
                         }
                     }
                     ElfLimbType::RightArm => {
-                        if elf.carried_present.is_some() {
-                            // Holding present in front
+                        if elf.carried_present.is_some() || elf.carried_treat.is_some() {
+                            // Holding present or treat in front
                             limb_tf.translation = limb.rest_local_translation;
                             limb_tf.rotation = Quat::from_rotation_x(-0.8) * Quat::from_rotation_y(-0.3);
                         } else {

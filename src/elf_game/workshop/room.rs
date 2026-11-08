@@ -217,6 +217,12 @@ pub fn setup_workshop_scene(
             &mut materials,
             workshop_mats.as_deref(),
         );
+        super::pantry::spawn_pantry_storage_wing(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            workshop_mats.as_deref(),
+        );
         return;
     }
 
@@ -416,33 +422,60 @@ pub fn setup_workshop_scene(
         ));
     }
 
-    // Left wall (West: X = -13.0) - with Side Snowy Observation Windows
-    // Solid bottom wall
+    // Left wall (West: X = -13.0) - with Side Snowy Observation Windows and doorway to Pantry Storage Wing (Z = 5.5)
+    // North section of lower wall (Z in [-13.0, 4.7])
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.4, 1.2, 26.0))),
+        Mesh3d(meshes.add(Cuboid::new(0.4, 1.2, 17.7))),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(-13.0, 0.6, 0.0),
-        Collider::cuboid(0.2, 0.6, 13.0),
+        Transform::from_xyz(-13.0, 0.6, -4.15),
+        Collider::cuboid(0.2, 0.6, 8.85),
         RigidBody::Fixed,
         Name::new("WallWestLower"),
     ));
-    // West Windows
+    // South section of lower wall (Z in [6.3, 13.0])
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.1, 2.8, 18.0))),
+        Mesh3d(meshes.add(Cuboid::new(0.4, 1.2, 6.7))),
+        MeshMaterial3d(wall_material.clone()),
+        Transform::from_xyz(-13.0, 0.6, 9.65),
+        Collider::cuboid(0.2, 0.6, 3.35),
+        RigidBody::Fixed,
+        Name::new("WallWestLowerSouth"),
+    ));
+    // West Windows along North section
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(0.1, 2.8, 14.0))),
         MeshMaterial3d(window_glass_material.clone()),
-        Transform::from_xyz(-13.0, 2.6, 0.0),
-        Collider::cuboid(0.1, 1.4, 9.0),
+        Transform::from_xyz(-13.0, 2.6, -4.0),
+        Collider::cuboid(0.1, 1.4, 7.0),
         RigidBody::Fixed,
         Name::new("WestWindowGlass"),
     ));
-    // Solid top wall
+    // North section of upper wall
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.4, 1.5, 26.0))),
+        Mesh3d(meshes.add(Cuboid::new(0.4, 1.5, 17.7))),
         MeshMaterial3d(wall_material.clone()),
-        Transform::from_xyz(-13.0, 4.75, 0.0),
-        Collider::cuboid(0.2, 0.75, 13.0),
+        Transform::from_xyz(-13.0, 4.75, -4.15),
+        Collider::cuboid(0.2, 0.75, 8.85),
         RigidBody::Fixed,
         Name::new("WallWestUpper"),
+    ));
+    // South section of upper wall
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(0.4, 1.5, 6.7))),
+        MeshMaterial3d(wall_material.clone()),
+        Transform::from_xyz(-13.0, 4.75, 9.65),
+        Collider::cuboid(0.2, 0.75, 3.35),
+        RigidBody::Fixed,
+        Name::new("WallWestUpperSouth"),
+    ));
+    // Wall Header above Pantry Doorway (Y in [2.7, 5.5], Z in [4.7, 6.3])
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(0.4, 2.8, 1.6))),
+        MeshMaterial3d(wall_material.clone()),
+        Transform::from_xyz(-13.0, 4.1, 5.5),
+        Collider::cuboid(0.2, 1.4, 0.8),
+        RigidBody::Fixed,
+        Name::new("WallWestPantryHeader"),
     ));
 
     // Right wall (East: X = 13.0) - with central doorway for Storage Wing Door
@@ -1165,11 +1198,22 @@ pub fn setup_workshop_scene(
         Name::new("WinterSunlight"),
     ));
 
+    let mut meshes_opt = Some(meshes);
+    let mut materials_opt = Some(materials);
+
     // Spawn Storage Wing & Forbidden Back Workshop doorways, door barriers, and machinery
     super::progression::spawn_storage_wing_and_forbidden_workshop(
         &mut commands,
-        &mut Some(meshes),
-        &mut Some(materials),
+        &mut meshes_opt,
+        &mut materials_opt,
+        workshop_mats.as_deref(),
+    );
+
+    // Spawn Pantry Storage Wing & interactive restocking physics door
+    super::pantry::spawn_pantry_storage_wing(
+        &mut commands,
+        &mut meshes_opt,
+        &mut materials_opt,
         workshop_mats.as_deref(),
     );
 }
@@ -1294,20 +1338,19 @@ pub fn conveyor_despawn_chute_system(
     }
 }
 
-/// Smooth, organic procedural candle flame flickering for the two rustic chandeliers
+/// Smooth, organic procedural candle flame flickering for the two rustic chandeliers.
+/// Allowed to continue running when the game is paused so lighting flickers organically
+/// and shadow map render entities remain populated in bevy_pbr.
 pub fn chandelier_candle_flicker_system(
+    time_real: Option<Res<Time<bevy::time::Real>>>,
     time: Option<Res<Time>>,
-    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
-    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     mut q_chandeliers: Query<(&CandleChandelier, &mut PointLight)>,
 ) {
-    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
-        return;
-    }
-    let Some(time) = time else {
-        return;
-    };
-    let elapsed = time.elapsed_secs();
+    let elapsed = time_real
+        .as_ref()
+        .map(|t| t.elapsed_secs())
+        .or_else(|| time.as_ref().map(|t| t.elapsed_secs()))
+        .unwrap_or(0.0);
 
     for (chandelier, mut light) in &mut q_chandeliers {
         let t = elapsed * 7.5 + chandelier.flicker_seed;
@@ -1348,22 +1391,25 @@ pub fn chandelier_physics_interaction_system(
     }
 }
 
-/// Emits light fading smoke wisps and occasional ascending spark embers from candle flame tips
+/// Emits light fading smoke wisps and occasional ascending spark embers from candle flame tips.
+/// Allowed to continue running when the game is paused so ambient candle smoke and sparks continue to drift.
 pub fn candle_particle_emitter_system(
     mut commands: Commands,
+    time_real: Option<Res<Time<bevy::time::Real>>>,
     time: Option<Res<Time>>,
-    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
-    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     mut q_emitters: Query<(&GlobalTransform, &mut CandleFlameEmitter)>,
     workshop_mats: Option<Res<WorkshopMaterials>>,
     materials: Option<ResMut<Assets<StandardMaterial>>>,
     mut meshes: Option<ResMut<Assets<Mesh>>>,
 ) {
-    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+    let dt = time_real
+        .as_ref()
+        .map(|t| t.delta())
+        .or_else(|| time.as_ref().map(|t| t.delta()))
+        .unwrap_or_default();
+    if dt.is_zero() {
         return;
     }
-    let Some(time) = time else { return };
-    let dt = time.delta();
     let has_assets = meshes.is_some() && (materials.is_some() || workshop_mats.is_some());
 
     let (smoke_mat, spark_mat) = if let Some(ref wm) = workshop_mats {
@@ -1455,23 +1501,27 @@ pub fn candle_particle_emitter_system(
     }
 }
 
-/// Updates candle smoke wisps and ascending spark particles over time
+/// Updates candle smoke wisps and ascending spark particles over time.
+/// Allowed to continue running when the game is paused so smoke and spark particles animate seamlessly.
 pub fn candle_particle_system(
     mut commands: Commands,
+    time_real: Option<Res<Time<bevy::time::Real>>>,
     time: Option<Res<Time>>,
-    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
-    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     mut q_particles: Query<(Entity, &mut Transform, &mut CandleParticle)>,
 ) {
-    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
-        return;
-    }
-    let Some(time) = time else { return };
-    let dt = time.delta_secs();
+    let dt = time_real
+        .as_ref()
+        .map(|t| t.delta_secs())
+        .or_else(|| time.as_ref().map(|t| t.delta_secs()))
+        .unwrap_or(0.0);
     if dt <= 0.0 {
         return;
     }
-    let elapsed = time.elapsed_secs();
+    let elapsed = time_real
+        .as_ref()
+        .map(|t| t.elapsed_secs())
+        .or_else(|| time.as_ref().map(|t| t.elapsed_secs()))
+        .unwrap_or(0.0);
 
     for (entity, mut tf, mut particle) in &mut q_particles {
         particle.lifetime += dt;
@@ -1776,6 +1826,8 @@ pub fn tube_travelling_lump_system(
     mut q_segments: Query<(&VacuumTubeSegment, &mut Transform)>,
     quota: Option<ResMut<WorkshopQuota>>,
     mut delivery_messages: Option<MessageWriter<PresentDeliveredMessage>>,
+    moose_hunger: Option<ResMut<crate::elf_game::moose::MooseHunger>>,
+    mut moose_awakened_writer: Option<MessageWriter<crate::elf_game::moose::MooseAwakenedMessage>>,
     mut commands: Commands,
 ) {
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
@@ -1808,6 +1860,17 @@ pub fn tube_travelling_lump_system(
 
     if let Some(mut quota) = quota {
         quota.presents_delivered += completed_deliveries;
+    }
+
+    if completed_deliveries > 0 {
+        if let Some(mut hunger) = moose_hunger {
+            if hunger.is_dormant {
+                hunger.is_dormant = false;
+                if let Some(ref mut writer) = moose_awakened_writer {
+                    writer.write(crate::elf_game::moose::MooseAwakenedMessage);
+                }
+            }
+        }
     }
 
     // Apply deformation & reaction impulses to tube segments

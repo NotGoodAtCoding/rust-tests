@@ -5,9 +5,11 @@ use crate::elf_game::core::WorkshopQuota;
 pub mod room;
 pub mod events;
 pub mod progression;
+pub mod pantry;
 
 pub use room::VacuumTractorBeamCone;
 pub use progression::*;
+pub use pantry::*;
 
 #[derive(Message, Debug, Clone)]
 pub struct UnlockDoorMessage {
@@ -48,6 +50,8 @@ impl Plugin for WorkshopPlugin {
             .add_message::<progression::TriggerPlasmaWrapperMessage>()
             .add_message::<progression::FireRibbonCannonMessage>()
             .add_message::<progression::ToggleOverclockerMessage>()
+            .add_message::<pantry::PantryRestockEvent>()
+            .add_message::<pantry::PantryDoorInteractMessage>()
             .add_systems(Startup, room::setup_workshop_scene)
             .add_systems(
                 Update,
@@ -58,6 +62,14 @@ impl Plugin for WorkshopPlugin {
                     progression::plasma_shrink_wrapper_system,
                     progression::ribbon_cannon_system,
                     progression::candy_cane_overclocker_system,
+                    pantry::pantry_door_spring_system,
+                    pantry::pantry_door_restock_cycle_system,
+                    pantry::pantry_door_interaction_system,
+                ),
+            )
+            .add_systems(
+                Update,
+                (
                     room::conveyor_cube_spawner_system,
                     room::conveyor_belt_physics_system,
                     room::conveyor_despawn_chute_system,

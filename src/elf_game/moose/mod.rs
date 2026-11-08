@@ -23,6 +23,7 @@ pub struct MooseHunger {
     pub breach_delay_remaining: Option<f32>, // 3.0 to 12.0s
     pub huff_sound_timer: f32,
     pub is_breached: bool,
+    pub is_dormant: bool,
 
     // Deliberation and eating animation tracking:
     pub deliberation_timer: f32,
@@ -45,6 +46,7 @@ impl Default for MooseHunger {
             breach_delay_remaining: None,
             huff_sound_timer: 0.0,
             is_breached: false,
+            is_dormant: false,
             deliberation_timer: 0.0,
             deliberation_duration: 1.5,
             eating_timer: 0.0,
@@ -54,6 +56,22 @@ impl Default for MooseHunger {
             late_treat_decision_override: None,
             late_treat_rejected: false,
         }
+    }
+}
+
+impl MooseHunger {
+    /// Constructs a dormant MooseHunger instance where Mr. Moose starts sleeping
+    /// peacefully behind closed shutters until awakened by the 1st submitted present.
+    pub fn new_dormant() -> Self {
+        Self {
+            is_dormant: true,
+            ..default()
+        }
+    }
+
+    /// Awakens Mr. Moose from dormancy, initiating hunger timer accumulation (+1/s).
+    pub fn awaken(&mut self) {
+        self.is_dormant = false;
     }
 }
 
@@ -82,6 +100,10 @@ pub struct MooseWindowSlamEvent;
 #[derive(Message, Debug, Clone)]
 pub struct MooseBreachMessage;
 
+/// Fired when Mr. Moose is awakened from initial dormancy by the first submitted present
+#[derive(Message, Debug, Clone)]
+pub struct MooseAwakenedMessage;
+
 #[derive(Message, Debug, Clone)]
 pub struct FeedMooseMessage {
     pub snack_entity: Entity,
@@ -97,6 +119,10 @@ pub fn update_moose_hunger_system(
     mut huff_events: Option<MessageWriter<MooseHuffEvent>>,
 ) {
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+
+    if hunger.is_dormant {
         return;
     }
 
@@ -195,6 +221,7 @@ impl Plugin for MoosePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MooseHunger>()
             .add_message::<MooseBreachMessage>()
+            .add_message::<MooseAwakenedMessage>()
             .add_message::<MooseHuffEvent>()
             .add_message::<MooseWindowSlamEvent>()
             .add_message::<FeedMooseMessage>()

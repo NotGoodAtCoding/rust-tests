@@ -703,6 +703,10 @@ pub fn spawn_mr_moose(
         Collider::cylinder(0.18, 0.20),
         RigidBody::Fixed,
         MooseSnackJar,
+        crate::elf_game::workshop::pantry::MooseTreatJar {
+            treat_count: 4,
+            max_treats: 4,
+        },
         Name::new("MooseSnackJar"),
     )).with_children(|jar| {
         // Brass screw lid

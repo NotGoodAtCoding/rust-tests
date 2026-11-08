@@ -139,7 +139,7 @@ pub fn spawn_elf_player(
                     .with_children(|vm| {
                         // Left hand model (controlled with Q)
                         vm.spawn((
-                            Mesh3d(meshes.add(Sphere::new(0.12))),
+                            Mesh3d(meshes.add(Sphere::new(0.065))),
                             MeshMaterial3d(hand_material.clone()),
                             Transform::from_xyz(-0.35, -0.3, -0.6),
                             LeftHandVisual,
@@ -149,7 +149,7 @@ pub fn spawn_elf_player(
 
                         // Right hand model (controlled with E)
                         vm.spawn((
-                            Mesh3d(meshes.add(Sphere::new(0.12))),
+                            Mesh3d(meshes.add(Sphere::new(0.065))),
                             MeshMaterial3d(hand_material.clone()),
                             Transform::from_xyz(0.35, -0.3, -0.6),
                             RightHandVisual,
@@ -202,10 +202,11 @@ pub fn elf_player_controller_system(
     time: Option<Res<Time>>,
     keys: Option<Res<ButtonInput<KeyCode>>>,
     bhop_config: Res<BhopConfig>,
-    q_conveyor: Query<(&Transform, &ConveyorBelt)>,
+    q_conveyor: Query<(&Transform, &ConveyorBelt), Without<ElfPlayer>>,
+    q_pivot: Query<&CameraPivot>,
     mut q_player: Query<
         (
-            &Transform,
+            &mut Transform,
             &mut ElfMovement,
             &mut KinematicCharacterController,
             Option<&KinematicCharacterControllerOutput>,
@@ -230,6 +231,55 @@ pub fn elf_player_controller_system(
 
     let dt = time.delta_secs();
     if dt <= 0.0 {
+        return;
+    }
+
+    // Noclip mode: free 3D flying movement without gravity or collision
+    let noclip = menu_state.as_ref().map(|m| m.noclip).unwrap_or(false);
+    if noclip {
+        let pitch = q_pivot.iter().next().map(|p| p.pitch).unwrap_or(0.0);
+        for (mut transform, mut movement, mut controller, _) in &mut q_player {
+            movement.velocity = Vec3::ZERO;
+            movement.is_grounded = false;
+            controller.translation = None;
+
+            let yaw_quat = transform.rotation;
+            let pitch_quat = Quat::from_rotation_x(pitch);
+            let look_quat = yaw_quat * pitch_quat;
+            let forward_3d = look_quat * Vec3::NEG_Z;
+            let right_3d = yaw_quat * Vec3::X;
+
+            let mut fly_dir = Vec3::ZERO;
+            if keys.pressed(KeyCode::KeyW) {
+                fly_dir += forward_3d;
+            }
+            if keys.pressed(KeyCode::KeyS) {
+                fly_dir -= forward_3d;
+            }
+            if keys.pressed(KeyCode::KeyA) {
+                fly_dir -= right_3d;
+            }
+            if keys.pressed(KeyCode::KeyD) {
+                fly_dir += right_3d;
+            }
+            if keys.pressed(KeyCode::Space) {
+                fly_dir += Vec3::Y;
+            }
+            if keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::KeyC) {
+                fly_dir -= Vec3::Y;
+            }
+
+            let speed = if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
+                24.0
+            } else {
+                12.0
+            };
+
+            if fly_dir.length_squared() > 0.001 {
+                let move_vec = fly_dir.normalize() * speed * dt;
+                transform.translation += move_vec;
+            }
+        }
         return;
     }
 
@@ -291,6 +341,38 @@ pub fn elf_player_controller_system(
     }
 }
 
+pub fn toggle_noclip_system(
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    menu_state: Option<ResMut<MenuState>>,
+) {
+    let (Some(keys), Some(mut menu_state)) = (keys, menu_state) else {
+        return;
+    };
+    if keys.just_pressed(KeyCode::KeyV) {
+        menu_state.noclip = !menu_state.noclip;
+    }
+}
+
+pub fn sync_noclip_collider_system(
+    menu_state: Option<Res<MenuState>>,
+    mut commands: Commands,
+    q_player: Query<(Entity, Has<ColliderDisabled>), With<ElfPlayer>>,
+) {
+    let Some(menu_state) = menu_state else {
+        return;
+    };
+    if !menu_state.is_changed() {
+        return;
+    }
+    for (entity, has_disabled) in &q_player {
+        if menu_state.noclip && !has_disabled {
+            commands.entity(entity).insert(ColliderDisabled);
+        } else if !menu_state.noclip && has_disabled {
+            commands.entity(entity).remove::<ColliderDisabled>();
+        }
+    }
+}
+
 pub fn viewmodel_bob(
     menu_state: Option<Res<MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
@@ -307,6 +389,11 @@ pub fn viewmodel_bob(
     };
 
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+
+    if menu_state.as_ref().map(|m| m.noclip).unwrap_or(false) {
+        vm_tf.translation = Vec3::ZERO;
         return;
     }
 
@@ -334,6 +421,7 @@ pub fn floaty_hands_system(
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
         return;
     }
+
     let Some(time) = time else {
         return;
     };

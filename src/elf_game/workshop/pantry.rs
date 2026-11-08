@@ -1,0 +1,742 @@
+use bevy::prelude::*;
+use bevy::ecs::message::{Message, MessageReader, MessageWriter};
+use bevy_rapier3d::prelude::*;
+use crate::elf_game::{
+    assets::{palette::*, WorkshopMaterials},
+    moose::{MooseSnack, toy_model::MooseSnackJar},
+    player::hands::Grabbable,
+};
+
+/// Marker component for the Pantry Storage Wing root entity.
+#[derive(Component, Debug, Clone)]
+pub struct PantryWing {
+    pub bounds_min: Vec3,
+    pub bounds_max: Vec3,
+}
+
+/// Marker component for perimeter shelving units in the pantry.
+#[derive(Component, Debug, Clone)]
+pub struct PantryShelvingUnit {
+    pub unit_name: String,
+    pub tier_count: usize,
+}
+
+/// Tracks the shelf slot positions for Moose Treat jars in the pantry
+/// and oversees the infinite restock cycle.
+#[derive(Resource, Debug, Clone)]
+pub struct PantryRestockTracker {
+    /// 3D coordinates on the shelves where treat jars belong.
+    pub slots: Vec<Vec3>,
+    /// Number of completed restock cycles triggered by closing and reopening the door.
+    pub restock_cycle_count: u32,
+    /// Total number of fresh treat jars restocked across all cycles.
+    pub total_restocked_jars: u32,
+    /// Proximity radius to consider a slot occupied by a jar.
+    pub slot_radius: f32,
+}
+
+impl Default for PantryRestockTracker {
+    fn default() -> Self {
+        Self {
+            slots: vec![
+                Vec3::new(-16.0, 0.98, 3.80),
+                Vec3::new(-15.3, 0.98, 3.80),
+                Vec3::new(-14.7, 0.98, 3.80),
+                Vec3::new(-14.0, 0.98, 3.80),
+                Vec3::new(-15.6, 1.73, 3.80),
+                Vec3::new(-14.4, 1.73, 3.80),
+            ],
+            restock_cycle_count: 0,
+            total_restocked_jars: 0,
+            slot_radius: 0.45,
+        }
+    }
+}
+
+/// Interactive hinged physics door guarding the Pantry Storage Wing.
+/// Mounted via Rapier RevoluteJoint / spring momentum, swinging open and closed,
+/// and driving the infinite restock cycle on Closed -> Opened transition.
+#[derive(Component, Debug, Clone)]
+pub struct PantryDoor {
+    pub hinge_anchor_pos: Vec3,
+    pub current_angle: f32,
+    pub target_angle: f32,
+    pub was_closed: bool,
+    pub closed_threshold: f32, // e.g. 0.12 rad (~7 deg)
+    pub open_threshold: f32,   // e.g. 0.35 rad (~20 deg)
+    pub spring_stiffness: f32,
+    pub spring_damping: f32,
+}
+
+impl Default for PantryDoor {
+    fn default() -> Self {
+        Self {
+            hinge_anchor_pos: Vec3::new(-13.0, 1.35, 4.75),
+            current_angle: 0.0,
+            target_angle: 0.0,
+            was_closed: true,
+            closed_threshold: 0.12,
+            open_threshold: 0.35,
+            spring_stiffness: 15.0,
+            spring_damping: 4.0,
+        }
+    }
+}
+
+/// Fixed door frame anchor post component for the pantry door revolute hinge.
+#[derive(Component, Debug, Clone)]
+pub struct PantryDoorHingePost;
+
+/// A portable Moose Treat jar with treats that can be carried or used to feed Mr. Moose.
+#[derive(Component, Debug, Clone)]
+pub struct MooseTreatJar {
+    pub treat_count: u32,
+    pub max_treats: u32,
+}
+
+impl Default for MooseTreatJar {
+    fn default() -> Self {
+        Self {
+            treat_count: 4,
+            max_treats: 4,
+        }
+    }
+}
+
+/// Message fired whenever the pantry restocks depleted jar slots.
+#[derive(Message, Debug, Clone)]
+pub struct PantryRestockEvent {
+    pub slots_restocked: usize,
+    pub total_restocked_all_time: u32,
+    pub cycle_index: u32,
+}
+
+/// Request message to interact with the pantry door.
+#[derive(Message, Debug, Clone)]
+pub struct PantryDoorInteractMessage {
+    pub open: bool,
+}
+
+/// Spawns a fresh Moose Treat jar at the given slot position.
+pub fn spawn_moose_treat_jar(
+    commands: &mut Commands,
+    meshes: &mut Option<ResMut<Assets<Mesh>>>,
+    materials: &mut Option<ResMut<Assets<StandardMaterial>>>,
+    workshop_mats: Option<&WorkshopMaterials>,
+    pos: Vec3,
+) -> Entity {
+    let jar_glass_mat = workshop_mats
+        .map(|wm| wm.snack_jar_glass.clone())
+        .or_else(|| {
+            materials.as_mut().map(|m| {
+                m.add(StandardMaterial {
+                    base_color: SNACK_JAR_GLASS,
+                    alpha_mode: AlphaMode::Blend,
+                    perceptual_roughness: 0.15,
+                    ..default()
+                })
+            })
+        });
+
+    let jar_lid_mat = workshop_mats
+        .map(|wm| wm.polished_brass.clone())
+        .or_else(|| {
+            materials.as_mut().map(|m| {
+                m.add(StandardMaterial {
+                    base_color: POLISHED_BRASS,
+                    metallic: 0.8,
+                    perceptual_roughness: 0.3,
+                    ..default()
+                })
+            })
+        });
+
+    let snack_cookie_mat = workshop_mats
+        .map(|wm| wm.moose_snack_oat.clone())
+        .or_else(|| {
+            materials.as_mut().map(|m| {
+                m.add(StandardMaterial {
+                    base_color: MOOSE_SNACK_GOLDEN_OAT,
+                    perceptual_roughness: 0.6,
+                    ..default()
+                })
+            })
+        });
+
+    let mut jar_cmd = commands.spawn((
+        Transform::from_translation(pos),
+        Collider::cylinder(0.18, 0.20),
+        RigidBody::Dynamic,
+        Velocity::zero(),
+        ExternalImpulse::default(),
+        Damping {
+            linear_damping: 1.0,
+            angular_damping: 2.0,
+        },
+        Grabbable,
+        MooseTreatJar::default(),
+        MooseSnackJar,
+        Name::new("PantryMooseTreatJar"),
+    ));
+
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), jar_glass_mat) {
+        jar_cmd.insert((
+            Mesh3d(m.add(Cylinder::new(0.20, 0.36))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    let jar_entity = jar_cmd.id();
+
+    // Spawn brass screw lid child
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), jar_lid_mat) {
+        let lid_mesh = m.add(Cylinder::new(0.21, 0.06));
+        commands.entity(jar_entity).with_children(|parent| {
+            parent.spawn((
+                Mesh3d(lid_mesh),
+                MeshMaterial3d(mat),
+                Transform::from_xyz(0.0, 0.20, 0.0),
+                Name::new("JarBrassLid"),
+            ));
+        });
+    }
+
+    // Spawn 4 small physics snack cookies resting around/with the jar
+    for (ox, oz) in [(-0.10, -0.06), (0.08, -0.04), (-0.04, 0.08), (0.07, 0.07)] {
+        let mut cookie_cmd = commands.spawn((
+            Transform::from_xyz(pos.x + ox, pos.y + 0.12, pos.z + oz),
+            Collider::cylinder(0.025, 0.07),
+            RigidBody::Dynamic,
+            Velocity::zero(),
+            Grabbable,
+            MooseSnack {
+                nutrition_value: 60.0,
+            },
+            Name::new("PantrySmallMooseSnack"),
+        ));
+        if let (Some(m), Some(mat)) = (meshes.as_mut(), snack_cookie_mat.clone()) {
+            cookie_cmd.insert((
+                Mesh3d(m.add(Cylinder::new(0.07, 0.05))),
+                MeshMaterial3d(mat),
+            ));
+        }
+    }
+
+    jar_entity
+}
+
+/// Spawns the Pantry Storage Wing architecture (4.0m x 4.0m x 3.5m) situated off the
+/// main workshop corridor (West wall at X = -13.0, Z = 5.5), perimeter timber shelving units,
+/// the interactive physics door on Rapier RevoluteJoint, and initial Moose Treat jars.
+pub fn spawn_pantry_storage_wing(
+    commands: &mut Commands,
+    meshes: &mut Option<ResMut<Assets<Mesh>>>,
+    materials: &mut Option<ResMut<Assets<StandardMaterial>>>,
+    workshop_mats: Option<&WorkshopMaterials>,
+) {
+    let floor_mat = workshop_mats
+        .map(|wm| wm.rustic_planks.clone())
+        .or_else(|| {
+            materials.as_mut().map(|m| {
+                m.add(StandardMaterial {
+                    base_color: RUSTIC_PLANKS,
+                    perceptual_roughness: 0.85,
+                    ..default()
+                })
+            })
+        });
+
+    let wall_mat = workshop_mats
+        .map(|wm| wm.cabin_log.clone())
+        .or_else(|| {
+            materials.as_mut().map(|m| {
+                m.add(StandardMaterial {
+                    base_color: CABIN_LOG,
+                    perceptual_roughness: 0.85,
+                    ..default()
+                })
+            })
+        });
+
+    let shelf_mat = workshop_mats
+        .map(|wm| wm.timber_beam.clone())
+        .or_else(|| {
+            materials.as_mut().map(|m| {
+                m.add(StandardMaterial {
+                    base_color: TIMBER_BEAM,
+                    perceptual_roughness: 0.80,
+                    ..default()
+                })
+            })
+        });
+
+    let door_wood_mat = workshop_mats
+        .map(|wm| wm.rustic_planks.clone())
+        .or_else(|| {
+            materials.as_mut().map(|m| {
+                m.add(StandardMaterial {
+                    base_color: RUSTIC_PLANKS,
+                    perceptual_roughness: 0.75,
+                    ..default()
+                })
+            })
+        });
+
+    let iron_mat = workshop_mats
+        .map(|wm| wm.wrought_iron.clone())
+        .or_else(|| {
+            materials.as_mut().map(|m| {
+                m.add(StandardMaterial {
+                    base_color: WROUGHT_IRON,
+                    metallic: 0.75,
+                    perceptual_roughness: 0.5,
+                    ..default()
+                })
+            })
+        });
+
+    let brass_mat = workshop_mats
+        .map(|wm| wm.polished_brass.clone())
+        .or_else(|| {
+            materials.as_mut().map(|m| {
+                m.add(StandardMaterial {
+                    base_color: POLISHED_BRASS,
+                    metallic: 0.85,
+                    perceptual_roughness: 0.3,
+                    ..default()
+                })
+            })
+        });
+
+    // =========================================================================
+    // 1. Pantry Room Shell: Floor & Ceiling (4.0m x 4.0m x 3.5m)
+    // =========================================================================
+    // Root marker
+    commands.spawn((
+        PantryWing {
+            bounds_min: Vec3::new(-17.0, 0.0, 3.5),
+            bounds_max: Vec3::new(-13.0, 3.5, 7.5),
+        },
+        Transform::from_xyz(-15.0, 1.75, 5.5),
+        Name::new("PantryStorageWing"),
+    ));
+
+    // Floor (at Y = 0.0)
+    let mut floor_cmd = commands.spawn((
+        Transform::from_xyz(-15.0, 0.0, 5.5),
+        Collider::cuboid(2.0, 0.1, 2.0),
+        RigidBody::Fixed,
+        Name::new("PantryFloor"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), floor_mat.clone()) {
+        floor_cmd.insert((
+            Mesh3d(m.add(Plane3d::default().mesh().size(4.0, 4.0))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // Ceiling (at Y = 3.5)
+    let mut ceiling_cmd = commands.spawn((
+        Transform::from_xyz(-15.0, 3.5, 5.5),
+        Collider::cuboid(2.0, 0.1, 2.0),
+        RigidBody::Fixed,
+        Name::new("PantryCeiling"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), floor_mat.clone()) {
+        ceiling_cmd.insert((
+            Mesh3d(m.add(Cuboid::new(4.0, 0.2, 4.0))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // Warm Ambient Lantern (PointLight at Y = 3.1)
+    commands.spawn((
+        PointLight {
+            color: Color::srgb(1.0, 0.78, 0.45),
+            intensity: 7500.0,
+            range: 7.5,
+            shadow_maps_enabled: true,
+            ..default()
+        },
+        Transform::from_xyz(-15.0, 3.1, 5.5),
+        Name::new("PantryCeilingLantern"),
+    ));
+
+    // =========================================================================
+    // 2. Pantry Perimeter Walls
+    // =========================================================================
+    // Outer North Wall (Z = 3.5, X in [-17.0, -13.0])
+    let mut north_wall = commands.spawn((
+        Transform::from_xyz(-15.0, 1.75, 3.5),
+        Collider::cuboid(2.0, 1.75, 0.15),
+        RigidBody::Fixed,
+        Name::new("PantryNorthWall"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        north_wall.insert((
+            Mesh3d(m.add(Cuboid::new(4.0, 3.5, 0.3))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // Outer South Wall (Z = 7.5, X in [-17.0, -13.0])
+    let mut south_wall = commands.spawn((
+        Transform::from_xyz(-15.0, 1.75, 7.5),
+        Collider::cuboid(2.0, 1.75, 0.15),
+        RigidBody::Fixed,
+        Name::new("PantrySouthWall"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        south_wall.insert((
+            Mesh3d(m.add(Cuboid::new(4.0, 3.5, 0.3))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // Outer West Wall (X = -17.0, Z in [3.5, 7.5])
+    let mut west_wall = commands.spawn((
+        Transform::from_xyz(-17.0, 1.75, 5.5),
+        Collider::cuboid(0.15, 1.75, 2.0),
+        RigidBody::Fixed,
+        Name::new("PantryWestWall"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        west_wall.insert((
+            Mesh3d(m.add(Cuboid::new(0.3, 3.5, 4.0))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // Doorway Frame on West Wall of main workshop (X = -13.0, doorway opening Z in [4.7, 6.3])
+    // Door Header Lintel (Y in [2.7, 3.5] above opening)
+    let mut header_cmd = commands.spawn((
+        Transform::from_xyz(-13.0, 3.1, 5.5),
+        Collider::cuboid(0.2, 0.4, 0.8),
+        RigidBody::Fixed,
+        Name::new("PantryDoorHeaderLintel"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), shelf_mat.clone()) {
+        header_cmd.insert((
+            Mesh3d(m.add(Cuboid::new(0.4, 0.8, 1.6))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // Diegetic Directional Sign Plaque above doorway facing workshop aisle
+    let mut sign_cmd = commands.spawn((
+        Transform::from_xyz(-12.75, 3.0, 5.5),
+        Collider::cuboid(0.04, 0.25, 0.65),
+        RigidBody::Fixed,
+        Name::new("PantrySignPlaque"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), brass_mat.clone()) {
+        sign_cmd.insert((
+            Mesh3d(m.add(Cuboid::new(0.08, 0.5, 1.3))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // =========================================================================
+    // 3. Deep Perimeter Shelving Units
+    // =========================================================================
+    // North Shelving Unit (Z = 3.80, 3 tiers for treat jars)
+    commands.spawn((
+        PantryShelvingUnit {
+            unit_name: "NorthMooseTreatShelves".to_string(),
+            tier_count: 3,
+        },
+        Transform::from_xyz(-15.0, 1.6, 3.80),
+        Name::new("NorthMooseTreatShelvingUnit"),
+    ));
+
+    for (tier_y, tier_name) in [
+        (0.85, "NorthShelfLower"),
+        (1.60, "NorthShelfMid"),
+        (2.35, "NorthShelfUpper"),
+    ] {
+        let mut shelf_cmd = commands.spawn((
+            Transform::from_xyz(-15.0, tier_y, 3.80),
+            Collider::cuboid(1.6, 0.03, 0.275),
+            RigidBody::Fixed,
+            Name::new(tier_name),
+        ));
+        if let (Some(m), Some(mat)) = (meshes.as_mut(), shelf_mat.clone()) {
+            shelf_cmd.insert((
+                Mesh3d(m.add(Cuboid::new(3.2, 0.06, 0.55))),
+                MeshMaterial3d(mat),
+            ));
+        }
+    }
+
+    // West Perimeter Shelves (X = -16.65, Z in [4.2, 6.8]) for crates and general supplies
+    commands.spawn((
+        PantryShelvingUnit {
+            unit_name: "WestSupplyShelves".to_string(),
+            tier_count: 2,
+        },
+        Transform::from_xyz(-16.65, 1.25, 5.5),
+        Name::new("WestSupplyShelvingUnit"),
+    ));
+
+    for (tier_y, tier_name) in [(0.85, "WestShelfLower"), (1.60, "WestShelfUpper")] {
+        let mut shelf_cmd = commands.spawn((
+            Transform::from_xyz(-16.65, tier_y, 5.5),
+            Collider::cuboid(0.275, 0.03, 1.3),
+            RigidBody::Fixed,
+            Name::new(tier_name),
+        ));
+        if let (Some(m), Some(mat)) = (meshes.as_mut(), shelf_mat.clone()) {
+            shelf_cmd.insert((
+                Mesh3d(m.add(Cuboid::new(0.55, 0.06, 2.6))),
+                MeshMaterial3d(mat),
+            ));
+        }
+    }
+
+    // South Cookie Baking Staging Counter (Z = 7.15, X in [-16.5, -13.5])
+    let mut counter_cmd = commands.spawn((
+        Transform::from_xyz(-15.0, 0.45, 7.15),
+        Collider::cuboid(1.5, 0.45, 0.3),
+        RigidBody::Fixed,
+        Name::new("PantryBakingStagingCounter"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), shelf_mat.clone()) {
+        counter_cmd.insert((
+            Mesh3d(m.add(Cuboid::new(3.0, 0.90, 0.60))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // =========================================================================
+    // 4. Interactive Physics Door (RevoluteJoint & Spring Momentum)
+    // =========================================================================
+    // Fixed Hinge Post at North edge of doorway (X = -13.0, Z = 4.75, Y = 1.35)
+    let hinge_post = commands
+        .spawn((
+            Transform::from_xyz(-13.0, 1.35, 4.75),
+            Collider::cuboid(0.08, 1.35, 0.08),
+            RigidBody::Fixed,
+            PantryDoorHingePost,
+            Name::new("PantryDoorHingePost"),
+        ))
+        .id();
+
+    // Door Leaf entity: dynamic rigidbody centered at Z = 5.50 (between 4.75 and 6.25)
+    // Width = 1.48m, height = 2.55m, thickness = 0.10m
+    let joint = RevoluteJointBuilder::new(Vec3::Y)
+        .local_anchor1(Vec3::ZERO)
+        .local_anchor2(Vec3::new(0.0, 0.0, -0.75))
+        .limits([-1.65, 0.05]);
+
+    let mut door_cmd = commands.spawn((
+        Transform::from_xyz(-13.0, 1.35, 5.50),
+        Collider::cuboid(0.05, 1.275, 0.74),
+        RigidBody::Dynamic,
+        Velocity::zero(),
+        ExternalImpulse::default(),
+        Damping {
+            linear_damping: 2.0,
+            angular_damping: 3.5,
+        },
+        ImpulseJoint::new(hinge_post, joint),
+        PantryDoor::default(),
+        Name::new("PantryPhysicsDoor"),
+    ));
+
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), door_wood_mat.clone()) {
+        door_cmd.insert((
+            Mesh3d(m.add(Cuboid::new(0.10, 2.55, 1.48))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // Add door latch handle
+    let door_entity = door_cmd.id();
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), iron_mat.clone()) {
+        let handle_mesh = m.add(Cuboid::new(0.18, 0.22, 0.06));
+        commands.entity(door_entity).with_children(|parent| {
+            parent.spawn((
+                Mesh3d(handle_mesh),
+                MeshMaterial3d(mat),
+                Transform::from_xyz(0.0, 0.0, 0.55),
+                Name::new("PantryDoorHandle"),
+            ));
+        });
+    }
+
+    // =========================================================================
+    // 5. Initial Moose Treat Jars & Restock Tracker Resource
+    // =========================================================================
+    let tracker = PantryRestockTracker::default();
+    for slot_pos in &tracker.slots {
+        spawn_moose_treat_jar(commands, meshes, materials, workshop_mats, *slot_pos);
+    }
+    commands.insert_resource(tracker);
+}
+
+/// Applies restorative spring torque to the pantry door toward target angle (0.0 = closed),
+/// producing realistic physical inertia and smooth swinging momentum when pushed or released.
+pub fn pantry_door_spring_system(
+    time: Option<Res<Time>>,
+    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
+    mut q_door: Query<(&Transform, &Velocity, &mut ExternalImpulse, &PantryDoor)>,
+) {
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+    let dt = time.as_ref().map(|t| t.delta_secs()).unwrap_or(0.016);
+    if dt <= 0.0 {
+        return;
+    }
+
+    for (tf, vel, mut ext_impulse, door) in &mut q_door {
+        let (_, yaw, _) = tf.rotation.to_euler(EulerRot::XYZ);
+        let delta_angle = door.target_angle - yaw;
+        let angular_vel_y = vel.angular.y;
+        let torque_y = door.spring_stiffness * delta_angle - door.spring_damping * angular_vel_y;
+        ext_impulse.torque_impulse.y += torque_y * dt;
+    }
+}
+
+/// Tracks the door closure cycle (`Closed -> Opened` state transition).
+/// Whenever the player completely closes the door and reopens it, any depleted
+/// shelf slots on the pantry shelves automatically restock with fresh Moose Treat jars.
+pub fn pantry_door_restock_cycle_system(
+    mut commands: Commands,
+    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
+    tracker: Option<ResMut<PantryRestockTracker>>,
+    mut q_door: Query<(&Transform, &mut PantryDoor)>,
+    q_jars: Query<&Transform, (Or<(With<MooseTreatJar>, With<MooseSnackJar>)>, Without<PantryDoor>)>,
+    mut restock_events: Option<MessageWriter<PantryRestockEvent>>,
+    mut meshes: Option<ResMut<Assets<Mesh>>>,
+    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
+    workshop_mats: Option<Res<WorkshopMaterials>>,
+) {
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+    let Some(mut tracker) = tracker else {
+        return;
+    };
+    let Ok((door_tf, mut door)) = q_door.single_mut() else {
+        return;
+    };
+
+    let (_, yaw, _) = door_tf.rotation.to_euler(EulerRot::XYZ);
+    door.current_angle = yaw;
+
+    let abs_angle = yaw.abs();
+
+    if abs_angle <= door.closed_threshold {
+        door.was_closed = true;
+    } else if door.was_closed && abs_angle >= door.open_threshold {
+        // Transition: Closed -> Opened!
+        door.was_closed = false;
+        tracker.restock_cycle_count += 1;
+
+        // Check each designated shelf slot
+        let mut restocked_this_cycle = 0;
+        let jar_positions: Vec<Vec3> = q_jars.iter().map(|tf| tf.translation).collect();
+
+        for slot_pos in tracker.slots.clone() {
+            let is_occupied = jar_positions
+                .iter()
+                .any(|pos| pos.distance(slot_pos) < tracker.slot_radius);
+
+            if !is_occupied {
+                // Depleted slot: spawn fresh Moose Treat jar!
+                spawn_moose_treat_jar(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    workshop_mats.as_deref(),
+                    slot_pos,
+                );
+                restocked_this_cycle += 1;
+                tracker.total_restocked_jars += 1;
+            }
+        }
+
+        if restocked_this_cycle > 0 {
+            if let Some(ref mut writer) = restock_events {
+                writer.write(PantryRestockEvent {
+                    slots_restocked: restocked_this_cycle,
+                    total_restocked_all_time: tracker.total_restocked_jars,
+                    cycle_index: tracker.restock_cycle_count,
+                });
+            }
+        }
+    }
+}
+
+/// Allows the player to push or interactively toggle the pantry door open and closed
+/// via keyboard input (<kbd>E</kbd>/<kbd>Q</kbd>/<kbd>F</kbd>/<kbd>Left Click</kbd>) or messages.
+pub fn pantry_door_interaction_system(
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    mouse: Option<Res<ButtonInput<MouseButton>>>,
+    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
+    q_player: Query<&Transform, With<crate::elf_game::player::controller::ElfPlayer>>,
+    mut q_door: Query<(&Transform, &mut ExternalImpulse, &mut PantryDoor)>,
+    mut interact_messages: Option<MessageReader<PantryDoorInteractMessage>>,
+) {
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+
+    let Ok((door_tf, mut ext_impulse, mut _door)) = q_door.single_mut() else {
+        return;
+    };
+
+    let mut trigger = false;
+    let mut open_command = None;
+
+    if let Some(ref mut reader) = interact_messages {
+        for msg in reader.read() {
+            trigger = true;
+            open_command = Some(msg.open);
+        }
+    }
+
+    if let Some(open) = open_command {
+        if open {
+            ext_impulse.torque_impulse.y = -7.0;
+        } else {
+            ext_impulse.torque_impulse.y = 7.0;
+        }
+        return;
+    }
+
+    if !trigger {
+        let interact_pressed = keys
+            .as_ref()
+            .map(|k| {
+                k.just_pressed(KeyCode::KeyE)
+                    || k.just_pressed(KeyCode::KeyQ)
+                    || k.just_pressed(KeyCode::KeyF)
+            })
+            .unwrap_or(false)
+            || mouse
+                .as_ref()
+                .map(|m| m.just_pressed(MouseButton::Left))
+                .unwrap_or(false);
+
+        if interact_pressed {
+            if let Ok(player_tf) = q_player.single() {
+                let dist = player_tf.translation.distance(door_tf.translation);
+                if dist <= 2.8 {
+                    let (_, yaw, _) = door_tf.rotation.to_euler(EulerRot::XYZ);
+                    if yaw.abs() < 0.25 {
+                        // Swing open into pantry
+                        ext_impulse.torque_impulse.y = -8.0;
+                    } else {
+                        // Swing closed
+                        ext_impulse.torque_impulse.y = 8.0;
+                    }
+                }
+            }
+        }
+    }
+}

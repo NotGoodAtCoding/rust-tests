@@ -14,14 +14,23 @@ use crate::elf_game::{
     wrapping::Present,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MenuSubmenu {
+    #[default]
+    Main,
+    Debug,
+}
+
 #[derive(Resource)]
 pub struct MenuState {
     pub is_open: bool,
+    pub active_submenu: MenuSubmenu,
     pub show_fps: bool,
     pub show_controls_hud: bool,
     pub show_physics_stats: bool,
     pub show_crosshair: bool,
     pub show_wireframes: bool,
+    pub noclip: bool,
     pub mouse_sensitivity: f32,
 }
 
@@ -29,11 +38,13 @@ impl Default for MenuState {
     fn default() -> Self {
         Self {
             is_open: false,
+            active_submenu: MenuSubmenu::Main,
             show_fps: true,
             show_controls_hud: true,
             show_physics_stats: true,
             show_crosshair: true,
-            show_wireframes: true,
+            show_wireframes: false,
+            noclip: false,
             mouse_sensitivity: 1.0,
         }
     }
@@ -77,6 +88,24 @@ pub struct SensitivityLabel;
 pub struct MenuRoot;
 
 #[derive(Debug, Component)]
+pub struct MainMenuPanel;
+
+#[derive(Debug, Component)]
+pub struct DebugSubmenuPanel;
+
+#[derive(Debug, Component)]
+pub struct MainMenuTabButton;
+
+#[derive(Debug, Component)]
+pub struct DebugMenuTabButton;
+
+#[derive(Debug, Component)]
+pub struct MenuTitleText;
+
+#[derive(Debug, Component)]
+pub struct MenuSubtitleText;
+
+#[derive(Debug, Component)]
 pub struct FpsHud;
 
 #[derive(Debug, Component)]
@@ -99,11 +128,13 @@ pub struct InteractionPromptText;
 
 #[derive(Debug, Component, Clone, Copy, PartialEq, Eq)]
 pub enum MenuButtonAction {
+    SwitchSubmenu(MenuSubmenu),
     ToggleFps,
     ToggleControlsHud,
     TogglePhysicsStats,
     ToggleCrosshair,
     ToggleWireframes,
+    ToggleNoclip,
     CycleBhopWindow,
     DecreaseSensitivity,
     IncreaseSensitivity,
@@ -183,7 +214,7 @@ pub fn spawn_ui(mut commands: Commands) {
                 font.clone()
             ),
             (
-                Text::new("[TAB]: Toggle Options & Debug Menu (Free Cursor)"),
+                Text::new("[TAB]: Toggle Options & Debug Menu (Free Cursor) | [V]: Toggle Noclip"),
                 TextFont {
                     font_size: FontSize::Px(14.0),
                     ..default()
@@ -302,10 +333,10 @@ pub fn spawn_ui(mut commands: Commands) {
             position_type: PositionType::Absolute,
             left: Val::Percent(50.0),
             top: Val::Percent(50.0),
-            width: px(420),
+            width: px(440),
             margin: UiRect {
-                left: px(-210),
-                top: px(-280),
+                left: px(-220),
+                top: px(-260),
                 right: px(0),
                 bottom: px(0),
             },
@@ -322,6 +353,7 @@ pub fn spawn_ui(mut commands: Commands) {
         Visibility::Hidden,
         children![
             (
+                MenuTitleText,
                 Text::new("PAUSED - OPTIONS & MENU"),
                 TextFont {
                     font_size: FontSize::Px(20.0),
@@ -330,6 +362,7 @@ pub fn spawn_ui(mut commands: Commands) {
                 TextColor(Color::from(tailwind::AMBER_400)),
             ),
             (
+                MenuSubtitleText,
                 Text::new("Press [ESC], [P], [TAB], or click Resume to return to workshop"),
                 TextFont {
                     font_size: FontSize::Px(12.0),
@@ -346,165 +379,279 @@ pub fn spawn_ui(mut commands: Commands) {
                 },
                 BackgroundColor(Color::from(tailwind::SLATE_700)),
             ),
-            // Mouse Sensitivity Slider Card
+            // Top Submenu Navigation Tab Bar
             (
+                Node {
+                    width: Val::Percent(100.0),
+                    height: px(34),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    column_gap: px(8),
+                    margin: UiRect::vertical(px(2)),
+                    ..default()
+                },
+                children![
+                    (
+                        Button,
+                        Hovered::default(),
+                        MenuButtonAction::SwitchSubmenu(MenuSubmenu::Main),
+                        MainMenuTabButton,
+                        Node {
+                            flex_grow: 1.0,
+                            height: px(32),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(px(1)),
+                            border_radius: BorderRadius::all(px(6)),
+                            ..default()
+                        },
+                        BorderColor::all(Color::from(tailwind::CYAN_400)),
+                        BackgroundColor(Color::from(tailwind::CYAN_700)),
+                        children![(
+                            Text::new("OPTIONS"),
+                            TextFont {
+                                font_size: FontSize::Px(13.0),
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        )],
+                    ),
+                    (
+                        Button,
+                        Hovered::default(),
+                        MenuButtonAction::SwitchSubmenu(MenuSubmenu::Debug),
+                        DebugMenuTabButton,
+                        Node {
+                            flex_grow: 1.0,
+                            height: px(32),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(px(1)),
+                            border_radius: BorderRadius::all(px(6)),
+                            ..default()
+                        },
+                        BorderColor::all(Color::from(tailwind::SLATE_600)),
+                        BackgroundColor(Color::from(tailwind::SLATE_800)),
+                        children![(
+                            Text::new("DEBUG"),
+                            TextFont {
+                                font_size: FontSize::Px(13.0),
+                                ..default()
+                            },
+                            TextColor(Color::from(tailwind::SLATE_300)),
+                        )],
+                    ),
+                ],
+            ),
+            // 1. MAIN OPTIONS PANEL
+            (
+                MainMenuPanel,
                 Node {
                     width: Val::Percent(100.0),
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: px(6),
-                    padding: UiRect::all(px(8)),
-                    border: UiRect::all(px(1)),
-                    border_radius: BorderRadius::all(px(8)),
+                    row_gap: px(8),
+                    display: Display::Flex,
                     ..default()
                 },
-                BorderColor::all(Color::from(tailwind::SLATE_700)),
-                BackgroundColor(Color::srgba(0.04, 0.06, 0.10, 0.7)),
                 children![
-                    (
-                        SensitivityLabel,
-                        Text::new(format!("Mouse Sensitivity: {:.2}x", DEFAULT_SENSITIVITY)),
-                        TextFont {
-                            font_size: FontSize::Px(13.0),
-                            ..default()
-                        },
-                        TextColor(Color::from(tailwind::CYAN_300)),
-                    ),
+                    // Mouse Sensitivity Slider Card
                     (
                         Node {
-                            flex_direction: FlexDirection::Row,
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
-                            column_gap: px(8),
+                            row_gap: px(6),
+                            padding: UiRect::all(px(8)),
+                            border: UiRect::all(px(1)),
+                            border_radius: BorderRadius::all(px(8)),
                             ..default()
                         },
+                        BorderColor::all(Color::from(tailwind::SLATE_700)),
+                        BackgroundColor(Color::srgba(0.04, 0.06, 0.10, 0.7)),
                         children![
                             (
-                                Button,
-                                Hovered::default(),
-                                MenuButtonAction::DecreaseSensitivity,
-                                Node {
-                                    width: px(28),
-                                    height: px(26),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border: UiRect::all(px(1)),
-                                    border_radius: BorderRadius::all(px(4)),
+                                SensitivityLabel,
+                                Text::new(format!("Mouse Sensitivity: {:.2}x", DEFAULT_SENSITIVITY)),
+                                TextFont {
+                                    font_size: FontSize::Px(13.0),
                                     ..default()
                                 },
-                                BorderColor::all(Color::from(tailwind::SLATE_600)),
-                                BackgroundColor(Color::from(tailwind::SLATE_700)),
-                                children![(
-                                    Text::new("-"),
-                                    TextFont {
-                                        font_size: FontSize::Px(15.0),
-                                        ..default()
-                                    },
-                                    TextColor(Color::WHITE),
-                                )],
+                                TextColor(Color::from(tailwind::CYAN_300)),
                             ),
                             (
-                                SensitivitySliderTrack,
                                 Node {
-                                    width: px(SLIDER_TRACK_WIDTH),
-                                    height: px(10),
-                                    position_type: PositionType::Relative,
+                                    flex_direction: FlexDirection::Row,
                                     align_items: AlignItems::Center,
-                                    border_radius: BorderRadius::all(px(5)),
-                                    border: UiRect::all(px(1)),
+                                    column_gap: px(8),
                                     ..default()
                                 },
-                                BorderColor::all(Color::from(tailwind::SLATE_600)),
-                                BackgroundColor(Color::from(tailwind::SLATE_800)),
                                 children![
                                     (
-                                        SensitivitySliderFill,
+                                        Button,
+                                        Hovered::default(),
+                                        MenuButtonAction::DecreaseSensitivity,
                                         Node {
-                                            width: px(fill_bar_width(DEFAULT_SENSITIVITY)),
-                                            height: px(10),
-                                            position_type: PositionType::Absolute,
-                                            left: px(0),
-                                            border_radius: BorderRadius::all(px(5)),
+                                            width: px(28),
+                                            height: px(26),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: UiRect::all(px(1)),
+                                            border_radius: BorderRadius::all(px(4)),
                                             ..default()
                                         },
-                                        BackgroundColor(Color::from(tailwind::CYAN_600)),
+                                        BorderColor::all(Color::from(tailwind::SLATE_600)),
+                                        BackgroundColor(Color::from(tailwind::SLATE_700)),
+                                        children![(
+                                            Text::new("-"),
+                                            TextFont {
+                                                font_size: FontSize::Px(15.0),
+                                                ..default()
+                                            },
+                                            TextColor(Color::WHITE),
+                                        )],
                                     ),
                                     (
-                                        SensitivitySliderThumb,
+                                        SensitivitySliderTrack,
                                         Node {
-                                            width: px(SLIDER_THUMB_SIZE),
-                                            height: px(SLIDER_THUMB_SIZE),
-                                            position_type: PositionType::Absolute,
-                                            left: px(thumb_left_offset(DEFAULT_SENSITIVITY)),
-                                            top: px(-4),
-                                            border_radius: BorderRadius::all(px(SLIDER_THUMB_SIZE / 2.0)),
-                                            border: UiRect::all(px(2)),
+                                            width: px(SLIDER_TRACK_WIDTH),
+                                            height: px(10),
+                                            position_type: PositionType::Relative,
+                                            align_items: AlignItems::Center,
+                                            border_radius: BorderRadius::all(px(5)),
+                                            border: UiRect::all(px(1)),
                                             ..default()
                                         },
-                                        BorderColor::all(Color::WHITE),
-                                        BackgroundColor(Color::from(tailwind::CYAN_400)),
+                                        BorderColor::all(Color::from(tailwind::SLATE_600)),
+                                        BackgroundColor(Color::from(tailwind::SLATE_800)),
+                                        children![
+                                            (
+                                                SensitivitySliderFill,
+                                                Node {
+                                                    width: px(fill_bar_width(DEFAULT_SENSITIVITY)),
+                                                    height: px(10),
+                                                    position_type: PositionType::Absolute,
+                                                    left: px(0),
+                                                    border_radius: BorderRadius::all(px(5)),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::from(tailwind::CYAN_600)),
+                                            ),
+                                            (
+                                                SensitivitySliderThumb,
+                                                Node {
+                                                    width: px(SLIDER_THUMB_SIZE),
+                                                    height: px(SLIDER_THUMB_SIZE),
+                                                    position_type: PositionType::Absolute,
+                                                    left: px(thumb_left_offset(DEFAULT_SENSITIVITY)),
+                                                    top: px(-4),
+                                                    border_radius: BorderRadius::all(px(SLIDER_THUMB_SIZE / 2.0)),
+                                                    border: UiRect::all(px(2)),
+                                                    ..default()
+                                                },
+                                                BorderColor::all(Color::WHITE),
+                                                BackgroundColor(Color::from(tailwind::CYAN_400)),
+                                            ),
+                                        ],
+                                    ),
+                                    (
+                                        Button,
+                                        Hovered::default(),
+                                        MenuButtonAction::IncreaseSensitivity,
+                                        Node {
+                                            width: px(28),
+                                            height: px(26),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: UiRect::all(px(1)),
+                                            border_radius: BorderRadius::all(px(4)),
+                                            ..default()
+                                        },
+                                        BorderColor::all(Color::from(tailwind::SLATE_600)),
+                                        BackgroundColor(Color::from(tailwind::SLATE_700)),
+                                        children![(
+                                            Text::new("+"),
+                                            TextFont {
+                                                font_size: FontSize::Px(15.0),
+                                                ..default()
+                                            },
+                                            TextColor(Color::WHITE),
+                                        )],
+                                    ),
+                                    (
+                                        Button,
+                                        Hovered::default(),
+                                        MenuButtonAction::ResetSensitivity,
+                                        Node {
+                                            width: px(46),
+                                            height: px(26),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: UiRect::all(px(1)),
+                                            border_radius: BorderRadius::all(px(4)),
+                                            ..default()
+                                        },
+                                        BorderColor::all(Color::from(tailwind::SLATE_600)),
+                                        BackgroundColor(Color::from(tailwind::SLATE_700)),
+                                        children![(
+                                            Text::new("Reset"),
+                                            TextFont {
+                                                font_size: FontSize::Px(11.0),
+                                                ..default()
+                                            },
+                                            TextColor(Color::from(tailwind::SLATE_300)),
+                                        )],
                                     ),
                                 ],
                             ),
-                            (
-                                Button,
-                                Hovered::default(),
-                                MenuButtonAction::IncreaseSensitivity,
-                                Node {
-                                    width: px(28),
-                                    height: px(26),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border: UiRect::all(px(1)),
-                                    border_radius: BorderRadius::all(px(4)),
-                                    ..default()
-                                },
-                                BorderColor::all(Color::from(tailwind::SLATE_600)),
-                                BackgroundColor(Color::from(tailwind::SLATE_700)),
-                                children![(
-                                    Text::new("+"),
-                                    TextFont {
-                                        font_size: FontSize::Px(15.0),
-                                        ..default()
-                                    },
-                                    TextColor(Color::WHITE),
-                                )],
-                            ),
-                            (
-                                Button,
-                                Hovered::default(),
-                                MenuButtonAction::ResetSensitivity,
-                                Node {
-                                    width: px(46),
-                                    height: px(26),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border: UiRect::all(px(1)),
-                                    border_radius: BorderRadius::all(px(4)),
-                                    ..default()
-                                },
-                                BorderColor::all(Color::from(tailwind::SLATE_600)),
-                                BackgroundColor(Color::from(tailwind::SLATE_700)),
-                                children![(
-                                    Text::new("Reset"),
-                                    TextFont {
-                                        font_size: FontSize::Px(11.0),
-                                        ..default()
-                                    },
-                                    TextColor(Color::from(tailwind::SLATE_300)),
-                                )],
-                            ),
                         ],
                     ),
+                    menu_button("FPS Meter: ON", MenuButtonAction::ToggleFps),
+                    menu_button("Controls Guide: ON", MenuButtonAction::ToggleControlsHud),
+                    menu_button("Physics Stats: ON", MenuButtonAction::TogglePhysicsStats),
+                    menu_button("Crosshair & Prompts: ON", MenuButtonAction::ToggleCrosshair),
+                    menu_button("DEBUG Submenu (BHOP, Noclip, Wireframe) ->", MenuButtonAction::SwitchSubmenu(MenuSubmenu::Debug)),
+                    menu_button("Resume Game", MenuButtonAction::ResumeGame),
                 ],
             ),
-            // Debug & Options Buttons
-            menu_button("BHOP Timing: 1/60s (Strict)", MenuButtonAction::CycleBhopWindow),
-            menu_button("FPS Meter: ON", MenuButtonAction::ToggleFps),
-            menu_button("Controls Guide: ON", MenuButtonAction::ToggleControlsHud),
-            menu_button("Physics Stats: ON", MenuButtonAction::TogglePhysicsStats),
-            menu_button("Crosshair & Prompts: ON", MenuButtonAction::ToggleCrosshair),
-            menu_button("Physics Wireframes: ON", MenuButtonAction::ToggleWireframes),
-            menu_button("Resume Game", MenuButtonAction::ResumeGame),
+            // 2. DEBUG SUBMENU PANEL
+            (
+                DebugSubmenuPanel,
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: px(8),
+                    display: Display::None,
+                    ..default()
+                },
+                children![
+                    (
+                        Node {
+                            width: Val::Percent(100.0),
+                            padding: UiRect::all(px(6)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border_radius: BorderRadius::all(px(6)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.8, 0.4, 0.0, 0.2)),
+                        children![(
+                            Text::new("DEBUG SUBMENU: Physics & Movement"),
+                            TextFont {
+                                font_size: FontSize::Px(13.0),
+                                ..default()
+                            },
+                            TextColor(Color::from(tailwind::AMBER_300)),
+                        )],
+                    ),
+                    menu_button("BHOP Timing: 1/60s (Strict)", MenuButtonAction::CycleBhopWindow),
+                    menu_button("Noclip Mode: OFF", MenuButtonAction::ToggleNoclip),
+                    menu_button("Wireframe Mode: OFF", MenuButtonAction::ToggleWireframes),
+                    menu_button("<- Back to Options", MenuButtonAction::SwitchSubmenu(MenuSubmenu::Main)),
+                    menu_button("Resume Game", MenuButtonAction::ResumeGame),
+                ],
+            ),
         ],
     ));
 }
@@ -591,10 +738,19 @@ pub fn on_button_activate(
 ) {
     if let Ok(action) = action_query.get(event.entity) {
         match action {
+            MenuButtonAction::SwitchSubmenu(sub) => {
+                menu_state.active_submenu = *sub;
+            }
             MenuButtonAction::CycleBhopWindow => {
                 if let Some(ref mut config) = bhop_config {
                     config.window = config.window.next();
                 }
+            }
+            MenuButtonAction::ToggleNoclip => {
+                menu_state.noclip = !menu_state.noclip;
+            }
+            MenuButtonAction::ToggleWireframes => {
+                menu_state.show_wireframes = !menu_state.show_wireframes;
             }
             MenuButtonAction::ToggleFps => {
                 menu_state.show_fps = !menu_state.show_fps;
@@ -607,9 +763,6 @@ pub fn on_button_activate(
             }
             MenuButtonAction::ToggleCrosshair => {
                 menu_state.show_crosshair = !menu_state.show_crosshair;
-            }
-            MenuButtonAction::ToggleWireframes => {
-                menu_state.show_wireframes = !menu_state.show_wireframes;
             }
             MenuButtonAction::DecreaseSensitivity => {
                 menu_state.mouse_sensitivity = (menu_state.mouse_sensitivity - 0.1).max(MIN_SENSITIVITY);
@@ -684,6 +837,7 @@ pub fn sync_sensitivity_slider(
 }
 
 pub fn update_button_visuals(
+    menu_state: Res<MenuState>,
     mut buttons: Query<
         (
             &Hovered,
@@ -696,13 +850,38 @@ pub fn update_button_visuals(
     >,
 ) {
     for (hovered, pressed, mut bg, mut border, action) in &mut buttons {
+        // Tab buttons styling is kept in sync with active submenu
+        if let MenuButtonAction::SwitchSubmenu(sub) = *action {
+            let is_active = sub == menu_state.active_submenu;
+            if is_active {
+                if sub == MenuSubmenu::Main {
+                    *bg = BackgroundColor(Color::from(tailwind::CYAN_700));
+                    border.set_all(Color::from(tailwind::CYAN_400));
+                } else {
+                    *bg = BackgroundColor(Color::from(tailwind::AMBER_700));
+                    border.set_all(Color::from(tailwind::AMBER_400));
+                }
+            } else if hovered.get() {
+                *bg = BackgroundColor(Color::from(tailwind::SLATE_700));
+                border.set_all(Color::from(tailwind::SLATE_400));
+            } else {
+                *bg = BackgroundColor(Color::from(tailwind::SLATE_800));
+                border.set_all(Color::from(tailwind::SLATE_600));
+            }
+            continue;
+        }
+
         let is_resume = *action == MenuButtonAction::ResumeGame;
+        let is_debug_entry = *action == MenuButtonAction::SwitchSubmenu(MenuSubmenu::Debug);
+
         if pressed {
             *bg = BackgroundColor(Color::from(tailwind::BLUE_900));
             border.set_all(Color::from(tailwind::BLUE_400));
         } else if hovered.get() {
             *bg = if is_resume {
                 BackgroundColor(Color::from(tailwind::BLUE_600))
+            } else if is_debug_entry {
+                BackgroundColor(Color::from(tailwind::AMBER_600))
             } else {
                 BackgroundColor(Color::from(tailwind::SLATE_600))
             };
@@ -710,6 +889,8 @@ pub fn update_button_visuals(
         } else {
             *bg = if is_resume {
                 BackgroundColor(Color::from(tailwind::BLUE_700))
+            } else if is_debug_entry {
+                BackgroundColor(Color::from(tailwind::AMBER_800))
             } else {
                 BackgroundColor(Color::from(tailwind::SLATE_700))
             };
@@ -738,6 +919,12 @@ pub fn update_menu_button_labels(
                             text.0 = format!("BHOP Timing: {}", config.window.label());
                         }
                     }
+                    MenuButtonAction::ToggleNoclip => {
+                        text.0 = format!("Noclip Mode: {}", if menu_state.noclip { "ON (Flying)" } else { "OFF" });
+                    }
+                    MenuButtonAction::ToggleWireframes => {
+                        text.0 = format!("Wireframe Mode: {}", if menu_state.show_wireframes { "ON" } else { "OFF" });
+                    }
                     MenuButtonAction::ToggleFps => {
                         text.0 = format!("FPS Meter: {}", if menu_state.show_fps { "ON" } else { "OFF" });
                     }
@@ -750,9 +937,6 @@ pub fn update_menu_button_labels(
                     MenuButtonAction::ToggleCrosshair => {
                         text.0 = format!("Crosshair & Prompts: {}", if menu_state.show_crosshair { "ON" } else { "OFF" });
                     }
-                    MenuButtonAction::ToggleWireframes => {
-                        text.0 = format!("Physics Wireframes: {}", if menu_state.show_wireframes { "ON" } else { "OFF" });
-                    }
                     _ => {}
                 }
             }
@@ -760,8 +944,68 @@ pub fn update_menu_button_labels(
     }
 }
 
+pub fn sync_submenu_visibility(
+    menu_state: Res<MenuState>,
+    mut title_query: Query<&mut Text, (With<MenuTitleText>, Without<MenuSubtitleText>)>,
+    mut subtitle_query: Query<&mut Text, (With<MenuSubtitleText>, Without<MenuTitleText>)>,
+    mut main_panel: Query<&mut Node, (With<MainMenuPanel>, Without<DebugSubmenuPanel>)>,
+    mut debug_panel: Query<&mut Node, (With<DebugSubmenuPanel>, Without<MainMenuPanel>)>,
+    mut main_tab: Query<(&mut BackgroundColor, &mut BorderColor), (With<MainMenuTabButton>, Without<DebugMenuTabButton>)>,
+    mut debug_tab: Query<(&mut BackgroundColor, &mut BorderColor), (With<DebugMenuTabButton>, Without<MainMenuTabButton>)>,
+) {
+    if !menu_state.is_changed() {
+        return;
+    }
+
+    let is_main = menu_state.active_submenu == MenuSubmenu::Main;
+
+    for mut title in title_query.iter_mut() {
+        title.0 = if is_main {
+            "PAUSED - OPTIONS & MENU".to_string()
+        } else {
+            "PAUSED - DEBUG MENU".to_string()
+        };
+    }
+
+    for mut sub in subtitle_query.iter_mut() {
+        sub.0 = if is_main {
+            "Press [ESC], [P], [TAB], or click Resume to return to workshop".to_string()
+        } else {
+            "Physics, Locomotion & Collision Debugging Tools".to_string()
+        };
+    }
+
+    for mut node in main_panel.iter_mut() {
+        node.display = if is_main { Display::Flex } else { Display::None };
+    }
+    for mut node in debug_panel.iter_mut() {
+        node.display = if !is_main { Display::Flex } else { Display::None };
+    }
+
+    for (mut bg, mut border) in main_tab.iter_mut() {
+        if is_main {
+            *bg = BackgroundColor(Color::from(tailwind::CYAN_700));
+            border.set_all(Color::from(tailwind::CYAN_400));
+        } else {
+            *bg = BackgroundColor(Color::from(tailwind::SLATE_800));
+            border.set_all(Color::from(tailwind::SLATE_600));
+        }
+    }
+
+    for (mut bg, mut border) in debug_tab.iter_mut() {
+        if !is_main {
+            *bg = BackgroundColor(Color::from(tailwind::AMBER_700));
+            border.set_all(Color::from(tailwind::AMBER_400));
+        } else {
+            *bg = BackgroundColor(Color::from(tailwind::SLATE_800));
+            border.set_all(Color::from(tailwind::SLATE_600));
+        }
+    }
+}
+
 pub fn sync_hud_visibility(
     menu_state: Res<MenuState>,
+    wireframe_config: Option<ResMut<bevy::pbr::wireframe::WireframeConfig>>,
     debug_render_context: Option<ResMut<DebugRenderContext>>,
     mut menu_query: Query<&mut Visibility, (With<MenuRoot>, Without<FpsHud>, Without<ControlsHud>, Without<PhysicsHud>, Without<CrosshairHud>)>,
     mut fps_query: Query<&mut Visibility, (With<FpsHud>, Without<MenuRoot>, Without<ControlsHud>, Without<PhysicsHud>, Without<CrosshairHud>)>,
@@ -771,6 +1015,10 @@ pub fn sync_hud_visibility(
 ) {
     if !menu_state.is_changed() {
         return;
+    }
+
+    if let Some(mut wireframe) = wireframe_config {
+        wireframe.global = menu_state.show_wireframes;
     }
 
     if let Some(mut debug_render) = debug_render_context {
@@ -849,6 +1097,7 @@ impl Plugin for ElfUiPlugin {
                 (
                     toggle_menu,
                     sync_pause_state_system,
+                    sync_submenu_visibility,
                     handle_mouse_grab,
                     update_button_visuals,
                     update_menu_button_labels,

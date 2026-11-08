@@ -227,11 +227,15 @@ impl Plugin for PlayerPlugin {
             .add_systems(
                 Update,
                 (
-                    controller::elf_look_system,
-                    controller::elf_player_controller_system,
-                    controller::viewmodel_bob,
-                    controller::floaty_hands_system,
-                    hands::dual_hand_interaction_system,
+                    controller::toggle_noclip_system,
+                    controller::sync_noclip_collider_system,
+                    (
+                        controller::elf_look_system,
+                        controller::elf_player_controller_system,
+                        controller::viewmodel_bob,
+                        controller::floaty_hands_system,
+                        hands::dual_hand_interaction_system,
+                    ).chain(),
                 ),
             );
     }

@@ -5948,11 +5948,12 @@ fn test_pantry_revolute_joint_door_and_spring_limits() {
     // Spawn dynamic door leaf with RevoluteJointBuilder
     let joint = RevoluteJointBuilder::new(Vec3::Y)
         .local_anchor1(Vec3::ZERO)
-        .local_anchor2(Vec3::new(0.0, 0.0, -0.75))
-        .limits([-1.65, 0.05]);
+        .local_anchor2(Vec3::new(0.0, 0.0, -0.73))
+        .limits([0.0, 1.65])
+        .contacts_enabled(false);
 
     let door_entity = app.world_mut().spawn((
-        Transform::from_xyz(-13.0, 1.35, 5.50),
+        Transform::from_xyz(-13.0, 1.35, 5.48),
         RigidBody::Dynamic,
         Velocity::zero(),
         ExternalImpulse::default(),
@@ -6036,10 +6037,10 @@ fn test_pantry_infinite_restock_cycle_closed_to_opened() {
         panic!("PantryDoor must be spawned");
     };
 
-    // 3. Step with door still OPEN (yaw = -0.6 rad) -> no restock yet!
+    // 3. Step with door still OPEN (yaw = 0.6 rad into workshop room) -> no restock yet!
     {
         let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
-        tf.rotation = Quat::from_rotation_y(-0.6);
+        tf.rotation = Quat::from_rotation_y(0.6);
         let mut door = app.world_mut().get_mut::<PantryDoor>(door_entity).unwrap();
         door.was_closed = false;
     }
@@ -6062,10 +6063,10 @@ fn test_pantry_infinite_restock_cycle_closed_to_opened() {
     let door = app.world().get::<PantryDoor>(door_entity).unwrap();
     assert!(door.was_closed, "Door must record was_closed = true when closed");
 
-    // 5. Player reopens the door (yaw = -0.55 rad, >= open_threshold) -> Closed -> Opened transition!
+    // 5. Player reopens the door into the room (yaw = 0.55 rad, >= open_threshold) -> Closed -> Opened transition!
     {
         let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
-        tf.rotation = Quat::from_rotation_y(-0.55);
+        tf.rotation = Quat::from_rotation_y(0.55);
     }
     app.update();
 
@@ -6096,28 +6097,132 @@ fn test_pantry_door_player_interaction() {
     app.add_message::<PantryDoorInteractMessage>();
 
     let door_entity = app.world_mut().spawn((
-        Transform::from_xyz(-13.0, 1.35, 5.50),
+        Transform::from_xyz(-13.0, 1.35, 5.48),
         ExternalImpulse::default(),
         PantryDoor::default(),
     )).id();
 
     app.add_systems(Update, pantry_door_interaction_system);
 
-    // 1. Send Open command message
+    // 1. Send Open command message (must swing into the workshop room with positive torque)
     app.world_mut().write_message(PantryDoorInteractMessage { open: true });
 
     app.update();
 
     let ext = app.world().get::<ExternalImpulse>(door_entity).unwrap();
-    assert!(ext.torque_impulse.y < 0.0, "Open message must impart negative Y torque to swing inward");
+    assert!(ext.torque_impulse.y > 0.0, "Open message must impart positive Y torque to swing into room");
 
-    // 2. Send Close command message
+    // 2. Send Close command message (must swing shut with negative torque)
     app.world_mut().write_message(PantryDoorInteractMessage { open: false });
 
     app.update();
 
     let ext2 = app.world().get::<ExternalImpulse>(door_entity).unwrap();
-    assert!(ext2.torque_impulse.y > 0.0, "Close message must impart positive Y torque to swing shut");
+    assert!(ext2.torque_impulse.y < 0.0, "Close message must impart negative Y torque to swing shut");
+}
+
+#[test]
+fn test_pantry_door_auto_close_and_fixed_hinge_alignment() {
+    use rust_tests::elf_game::workshop::pantry::{
+        PantryDoor, PantryDoorHingePost, pantry_door_spring_system,
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(16));
+    app.insert_resource(time);
+
+    let hinge_post = app.world_mut().spawn((
+        Transform::from_xyz(-13.0, 1.35, 4.75),
+        RigidBody::Fixed,
+        PantryDoorHingePost,
+    )).id();
+
+    let joint = RevoluteJointBuilder::new(Vec3::Y)
+        .local_anchor1(Vec3::ZERO)
+        .local_anchor2(Vec3::new(0.0, 0.0, -0.73))
+        .limits([0.0, 1.65])
+        .contacts_enabled(false);
+
+    let door_entity = app.world_mut().spawn((
+        Transform::from_xyz(-13.0, 1.35, 5.48),
+        RigidBody::Dynamic,
+        Velocity::zero(),
+        ExternalImpulse::default(),
+        ImpulseJoint::new(hinge_post, joint),
+        PantryDoor {
+            close_speed: 1.0,
+            close_snap_threshold: 0.25,
+            ..default()
+        },
+    )).id();
+
+    app.add_systems(Update, pantry_door_spring_system);
+
+    // 1. Position door at yaw = 0.20 rad (< 1/4 rad = 0.25 rad)
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+        tf.rotation = Quat::from_rotation_y(0.20);
+    }
+
+    // Step several frames to verify auto-close behavior
+    for _ in 0..25 {
+        app.update();
+    }
+
+    // 2. Verify door has slowly closed itself and snapped flush with the wall at 0.0 rad
+    let (tf, door, vel) = {
+        let world = app.world();
+        (
+            *world.get::<Transform>(door_entity).unwrap(),
+            world.get::<PantryDoor>(door_entity).unwrap().clone(),
+            *world.get::<Velocity>(door_entity).unwrap(),
+        )
+    };
+
+    assert_eq!(door.current_angle, 0.0, "Door must auto-close to 0.0 rad when within 1/4 rad threshold");
+    assert!((tf.translation.x - (-13.0)).abs() < 1e-4, "Door X must rest flush with wall at X = -13.0");
+    assert!((tf.translation.z - 5.48).abs() < 1e-4, "Door Z must be centered at Z = 5.48");
+    assert_eq!(tf.rotation, Quat::IDENTITY, "Door rotation must be identity when flush with wall");
+    assert_eq!(vel.angular.y, 0.0, "Door angular velocity must come to rest when flush");
+
+    // 3. Open door wide to yaw = 1.0 rad (>= 1/4 rad)
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+        tf.rotation = Quat::from_rotation_y(1.0);
+    }
+    app.update();
+
+    let (tf_open, door_open) = {
+        let world = app.world();
+        (
+            *world.get::<Transform>(door_entity).unwrap(),
+            world.get::<PantryDoor>(door_entity).unwrap().clone(),
+        )
+    };
+
+    // Door should stay open (current_angle >= 0.25 rad)
+    assert!(
+        door_open.current_angle >= 0.25,
+        "Door must NOT auto-close when opened beyond 1/4 rad threshold"
+    );
+
+    // Translation must follow exact circle around fixed hinge pivot (-13.0, 1.35, 4.75)
+    let expected_x = -13.0 + 0.73 * 1.0_f32.sin();
+    let expected_z = 4.75 + 0.73 * 1.0_f32.cos();
+    assert!(
+        (tf_open.translation.x - expected_x).abs() < 1e-3,
+        "Door X must align with fixed hinge pivot, expected {}, got {}",
+        expected_x,
+        tf_open.translation.x
+    );
+    assert!(
+        (tf_open.translation.z - expected_z).abs() < 1e-3,
+        "Door Z must align with fixed hinge pivot, expected {}, got {}",
+        expected_z,
+        tf_open.translation.z
+    );
 }
 
 #[test]

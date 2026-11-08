@@ -180,3 +180,7 @@ This document tracks the short-form task breakdown for each section of [`PLAN.md
   2. After **15 seconds** of unignited gas accumulation, a **Pyro elf** (`ElfMischiefTrait::Pyro`) detects the gas concentration.
   3. The Pyro elf searches for an open flame source (chandelier candle embers, matches, or a lighter) and charges toward the oven.
   4. **Slapstick Catastrophic Explosion**: Ignites a massive physics shockwave that knocks open doors, shatters windows, and propels presents, snack jars, and ragdoll elves flying into the high ceiling rafters!
+
+### 5.2 Items and Interactions
+* **Auto Wrapper**: Wraps any physics object in wrapping paper. The larger the item, the longer it takes. Show a progress bar when MOUSE1 is held on a physics item. Once complete, the item should have a wrapping paper shader or texture. If used on an elf, this immobilizes them for 10 seconds, they become a ragdoll and occasionally bounce around slightly until they break free, at which time the wrapping paper texture is removed.
+* **Tinsel Hand Cannon**: Shoots a strand of tinsel, which can act as a climbable rope and has high friction so that it hangs on to beams and rafters and items. This is equipable by elves if they have the Mischief trait. If an elf equips it, it can fire at the last thing that knocked it down. When an elf fires the Tinsel Hand Cannon, it knocks themselves backward at high speed and ragdolls them. 

@@ -54,18 +54,21 @@ impl Default for PantryRestockTracker {
 }
 
 /// Interactive hinged physics door guarding the Pantry Storage Wing.
-/// Mounted via Rapier RevoluteJoint / spring momentum, swinging open and closed,
-/// and driving the infinite restock cycle on Closed -> Opened transition.
+/// Mounted via a simple fixed-point hinge rotating around the hinge post axis,
+/// opening into the workshop room and slowly closing itself if less than 1/4 rad from closed
+/// to rest flush with the wall.
 #[derive(Component, Debug, Clone)]
 pub struct PantryDoor {
     pub hinge_anchor_pos: Vec3,
     pub current_angle: f32,
     pub target_angle: f32,
     pub was_closed: bool,
-    pub closed_threshold: f32, // e.g. 0.12 rad (~7 deg)
-    pub open_threshold: f32,   // e.g. 0.35 rad (~20 deg)
+    pub closed_threshold: f32, // 0.05 rad
+    pub open_threshold: f32,   // 0.35 rad
+    pub close_snap_threshold: f32, // 0.25 rad (1/4 rad)
     pub spring_stiffness: f32,
     pub spring_damping: f32,
+    pub close_speed: f32,
 }
 
 impl Default for PantryDoor {
@@ -75,10 +78,12 @@ impl Default for PantryDoor {
             current_angle: 0.0,
             target_angle: 0.0,
             was_closed: true,
-            closed_threshold: 0.12,
+            closed_threshold: 0.05,
             open_threshold: 0.35,
+            close_snap_threshold: 0.25, // 1/4 rad
             spring_stiffness: 15.0,
             spring_damping: 4.0,
+            close_speed: 0.75,
         }
     }
 }
@@ -514,26 +519,28 @@ pub fn spawn_pantry_storage_wing(
     let hinge_post = commands
         .spawn((
             Transform::from_xyz(-13.0, 1.35, 4.75),
-            Collider::cuboid(0.08, 1.35, 0.08),
+            Collider::cuboid(0.04, 1.35, 0.04),
             RigidBody::Fixed,
             PantryDoorHingePost,
             Name::new("PantryDoorHingePost"),
         ))
         .id();
 
-    // Door Leaf entity: dynamic rigidbody centered at Z = 5.50 (between 4.75 and 6.25)
-    // Width = 1.48m, height = 2.55m, thickness = 0.10m
+    // Door Leaf entity: dynamic rigidbody centered at Z = 5.48 (between 4.75 and 6.21)
+    // Width = 1.46m, height = 2.55m, thickness = 0.08m
     let joint = RevoluteJointBuilder::new(Vec3::Y)
         .local_anchor1(Vec3::ZERO)
-        .local_anchor2(Vec3::new(0.0, 0.0, -0.75))
-        .limits([-1.65, 0.05]);
+        .local_anchor2(Vec3::new(0.0, 0.0, -0.73))
+        .limits([0.0, 1.65])
+        .contacts_enabled(false);
 
     let mut door_cmd = commands.spawn((
-        Transform::from_xyz(-13.0, 1.35, 5.50),
-        Collider::cuboid(0.05, 1.275, 0.74),
+        Transform::from_xyz(-13.0, 1.35, 5.48),
+        Collider::cuboid(0.04, 1.275, 0.73),
         RigidBody::Dynamic,
         Velocity::zero(),
         ExternalImpulse::default(),
+        LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z | LockedAxes::TRANSLATION_LOCKED_Y,
         Damping {
             linear_damping: 2.0,
             angular_damping: 3.5,
@@ -545,7 +552,7 @@ pub fn spawn_pantry_storage_wing(
 
     if let (Some(m), Some(mat)) = (meshes.as_mut(), door_wood_mat.clone()) {
         door_cmd.insert((
-            Mesh3d(m.add(Cuboid::new(0.10, 2.55, 1.48))),
+            Mesh3d(m.add(Cuboid::new(0.08, 2.55, 1.46))),
             MeshMaterial3d(mat),
         ));
     }
@@ -574,13 +581,18 @@ pub fn spawn_pantry_storage_wing(
     commands.insert_resource(tracker);
 }
 
-/// Applies restorative spring torque to the pantry door toward target angle (0.0 = closed),
-/// producing realistic physical inertia and smooth swinging momentum when pushed or released.
+/// Maintains the fixed-point hinge alignment, applies swing dynamics toward target angle,
+/// and slowly closes the door if less than 1/4 rad from closed to rest flush with the wall.
 pub fn pantry_door_spring_system(
     time: Option<Res<Time>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
-    mut q_door: Query<(&Transform, &Velocity, &mut ExternalImpulse, &PantryDoor)>,
+    mut q_door: Query<(
+        &mut Transform,
+        &mut Velocity,
+        &mut ExternalImpulse,
+        &mut PantryDoor,
+    )>,
 ) {
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
         return;
@@ -590,12 +602,52 @@ pub fn pantry_door_spring_system(
         return;
     }
 
-    for (tf, vel, mut ext_impulse, door) in &mut q_door {
-        let (_, yaw, _) = tf.rotation.to_euler(EulerRot::XYZ);
-        let delta_angle = door.target_angle - yaw;
-        let angular_vel_y = vel.angular.y;
-        let torque_y = door.spring_stiffness * delta_angle - door.spring_damping * angular_vel_y;
-        ext_impulse.torque_impulse.y += torque_y * dt;
+    for (mut tf, mut vel, mut ext_impulse, mut door) in &mut q_door {
+        let (_, mut yaw, _) = tf.rotation.to_euler(EulerRot::XYZ);
+
+        // If door is pushed/displaced into negative angles (penetrating wall), push back with positive torque
+        if yaw < 0.0 {
+            let delta = 0.0 - yaw;
+            ext_impulse.torque_impulse.y += door.spring_stiffness * delta * dt;
+            yaw = 0.0;
+            vel.angular.y = vel.angular.y.max(0.0);
+        } else if yaw > 1.65 {
+            yaw = 1.65;
+            vel.angular.y = vel.angular.y.min(0.0);
+        }
+
+        // Auto-close behavior:
+        // "slowly close itself if less than 1/4 rad closed and flush with the wall"
+        if yaw > 0.0 && yaw < door.close_snap_threshold {
+            // Only auto-close if not actively being pushed open with strong positive torque
+            if ext_impulse.torque_impulse.y <= 0.5 {
+                let close_step = door.close_speed * dt;
+                if yaw <= close_step || yaw <= 0.015 {
+                    yaw = 0.0;
+                    vel.angular.y = 0.0;
+                    vel.linear = Vec3::ZERO;
+                } else {
+                    yaw -= close_step;
+                    vel.angular.y = -door.close_speed;
+                }
+            }
+        } else if yaw >= door.close_snap_threshold && door.target_angle > 0.0 {
+            let delta = door.target_angle - yaw;
+            let torque = door.spring_stiffness * delta - door.spring_damping * vel.angular.y;
+            ext_impulse.torque_impulse.y += torque * dt;
+        }
+
+        door.current_angle = yaw;
+
+        // Strictly enforce simple hinge rotating around fixed pivot:
+        let hinge = door.hinge_anchor_pos;
+        let r = 0.73;
+        tf.translation = Vec3::new(
+            hinge.x + r * yaw.sin(),
+            hinge.y,
+            hinge.z + r * yaw.cos(),
+        );
+        tf.rotation = Quat::from_rotation_y(yaw);
     }
 }
 
@@ -686,7 +738,7 @@ pub fn pantry_door_interaction_system(
         return;
     }
 
-    let Ok((door_tf, mut ext_impulse, mut _door)) = q_door.single_mut() else {
+    let Ok((door_tf, mut ext_impulse, mut door)) = q_door.single_mut() else {
         return;
     };
 
@@ -702,9 +754,11 @@ pub fn pantry_door_interaction_system(
 
     if let Some(open) = open_command {
         if open {
-            ext_impulse.torque_impulse.y = -7.0;
+            ext_impulse.torque_impulse.y = 8.0;
+            door.target_angle = 1.40;
         } else {
-            ext_impulse.torque_impulse.y = 7.0;
+            ext_impulse.torque_impulse.y = -8.0;
+            door.target_angle = 0.0;
         }
         return;
     }
@@ -728,12 +782,14 @@ pub fn pantry_door_interaction_system(
                 let dist = player_tf.translation.distance(door_tf.translation);
                 if dist <= 2.8 {
                     let (_, yaw, _) = door_tf.rotation.to_euler(EulerRot::XYZ);
-                    if yaw.abs() < 0.25 {
-                        // Swing open into pantry
-                        ext_impulse.torque_impulse.y = -8.0;
-                    } else {
-                        // Swing closed
+                    if yaw < 0.25 {
+                        // Swing open into the workshop room
                         ext_impulse.torque_impulse.y = 8.0;
+                        door.target_angle = 1.40;
+                    } else {
+                        // Swing closed toward the wall
+                        ext_impulse.torque_impulse.y = -8.0;
+                        door.target_angle = 0.0;
                     }
                 }
             }

@@ -9033,3 +9033,74 @@ fn test_generic_reusable_anchor_point_and_matching_traits() {
     assert_eq!(anchor.locked_object, None, "Non-matching object trait ('wood') must not be locked into 'battery' anchor");
     assert!(app.world().get::<HeldByPlayer>(wood_e).is_some(), "Non-matching object remains held");
 }
+
+#[test]
+fn test_moose_body_collision_with_scarf() {
+    use rust_tests::elf_game::moose::toy_model::{
+        MrMoose, MooseHead, MooseScarfSegment, MooseScarfMount, moose_scarf_physics_system,
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(16));
+    app.insert_resource(time);
+    app.add_systems(Update, moose_scarf_physics_system);
+
+    // 1. Mr. Moose root at (0.0, 1.8, 0.0) with standard torso cuboid collider (0.85, 0.68, 1.35)
+    let moose_entity = app.world_mut().spawn((
+        MrMoose,
+        MooseScarfMount::default(),
+        Collider::cuboid(0.85, 0.68, 1.35),
+        Transform::from_xyz(0.0, 1.8, 0.0),
+    )).id();
+
+    app.world_mut().spawn((
+        MooseHead,
+        Transform::from_xyz(0.0, 1.1, 1.6),
+    ));
+
+    // 2. Position a scarf segment (index 0) deliberately inside the torso chest volume (Z = 0.5 in local space, well inside Z <= 1.35)
+    let penetrating_local_pos = Vec3::new(-0.24, 0.0, 0.5);
+    let seg_entity = app.world_mut().spawn((
+        MooseScarfSegment {
+            index: 0,
+            rest_offset: penetrating_local_pos,
+            velocity: Vec3::new(0.0, 0.0, -2.0), // Moving backward into the body
+        },
+        Collider::cuboid(0.19, 0.14, 0.11),
+        Transform::from_translation(Vec3::new(0.0, 1.8, 0.0) + penetrating_local_pos),
+    )).id();
+
+    // 3. Step physics simulation
+    app.update();
+
+    // 4. Verify that collision pushed the scarf segment strictly OUT of the torso
+    let seg_tf = app.world().get::<Transform>(seg_entity).unwrap();
+    let moose_tf = app.world().get::<Transform>(moose_entity).unwrap();
+    let local_z = (moose_tf.rotation.inverse() * (seg_tf.translation - moose_tf.translation)).z;
+
+    assert!(
+        local_z >= 1.40,
+        "Scarf segment must be resolved outside the Moose chest (Z >= 1.40), got local Z = {}",
+        local_z
+    );
+
+    // 5. Move the Moose forward (+Z by 1.0m) so inertia pushes the scarf towards the chest
+    {
+        let mut m_tf = app.world_mut().get_mut::<Transform>(moose_entity).unwrap();
+        m_tf.translation.z = 1.0;
+    }
+    app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(16));
+    app.update();
+
+    let seg_tf_after = app.world().get::<Transform>(seg_entity).unwrap();
+    let moose_tf_after = app.world().get::<Transform>(moose_entity).unwrap();
+    let local_z_after = (moose_tf_after.rotation.inverse() * (seg_tf_after.translation - moose_tf_after.translation)).z;
+
+    assert!(
+        local_z_after >= 1.40,
+        "Scarf segment must remain outside the Moose body during forward motion (local Z >= 1.40), got {}",
+        local_z_after
+    );
+}

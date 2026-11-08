@@ -419,6 +419,7 @@ pub fn spawn_mr_moose(
                 Mesh3d(scarf_segment_mesh.clone()),
                 MeshMaterial3d(seg_mat),
                 Transform::from_translation(Vec3::new(-2.0, 1.8, -17.0) + rest_off),
+                Collider::cuboid(0.19, 0.14, 0.11),
                 MooseScarfSegment {
                     index: idx,
                     rest_offset: rest_off,
@@ -1103,7 +1104,7 @@ pub fn moose_scarf_physics_system(
     time: Option<Res<Time>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
-    mut q_moose: Query<(&Transform, Option<&mut MooseScarfMount>), (With<MrMoose>, Without<MooseScarfSegment>)>,
+    mut q_moose: Query<(&Transform, Option<&Collider>, Option<&mut MooseScarfMount>), (With<MrMoose>, Without<MooseScarfSegment>)>,
     q_head: Query<&Transform, (With<MooseHead>, Without<MooseScarfSegment>)>,
     mut q_segments: Query<(&mut MooseScarfSegment, &mut Transform)>,
 ) {
@@ -1112,11 +1113,15 @@ pub fn moose_scarf_physics_system(
     }
 
     let dt = time.as_ref().map(|t| t.delta_secs()).unwrap_or(0.016);
-    let Ok((moose_tf, mut opt_mount)) = q_moose.single_mut() else {
+    let Ok((moose_tf, opt_collider, mut opt_mount)) = q_moose.single_mut() else {
         return;
     };
     let head_z = q_head.single().map(|h| h.translation.z).unwrap_or(1.6);
     let head_forward_pull = (head_z - 1.6).max(0.0) * 0.25;
+
+    let torso_half_extents = opt_collider
+        .and_then(|c| c.as_cuboid().map(|cb| cb.half_extents()))
+        .unwrap_or(Vec3::new(0.85, 0.68, 1.35));
 
     // Default mount anchors in Moose local space
     let (left_anchor_local, right_anchor_local, last_pos) = if let Some(ref m) = opt_mount {
@@ -1224,6 +1229,75 @@ pub fn moose_scarf_physics_system(
             } else if new_dist < min_dist && new_dist > 0.0001 {
                 new_pos = current_parent_pos + (from_parent / new_dist) * min_dist;
             }
+
+            // =========================================================================
+            // Collision detection & resolution with Moose body (torso and chest/neck)
+            // =========================================================================
+            const SEGMENT_RADIUS: f32 = 0.10;
+            let moose_inv_rot = moose_tf.rotation.inverse();
+            let mut local_pos = moose_inv_rot * (new_pos - moose_tf.translation);
+            let mut local_vel = moose_inv_rot * (new_vel - moose_velocity);
+
+            // 1. Torso body collider: cuboid with torso_half_extents
+            let torso_min = -torso_half_extents - Vec3::splat(SEGMENT_RADIUS);
+            let torso_max = torso_half_extents + Vec3::splat(SEGMENT_RADIUS);
+
+            if local_pos.x >= torso_min.x
+                && local_pos.x <= torso_max.x
+                && local_pos.y >= torso_min.y
+                && local_pos.y <= torso_max.y
+                && local_pos.z >= torso_min.z
+                && local_pos.z <= torso_max.z
+            {
+                // Scarf segment penetrated the torso! Resolve collision by pushing out along minimum penetration axis
+                let d_front = torso_max.z - local_pos.z;
+                let d_back = local_pos.z - torso_min.z;
+                let d_right = torso_max.x - local_pos.x;
+                let d_left = local_pos.x - torso_min.x;
+                let d_top = torso_max.y - local_pos.y;
+                let d_bottom = local_pos.y - torso_min.y;
+
+                let min_d = d_front.min(d_back).min(d_right).min(d_left).min(d_top).min(d_bottom);
+                let normal = if min_d == d_front {
+                    Vec3::Z
+                } else if min_d == d_right {
+                    Vec3::X
+                } else if min_d == d_left {
+                    Vec3::NEG_X
+                } else if min_d == d_top {
+                    Vec3::Y
+                } else if min_d == d_bottom {
+                    Vec3::NEG_Y
+                } else {
+                    Vec3::NEG_Z
+                };
+
+                local_pos += normal * min_d;
+
+                let v_norm = local_vel.dot(normal);
+                if v_norm < 0.0 {
+                    local_vel -= normal * (v_norm * 1.25);
+                    local_vel *= 0.85; // Wool friction along body fur
+                }
+            } else if local_pos.y > torso_half_extents.y
+                && local_pos.y <= 1.15 + SEGMENT_RADIUS
+                && local_pos.x.abs() <= 0.425 + SEGMENT_RADIUS
+                && local_pos.z >= 0.80 - SEGMENT_RADIUS
+                && local_pos.z <= torso_half_extents.z + SEGMENT_RADIUS
+            {
+                // Penetrating neck volume behind chest: push forward in front of chest/neck
+                let penetration = (torso_half_extents.z + SEGMENT_RADIUS) - local_pos.z;
+                local_pos.z += penetration;
+                let v_norm = local_vel.z;
+                if v_norm < 0.0 {
+                    local_vel.z = -v_norm * 0.25;
+                    local_vel *= 0.85;
+                }
+            }
+
+            // Transform back to world space
+            new_pos = moose_tf.translation + moose_tf.rotation * local_pos;
+            new_vel = moose_velocity + moose_tf.rotation * local_vel;
 
             // Align segment rotation along the tangent vector from parent to child
             let link_dir = new_pos - current_parent_pos;

@@ -470,21 +470,62 @@ pub fn spawn_oven_stove_and_propane_scene(
         });
 
     // -------------------------------------------------------------------------
-    // 3. Wall Gas Supply Pipe & Flexible Chain Yellow Hose (Similar to Moose Scarf)
+    // 3. Wall Gas Supply Pipe & Flexible Chain Yellow Hose (Rapier RopeJoint Physics)
     // -------------------------------------------------------------------------
     let wall_inlet_pos = Vec3::new(-9.05, 1.15, -12.85);
 
-    // Permanent wall intake pipe fitting
-    commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(0.045, 0.45))),
-        MeshMaterial3d(iron_mat.clone()),
-        Transform::from_xyz(wall_inlet_pos.x, wall_inlet_pos.y, wall_inlet_pos.z)
-            .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-        Name::new("WallGasIntakePipe"),
-    ));
+    // Permanent wall intake pipe fitting as Fixed Rapier RigidBody
+    let wall_anchor_e = commands
+        .spawn((
+            Mesh3d(meshes.add(Cylinder::new(0.045, 0.45))),
+            MeshMaterial3d(iron_mat.clone()),
+            Transform::from_xyz(wall_inlet_pos.x, wall_inlet_pos.y, wall_inlet_pos.z)
+                .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+            RigidBody::Fixed,
+            Collider::cylinder(0.225, 0.045),
+            Name::new("WallGasIntakePipe"),
+        ))
+        .id();
 
     // Flexible yellow chain hose: 7 links (0..6)
-    // Link 6 is the coupler nozzle (grabbable by player, snaps to anchor within 0.2m)
+    // Links 0..5 are intermediate dynamic segments connected by Rapier RopeJoints
+    // Link 6 is the coupler nozzle (grabbable by player, snaps to anchor within snap_distance)
+    let mut prev_joint_body = wall_anchor_e;
+
+    for i in 0..6 {
+        let t = (i + 1) as f32 / 7.0;
+        let rest_pos = wall_inlet_pos.lerp(stove_anchor_pos, t)
+            + Vec3::new(0.0, -0.15 * (1.0 - (t - 0.5).abs() * 2.0), 0.1 * t);
+
+        let rope_joint = RopeJointBuilder::new(0.32).contacts_enabled(false);
+
+        let link_e = commands
+            .spawn((
+                GasHoseSegment {
+                    index: i,
+                    velocity: Vec3::ZERO,
+                },
+                Transform::from_translation(rest_pos),
+                RigidBody::Dynamic,
+                Collider::ball(0.04),
+                Damping {
+                    linear_damping: 1.5,
+                    angular_damping: 1.5,
+                },
+                Velocity::zero(),
+                ImpulseJoint::new(prev_joint_body, rope_joint),
+                Mesh3d(meshes.add(Cylinder::new(0.024, 0.20))),
+                MeshMaterial3d(yellow_hose_mat.clone()),
+                Name::new(format!("YellowHoseChainLink_{}", i)),
+            ))
+            .id();
+
+        prev_joint_body = link_e;
+    }
+
+    // Coupler Nozzle (Link 6) connected to Link 5 via Rapier RopeJoint
+    let nozzle_rope_joint = RopeJointBuilder::new(0.32).contacts_enabled(false);
+
     let nozzle_e = commands
         .spawn((
             GasHoseSegment {
@@ -493,31 +534,20 @@ pub fn spawn_oven_stove_and_propane_scene(
             },
             GasHoseCouplerNozzle,
             Transform::from_translation(stove_anchor_pos),
+            RigidBody::Fixed, // Starts securely docked to Stove
+            Collider::cylinder(0.08, 0.05),
+            Damping {
+                linear_damping: 1.5,
+                angular_damping: 1.5,
+            },
+            Velocity::zero(),
+            ImpulseJoint::new(prev_joint_body, nozzle_rope_joint),
+            Grabbable,
             Mesh3d(meshes.add(Cylinder::new(0.045, 0.12))),
             MeshMaterial3d(brass_mat.clone()),
-            Collider::cylinder(0.08, 0.05),
-            RigidBody::Dynamic,
-            Grabbable,
             Name::new("YellowHoseCouplerNozzle"),
         ))
         .id();
-
-    // Spawn intermediate chain links 0..5
-    for i in 0..6 {
-        let t = i as f32 / 6.0;
-        let rest_pos = wall_inlet_pos.lerp(stove_anchor_pos, t) + Vec3::new(0.0, -0.15 * (1.0 - (t - 0.5).abs() * 2.0), 0.1 * t);
-
-        commands.spawn((
-            GasHoseSegment {
-                index: i,
-                velocity: Vec3::ZERO,
-            },
-            Transform::from_translation(rest_pos),
-            Mesh3d(meshes.add(Cylinder::new(0.024, 0.20))),
-            MeshMaterial3d(yellow_hose_mat.clone()),
-            Name::new(format!("YellowHoseChainLink_{}", i)),
-        ));
-    }
 
     // Flexible Yellow Hose Manager entity
     commands.spawn((
@@ -815,24 +845,33 @@ pub fn propane_gas_flow_system(
     line.pressure_psi = tank.fuel_amount;
 }
 
-/// Simulates soft-body chain physics for the flexible yellow gas supply hose (similar to the Moose scarf).
-/// The hose has a permanent wall anchor, and detachable anchors on the Stove and Oven.
-/// If the end nozzle is held by the player and gets within 0.2m of either anchor point, it snaps into place.
+/// Manages the flexible yellow gas supply hose Rapier physics and anchor docking.
+/// The hose physics is simulated by the Rapier 3D physics plugin using RopeJoints connecting
+/// rigid bodies between the wall intake and the coupler nozzle.
+/// This system updates nozzle attachment docking, player grab transitions, and synchronizes
+/// segment state with Rapier.
 pub fn gas_hose_chain_physics_system(
-    time: Option<Res<Time>>,
+    _time: Option<Res<Time>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     mut commands: Commands,
     mut q_hands: Query<&mut crate::elf_game::player::ElfHands>,
     q_held: Query<Entity, With<crate::elf_game::player::hands::HeldByPlayer>>,
     mut q_hose: Query<&mut GasHose>,
-    mut q_segments: Query<(&mut GasHoseSegment, &mut Transform), (Without<FirstPersonCamera>, Without<crate::elf_game::player::ElfHands>)>,
+    mut q_segments: Query<
+        (
+            Entity,
+            &mut GasHoseSegment,
+            &mut Transform,
+            Option<&Velocity>,
+            Option<&mut RigidBody>,
+        ),
+        (Without<FirstPersonCamera>, Without<crate::elf_game::player::ElfHands>),
+    >,
 ) {
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
         return;
     }
-    let raw_dt = time.as_ref().map(|t| t.delta_secs()).unwrap_or(0.016);
-    let dt = if raw_dt > 0.0 { raw_dt } else { 0.016 };
 
     let Ok(mut hose) = q_hose.single_mut() else {
         return;
@@ -843,36 +882,31 @@ pub fn gas_hose_chain_physics_system(
     let oven_anchor = hose.oven_anchor_pos;
     let snap_dist = hose.snap_distance;
 
-    // Gather segment data (7 segments: 0..6)
-    let mut seg_transforms: [Option<Transform>; 7] = [None; 7];
-    let mut seg_velocities: [Vec3; 7] = [Vec3::ZERO; 7];
-
-    for (seg, tf) in &q_segments {
-        if seg.index < 7 {
-            seg_transforms[seg.index] = Some(*tf);
-            seg_velocities[seg.index] = seg.velocity;
-        }
-    }
-
     let is_nozzle_held = if let Some(nozzle_e) = hose.nozzle_entity {
         q_held.get(nozzle_e).is_ok()
     } else {
         false
     };
 
-    // 1. Coupler Nozzle (Segment 6) snapping and target calculation
-    let mut nozzle_pos = if let Some(tf) = seg_transforms[6] {
-        tf.translation
-    } else {
-        match hose.attached_to {
-            HoseAttachment::Stove => stove_anchor,
-            HoseAttachment::Oven => oven_anchor,
-            HoseAttachment::Neither => hose.loose_nozzle_pos,
-        }
+    // Locate nozzle entity and transform
+    let mut nozzle_entity_opt = hose.nozzle_entity;
+    let mut nozzle_pos = match hose.attached_to {
+        HoseAttachment::Stove => stove_anchor,
+        HoseAttachment::Oven => oven_anchor,
+        HoseAttachment::Neither => hose.loose_nozzle_pos,
     };
 
+    for (e, seg, tf, _, _) in &q_segments {
+        if seg.index == 6 || Some(e) == nozzle_entity_opt {
+            nozzle_pos = tf.translation;
+            if nozzle_entity_opt.is_none() {
+                nozzle_entity_opt = Some(e);
+            }
+        }
+    }
+
+    // 1. Coupler Nozzle Snapping and Attachment Transitions
     if is_nozzle_held {
-        // Player is holding the nozzle: check distance to Stove and Oven anchor points
         let dist_to_stove = nozzle_pos.distance(stove_anchor);
         let dist_to_oven = nozzle_pos.distance(oven_anchor);
 
@@ -881,7 +915,7 @@ pub fn gas_hose_chain_physics_system(
             hose.attached_to = HoseAttachment::Stove;
             hose.is_venting_gas = false;
             nozzle_pos = stove_anchor;
-            if let Some(nozzle_e) = hose.nozzle_entity {
+            if let Some(nozzle_e) = nozzle_entity_opt {
                 commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
                 for mut hands in &mut q_hands {
                     if hands.left_grabbed == Some(nozzle_e) {
@@ -897,7 +931,7 @@ pub fn gas_hose_chain_physics_system(
             hose.attached_to = HoseAttachment::Oven;
             hose.is_venting_gas = false;
             nozzle_pos = oven_anchor;
-            if let Some(nozzle_e) = hose.nozzle_entity {
+            if let Some(nozzle_e) = nozzle_entity_opt {
                 commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
                 for mut hands in &mut q_hands {
                     if hands.left_grabbed == Some(nozzle_e) {
@@ -915,7 +949,6 @@ pub fn gas_hose_chain_physics_system(
             hose.loose_nozzle_pos = nozzle_pos;
         }
     } else {
-        // Not held by player: snap to attached anchor or let loose on floor
         match hose.attached_to {
             HoseAttachment::Stove => {
                 nozzle_pos = stove_anchor;
@@ -929,94 +962,67 @@ pub fn gas_hose_chain_physics_system(
         }
     }
 
-    // 2. Chain propagation for segments 1..6 (similar to Moose scarf)
-    const LINK_REST_LEN: f32 = 0.20;
-    let mut calculated_pos = [Vec3::ZERO; 7];
-    let mut calculated_vel = [Vec3::ZERO; 7];
-
-    calculated_pos[0] = wall_pos;
-    calculated_pos[6] = nozzle_pos;
-
-    // Simulate intermediate links 1..5
-    for i in 1..6 {
-        let cur_pos = seg_transforms[i].map(|t| t.translation).unwrap_or_else(|| {
-            wall_pos.lerp(nozzle_pos, i as f32 / 6.0)
-        });
-        let cur_vel = seg_velocities[i];
-
-        let prev_pos = calculated_pos[i - 1];
-        let next_pos = if i == 5 {
-            nozzle_pos
-        } else {
-            seg_transforms[i + 1].map(|t| t.translation).unwrap_or_else(|| {
-                wall_pos.lerp(nozzle_pos, (i + 1) as f32 / 6.0)
-            })
-        };
-
-        // Spring tension pulling towards both adjacent links
-        let to_prev = prev_pos - cur_pos;
-        let d_prev = to_prev.length();
-        let f_prev = if d_prev > 0.001 {
-            (to_prev / d_prev) * ((d_prev - LINK_REST_LEN) * 85.0)
-        } else {
-            Vec3::ZERO
-        };
-
-        let to_next = next_pos - cur_pos;
-        let d_next = to_next.length();
-        let f_next = if d_next > 0.001 {
-            (to_next / d_next) * ((d_next - LINK_REST_LEN) * 85.0)
-        } else {
-            Vec3::ZERO
-        };
-
-        let gravity = Vec3::new(0.0, -5.5, 0.0);
-        let drag = -cur_vel * 3.5;
-        let total_acc = f_prev + f_next + gravity + drag;
-
-        let mut new_vel = cur_vel + total_acc * dt;
-        let mut new_pos = cur_pos + new_vel * dt;
-
-        // Floor collision constraint
-        if new_pos.y < 0.04 {
-            new_pos.y = 0.04;
-            new_vel.y = 0.0;
+    // 2. Synchronize Rapier RigidBody states & segment velocities
+    let mut seg_translations: [Option<Vec3>; 7] = [None; 7];
+    for (_, seg, tf, _, _) in &q_segments {
+        if seg.index < 7 {
+            seg_translations[seg.index] = Some(tf.translation);
         }
-
-        // Distance constraint projection to prev link
-        let from_prev = new_pos - prev_pos;
-        let d = from_prev.length();
-        let max_d = LINK_REST_LEN * 1.35;
-        let min_d = LINK_REST_LEN * 0.65;
-        if d > max_d && d > 0.001 {
-            new_pos = prev_pos + (from_prev / d) * max_d;
-        } else if d < min_d && d > 0.001 {
-            new_pos = prev_pos + (from_prev / d) * min_d;
-        }
-
-        calculated_pos[i] = new_pos;
-        calculated_vel[i] = new_vel;
     }
 
-    // Apply positions, velocities, and tangent orientations to chain entities
-    for (mut seg, mut tf) in &mut q_segments {
+    for (e, mut seg, mut tf, rapier_vel, mut rb_opt) in &mut q_segments {
         let i = seg.index;
-        if i < 7 {
-            if i == 6 && is_nozzle_held {
-                // When held by player hand, hands system drives position
-                seg.velocity = Vec3::ZERO;
-            } else {
-                tf.translation = calculated_pos[i];
-                seg.velocity = calculated_vel[i];
+
+        // Synchronize linear velocity from Rapier physics
+        if let Some(vel) = rapier_vel {
+            seg.velocity = vel.linear;
+        }
+
+        if i == 6 || Some(e) == nozzle_entity_opt {
+            // Coupler nozzle rigid body & position docking
+            match hose.attached_to {
+                HoseAttachment::Stove => {
+                    tf.translation = stove_anchor;
+                    if let Some(ref mut rb) = rb_opt {
+                        **rb = RigidBody::Fixed;
+                    }
+                }
+                HoseAttachment::Oven => {
+                    tf.translation = oven_anchor;
+                    if let Some(ref mut rb) = rb_opt {
+                        **rb = RigidBody::Fixed;
+                    }
+                }
+                HoseAttachment::Neither => {
+                    if !is_nozzle_held {
+                        if let Some(ref mut rb) = rb_opt {
+                            **rb = RigidBody::Dynamic;
+                        }
+                    }
+                    hose.loose_nozzle_pos = tf.translation;
+                }
+            }
+        } else if i < 6 {
+            // Intermediate segment links: ensure dynamic rigid body when physics runs
+            if let Some(ref mut rb) = rb_opt {
+                if **rb != RigidBody::Dynamic {
+                    **rb = RigidBody::Dynamic;
+                }
             }
 
-            // Align segment rotation along chain tangent vector
-            let tangent = if i > 0 {
-                calculated_pos[i] - calculated_pos[i - 1]
+            // Align segment visual mesh rotation along chain tangent
+            let p_prev = if i > 0 {
+                seg_translations[i - 1].unwrap_or(wall_pos)
             } else {
-                calculated_pos[1] - calculated_pos[0]
+                wall_pos
             };
-            if tangent.length_squared() > 0.001 {
+            let p_next = if i < 5 {
+                seg_translations[i + 1].unwrap_or(nozzle_pos)
+            } else {
+                nozzle_pos
+            };
+            let tangent = p_next - p_prev;
+            if tangent.length_squared() > 0.0001 {
                 tf.rotation = Quat::from_rotation_arc(Vec3::Y, tangent.normalize());
             }
         }

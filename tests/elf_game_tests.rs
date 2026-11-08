@@ -8135,6 +8135,30 @@ fn test_flexible_chain_yellow_gas_hose_and_anchors() {
 
     let mut oven_anchor_q = app.world_mut().query::<&OvenGasAnchor>();
     assert_eq!(oven_anchor_q.iter(app.world()).count(), 1, "Oven must have a gas anchor fitting");
+
+    // 5. Rapier RopeJoint physics integration
+    use bevy_rapier3d::prelude::{ImpulseJoint, TypedJoint, RigidBody};
+    let mut joint_q = app.world_mut().query::<(&GasHoseSegment, &ImpulseJoint)>();
+    let joint_count = joint_q.iter(app.world()).count();
+    assert_eq!(joint_count, 7, "All 7 gas hose segments must have Rapier ImpulseJoints");
+
+    for (seg, joint) in joint_q.iter(app.world()) {
+        match joint.data {
+            TypedJoint::RopeJoint(_) => {}
+            _ => panic!("Segment {} joint must be a Rapier RopeJoint", seg.index),
+        }
+    }
+
+    // 6. Wall pipe has Fixed RigidBody
+    let mut wall_pipe_q = app.world_mut().query::<(&Name, &RigidBody)>();
+    let mut found_wall_pipe = false;
+    for (name, rb) in wall_pipe_q.iter(app.world()) {
+        if name.as_str() == "WallGasIntakePipe" {
+            assert_eq!(*rb, RigidBody::Fixed, "Wall gas intake pipe must be a Fixed rigid body");
+            found_wall_pipe = true;
+        }
+    }
+    assert!(found_wall_pipe, "WallGasIntakePipe entity must exist");
 }
 
 #[test]
@@ -8700,4 +8724,74 @@ fn test_gas_leak_flame_explosion_scaling_and_reconnect_tick_down() {
 
     let hose = app.world().get::<GasHose>(hose_e).unwrap();
     assert_eq!(hose.disconnected_timer, 0.0, "Explosion consumes gas and resets disconnected timer to 0.0");
+}
+
+#[test]
+fn test_gas_hose_rapier_rope_joint_physics_simulation() {
+    use rust_tests::elf_game::workshop::stove::{
+        spawn_oven_stove_and_propane_scene, gas_hose_chain_physics_system,
+        GasHose, GasHoseSegment, HoseAttachment,
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.init_resource::<Time>();
+    app.add_systems(Startup, spawn_oven_stove_and_propane_scene);
+    app.add_systems(Update, gas_hose_chain_physics_system);
+    app.update();
+
+    let (hose_e, nozzle_e) = {
+        let mut hose_q = app.world_mut().query::<(Entity, &GasHose)>();
+        let (e, h) = hose_q.single(app.world()).unwrap();
+        (e, h.nozzle_entity.unwrap())
+    };
+
+    // 1. Initial state: attached to Stove, nozzle is Fixed rigid body
+    {
+        let nozzle_rb = app.world().get::<RigidBody>(nozzle_e).unwrap();
+        assert_eq!(*nozzle_rb, RigidBody::Fixed, "Nozzle must be Fixed when attached to Stove");
+    }
+
+    // 2. All 7 segments have ImpulseJoint with RopeJoint
+    {
+        let mut seg_q = app.world_mut().query::<(&GasHoseSegment, &ImpulseJoint)>();
+        let mut count = 0;
+        for (seg, joint) in seg_q.iter(app.world()) {
+            count += 1;
+            match joint.data {
+                TypedJoint::RopeJoint(_) => {}
+                _ => panic!("Segment {} must use Rapier RopeJoint", seg.index),
+            }
+        }
+        assert_eq!(count, 7, "All 7 segments must have Rapier RopeJoints");
+    }
+
+    // 3. Detach hose to Neither: nozzle becomes Dynamic rigid body
+    {
+        let mut hose = app.world_mut().get_mut::<GasHose>(hose_e).unwrap();
+        hose.attached_to = HoseAttachment::Neither;
+    }
+    app.update();
+
+    {
+        let nozzle_rb = app.world().get::<RigidBody>(nozzle_e).unwrap();
+        assert_eq!(*nozzle_rb, RigidBody::Dynamic, "Nozzle must switch to Dynamic when detached");
+    }
+
+    // 4. Attach hose to Oven: nozzle becomes Fixed rigid body at oven anchor
+    {
+        let mut hose = app.world_mut().get_mut::<GasHose>(hose_e).unwrap();
+        hose.attached_to = HoseAttachment::Oven;
+    }
+    app.update();
+
+    {
+        let nozzle_rb = app.world().get::<RigidBody>(nozzle_e).unwrap();
+        let nozzle_tf = app.world().get::<Transform>(nozzle_e).unwrap();
+        let hose = app.world().get::<GasHose>(hose_e).unwrap();
+        assert_eq!(*nozzle_rb, RigidBody::Fixed, "Nozzle must switch to Fixed when attached to Oven");
+        assert_eq!(nozzle_tf.translation, hose.oven_anchor_pos, "Nozzle must be positioned at oven anchor");
+    }
 }

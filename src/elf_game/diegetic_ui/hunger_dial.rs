@@ -253,9 +253,9 @@ pub fn spawn_gauge(
         // Green Safe Arc
         if let (Some(m), Some(mat)) = (&mut meshes, arc_green_mat) {
             gauge.spawn((
-                Mesh3d(m.add(Cuboid::new(0.18, 0.05, 0.015))),
+                Mesh3d(m.add(CircularSector::new(0.45, 1.0,))),
                 MeshMaterial3d(mat),
-                Transform::from_xyz(-0.24, 0.06, 0.18).with_rotation(Quat::from_rotation_z(0.85)),
+                Transform::from_xyz(0.0, 0.00, 0.185).with_rotation(Quat::from_rotation_z(-1.0)),
                 Name::new("GaugeArcGreenSafe"),
             ));
         }
@@ -263,9 +263,9 @@ pub fn spawn_gauge(
         // Yellow Caution Arc
         if let (Some(m), Some(mat)) = (&mut meshes, arc_yellow_mat) {
             gauge.spawn((
-                Mesh3d(m.add(Cuboid::new(0.24, 0.05, 0.015))),
+                Mesh3d(m.add(CircularSector::new(0.45, 0.5))),
                 MeshMaterial3d(mat),
-                Transform::from_xyz(-0.04, 0.25, 0.18).with_rotation(Quat::from_rotation_z(0.15)),
+                Transform::from_xyz(0.0, 0.0, 0.186).with_rotation(Quat::from_rotation_z(0.0)),
                 Name::new("GaugeArcYellowCaution"),
             ));
         }
@@ -273,9 +273,9 @@ pub fn spawn_gauge(
         // Orange Warning Arc
         if let (Some(m), Some(mat)) = (&mut meshes, arc_orange_mat) {
             gauge.spawn((
-                Mesh3d(m.add(Cuboid::new(0.14, 0.05, 0.015))),
+                Mesh3d(m.add(CircularSector::new(0.45, 0.5))),
                 MeshMaterial3d(mat),
-                Transform::from_xyz(0.20, 0.16, 0.18).with_rotation(Quat::from_rotation_z(-0.75)),
+                Transform::from_xyz(0.0, 0.00, 0.187).with_rotation(Quat::from_rotation_z(0.8)),
                 Name::new("GaugeArcOrangeWarning"),
             ));
         }
@@ -283,9 +283,9 @@ pub fn spawn_gauge(
         // Red Critical Arc
         if let (Some(m), Some(mat)) = (&mut meshes, arc_red_mat) {
             gauge.spawn((
-                Mesh3d(m.add(Cuboid::new(0.10, 0.05, 0.015))),
+                Mesh3d(m.add(CircularSector::new(0.45, 0.3))),
                 MeshMaterial3d(mat),
-                Transform::from_xyz(0.26, -0.02, 0.18).with_rotation(Quat::from_rotation_z(-1.25)),
+                Transform::from_xyz(0.0, 0.0, 0.188).with_rotation(Quat::from_rotation_z(1.6)),
                 Name::new("GaugeArcRedCritical"),
             ));
         }
@@ -389,7 +389,7 @@ pub fn spawn_gas_pressure_gauge(
 ) {
     let mut meshes = meshes;
     let mut materials = materials;
-    let gauge_tf = Transform::from_xyz(-6.6, 1.95, -12.75).with_rotation(Quat::from_rotation_y(0.15));
+    let gauge_tf = Transform::from_xyz(-9.0, 1.95, -12.75).with_rotation(Quat::from_rotation_y(0.15));
     let gauge_e = spawn_gauge(
         &mut commands,
         gauge_tf,

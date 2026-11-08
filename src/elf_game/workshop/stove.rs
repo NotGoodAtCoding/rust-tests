@@ -2,13 +2,9 @@ use bevy::prelude::*;
 use bevy::ecs::message::Message;
 use bevy_rapier3d::prelude::*;
 use crate::elf_game::{
-    assets::WorkshopMaterials,
-    player::{
-        hands::Grabbable,
-        controller::{ElfPlayer, FirstPersonCamera},
-        ElfMovement,
-    },
-    physics_sandbox::{ElfAssistant, ElfNpcState},
+    assets::WorkshopMaterials, physics_sandbox::{ElfAssistant, ElfNpcState}, player::{
+        ElfMovement, controller::{ElfPlayer, FirstPersonCamera}, hands::Grabbable,
+    }, workshop::stove,
 };
 
 /// Thermal state of Santa's Workshop. The player must keep the furnace stove fueled and burning
@@ -78,7 +74,7 @@ pub struct GasHose {
     pub attached_to: HoseAttachment,
     pub wall_inlet_pos: Vec3,
     pub stove_anchor_pos: Vec3,
-    pub oven_anchor_pos: Vec3,
+    // pub oven_anchor_pos: Vec3,
     pub loose_nozzle_pos: Vec3,
     pub is_venting_gas: bool,
     pub snap_distance: f32,
@@ -111,7 +107,7 @@ impl Default for GasHose {
             attached_to: HoseAttachment::Stove,
             wall_inlet_pos: Vec3::new(-9.05, 1.15, -12.85),
             stove_anchor_pos: Vec3::new(-7.34, 0.85, -11.4),
-            oven_anchor_pos: Vec3::new(-10.42, 0.85, -11.4),
+            // oven_anchor_pos: Vec3::new(-10.42, 0.85, -11.4),
             loose_nozzle_pos: Vec3::new(-9.05, 0.05, -11.4),
             is_venting_gas: false,
             snap_distance: 0.85,
@@ -282,11 +278,11 @@ pub fn spawn_oven_stove_and_propane_scene(
     });
 
     // Oven brick red/terracotta tone
-    let oven_brick_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.62, 0.28, 0.20),
-        perceptual_roughness: 0.85,
-        ..default()
-    });
+    // let oven_brick_mat = materials.add(StandardMaterial {
+    //     base_color: Color::srgb(0.62, 0.28, 0.20),
+    //     perceptual_roughness: 0.85,
+    //     ..default()
+    // });
 
     // Appliance visual indicator materials: glowing ember vs cool dark gray vs blue flame
     let glowing_ember_mat = materials.add(StandardMaterial {
@@ -414,70 +410,70 @@ pub fn spawn_oven_stove_and_propane_scene(
         });
 
     // -------------------------------------------------------------------------
-    // 2. Baker's Oven (Moved further away: X = -11.4, Z = -11.4)
+    // 2. Baker's Oven (DISABLED)
     // -------------------------------------------------------------------------
-    let oven_pos = Vec3::new(-11.4, 0.0, -11.4);
-    let oven_anchor_pos = Vec3::new(-10.42, 0.85, -11.4);
+    // let oven_pos = Vec3::new(-11.4, 0.0, -11.4);
+    // let oven_anchor_pos = Vec3::new(-10.42, 0.85, -11.4);
 
-    commands
-        .spawn((
-            WorkshopOven {
-                is_heated: false,
-                internal_temp: 20.0,
-            },
-            Transform::from_translation(oven_pos),
-            Visibility::default(),
-            Collider::cuboid(0.95, 0.775, 0.675),
-            RigidBody::Fixed,
-            Name::new("WorkshopOven"),
-        ))
-        .with_children(|oven| {
-            // Main rustic masonry oven body (Width: 1.9m, Height: 1.55m, Depth: 1.35m)
-            oven.spawn((
-                Mesh3d(meshes.add(Cuboid::new(1.90, 1.55, 1.35))),
-                MeshMaterial3d(oven_brick_mat.clone()),
-                Transform::from_xyz(0.0, 0.775, 0.0),
-                Name::new("OvenBrickBody"),
-            ));
+    // commands
+    //     .spawn((
+    //         WorkshopOven {
+    //             is_heated: false,
+    //             internal_temp: 20.0,
+    //         },
+    //         Transform::from_translation(oven_pos),
+    //         Visibility::default(),
+    //         Collider::cuboid(0.95, 0.775, 0.675),
+    //         RigidBody::Fixed,
+    //         Name::new("WorkshopOven"),
+    //     ))
+    //     .with_children(|oven| {
+    //         // Main rustic masonry oven body (Width: 1.9m, Height: 1.55m, Depth: 1.35m)
+    //         oven.spawn((
+    //             Mesh3d(meshes.add(Cuboid::new(1.90, 1.55, 1.35))),
+    //             MeshMaterial3d(oven_brick_mat.clone()),
+    //             Transform::from_xyz(0.0, 0.775, 0.0),
+    //             Name::new("OvenBrickBody"),
+    //         ));
 
-            // Heavy cast-iron arched oven door
-            oven.spawn((
-                Mesh3d(meshes.add(Cuboid::new(1.15, 0.95, 0.08))),
-                MeshMaterial3d(iron_mat.clone()),
-                Transform::from_xyz(0.0, 0.75, 0.68),
-                Name::new("OvenDoor"),
-            ));
+    //         // Heavy cast-iron arched oven door
+    //         oven.spawn((
+    //             Mesh3d(meshes.add(Cuboid::new(1.15, 0.95, 0.08))),
+    //             MeshMaterial3d(iron_mat.clone()),
+    //             Transform::from_xyz(0.0, 0.75, 0.68),
+    //             Name::new("OvenDoor"),
+    //         ));
 
-            // Oven door inspection window
-            oven.spawn((
-                OvenDoorWindow,
-                Mesh3d(meshes.add(Cuboid::new(0.70, 0.45, 0.06))),
-                MeshMaterial3d(cool_dark_gray_mat.clone()),
-                Transform::from_xyz(0.0, 0.75, 0.73),
-                Name::new("OvenDoorWindow"),
-            ));
+    //         // Oven door inspection window
+    //         oven.spawn((
+    //             OvenDoorWindow,
+    //             Mesh3d(meshes.add(Cuboid::new(0.70, 0.45, 0.06))),
+    //             MeshMaterial3d(cool_dark_gray_mat.clone()),
+    //             Transform::from_xyz(0.0, 0.75, 0.73),
+    //             Name::new("OvenDoorWindow"),
+    //         ));
 
-            // Brass handle on door
-            oven.spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.035, 0.55))),
-                MeshMaterial3d(brass_mat.clone()),
-                Transform::from_xyz(0.45, 0.75, 0.74).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
-                Name::new("OvenDoorHandle"),
-            ));
+    //         // Brass handle on door
+    //         oven.spawn((
+    //             Mesh3d(meshes.add(Cylinder::new(0.035, 0.55))),
+    //             MeshMaterial3d(brass_mat.clone()),
+    //             Transform::from_xyz(0.45, 0.75, 0.74).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+    //             Name::new("OvenDoorHandle"),
+    //         ));
 
-            // Oven gas inlet anchor fitting on East flank with compact active area
-            oven.spawn((
-                OvenGasAnchor,
-                crate::elf_game::assets::objects::AnchorPoint::new("gas_hose").with_radius(2.0),
-                Mesh3d(meshes.add(Cylinder::new(0.08, 0.22))),
-                MeshMaterial3d(brass_mat.clone()),
-                Transform::from_xyz(0.98, 0.85, 0.0).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
-                Collider::cylinder(0.18, 0.22),
-                Sensor,
-                Grabbable,
-                Name::new("OvenGasAnchorFitting"),
-            ));
-        });
+    //         // Oven gas inlet anchor fitting on East flank with compact active area
+    //         oven.spawn((
+    //             OvenGasAnchor,
+    //             crate::elf_game::assets::objects::AnchorPoint::new("gas_hose").with_radius(2.0),
+    //             Mesh3d(meshes.add(Cylinder::new(0.08, 0.22))),
+    //             MeshMaterial3d(brass_mat.clone()),
+    //             Transform::from_xyz(0.98, 0.85, 0.0).with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+    //             Collider::cylinder(0.18, 0.22),
+    //             Sensor,
+    //             Grabbable,
+    //             Name::new("OvenGasAnchorFitting"),
+    //         ));
+    //     });
 
     // -------------------------------------------------------------------------
     // 3. Wall Gas Supply Pipe & Flexible Chain Yellow Hose (Rapier RopeJoint Physics)
@@ -529,7 +525,6 @@ pub fn spawn_oven_stove_and_propane_scene(
                 Name::new(format!("YellowHoseChainLink_{}", i)),
             ))
             .id();
-
         prev_joint_body = link_e;
     }
 
@@ -566,7 +561,6 @@ pub fn spawn_oven_stove_and_propane_scene(
             attached_to: HoseAttachment::Stove,
             wall_inlet_pos,
             stove_anchor_pos,
-            oven_anchor_pos,
             loose_nozzle_pos: stove_anchor_pos,
             is_venting_gas: false,
             snap_distance: 0.85,
@@ -890,7 +884,7 @@ pub fn gas_hose_chain_physics_system(
 
     let wall_pos = hose.wall_inlet_pos;
     let stove_anchor = hose.stove_anchor_pos;
-    let oven_anchor = hose.oven_anchor_pos;
+    // let oven_anchor = hose.oven_anchor_pos;
     let snap_dist = hose.snap_distance;
 
     let is_nozzle_held = if let Some(nozzle_e) = hose.nozzle_entity {
@@ -903,7 +897,8 @@ pub fn gas_hose_chain_physics_system(
     let mut nozzle_entity_opt = hose.nozzle_entity;
     let mut nozzle_pos = match hose.attached_to {
         HoseAttachment::Stove => stove_anchor,
-        HoseAttachment::Oven => oven_anchor,
+        HoseAttachment::Oven => stove_anchor,
+        // HoseAttachment::Oven => oven_anchor,
         HoseAttachment::Neither => hose.loose_nozzle_pos,
     };
 
@@ -919,7 +914,7 @@ pub fn gas_hose_chain_physics_system(
     // 1. Coupler Nozzle Snapping and Attachment Transitions
     if is_nozzle_held {
         let dist_to_stove = nozzle_pos.distance(stove_anchor);
-        let dist_to_oven = nozzle_pos.distance(oven_anchor);
+        // let dist_to_oven = nozzle_pos.distance(oven_anchor);
 
         if dist_to_stove <= snap_dist {
             // Snap to Stove!
@@ -937,22 +932,22 @@ pub fn gas_hose_chain_physics_system(
                     }
                 }
             }
-        } else if dist_to_oven <= snap_dist {
-            // Snap to Oven!
-            hose.attached_to = HoseAttachment::Oven;
-            hose.is_venting_gas = false;
-            nozzle_pos = oven_anchor;
-            if let Some(nozzle_e) = nozzle_entity_opt {
-                commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
-                for mut hands in &mut q_hands {
-                    if hands.left_grabbed == Some(nozzle_e) {
-                        hands.left_grabbed = None;
-                    }
-                    if hands.right_grabbed == Some(nozzle_e) {
-                        hands.right_grabbed = None;
-                    }
-                }
-            }
+        // } else if dist_to_oven <= snap_dist {
+        //     // Snap to Oven!
+        //     hose.attached_to = HoseAttachment::Oven;
+        //     hose.is_venting_gas = false;
+        //     // nozzle_pos = oven_anchor;
+        //     if let Some(nozzle_e) = nozzle_entity_opt {
+        //         commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
+        //         for mut hands in &mut q_hands {
+        //             if hands.left_grabbed == Some(nozzle_e) {
+        //                 hands.left_grabbed = None;
+        //             }
+        //             if hands.right_grabbed == Some(nozzle_e) {
+        //                 hands.right_grabbed = None;
+        //             }
+        //         }
+        //     }
         } else {
             // Held and carried in open space -> detached to Neither
             hose.attached_to = HoseAttachment::Neither;
@@ -965,7 +960,7 @@ pub fn gas_hose_chain_physics_system(
                 nozzle_pos = stove_anchor;
             }
             HoseAttachment::Oven => {
-                nozzle_pos = oven_anchor;
+                // nozzle_pos = oven_anchor;
             }
             HoseAttachment::Neither => {
                 hose.loose_nozzle_pos = nozzle_pos;
@@ -999,7 +994,7 @@ pub fn gas_hose_chain_physics_system(
                     }
                 }
                 HoseAttachment::Oven => {
-                    tf.translation = oven_anchor;
+                    // tf.translation = oven_anchor;
                     if let Some(ref mut rb) = rb_opt {
                         **rb = RigidBody::Fixed;
                     }
@@ -1112,7 +1107,7 @@ pub fn gas_hose_interaction_system(
         } else if grabbed_oven {
             hose.attached_to = HoseAttachment::Oven;
             hose.is_venting_gas = false;
-            hose.loose_nozzle_pos = hose.oven_anchor_pos;
+            // hose.loose_nozzle_pos = hose.oven_anchor_pos;
             if let Some(nozzle_e) = hose.nozzle_entity {
                 commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
             }
@@ -1147,21 +1142,23 @@ pub fn gas_hose_interaction_system(
     let cam_fwd = cam_gt.forward();
 
     let stove_target = hose.stove_anchor_pos;
-    let oven_target = hose.oven_anchor_pos;
+    // let oven_target = hose.oven_anchor_pos;
     let loose_target = hose.loose_nozzle_pos;
 
     let dist_stove = cam_pos.distance(stove_target);
-    let dist_oven = cam_pos.distance(oven_target);
+    // let dist_oven = cam_pos.distance(oven_target);
     let dist_loose = cam_pos.distance(loose_target);
 
     let dot_stove = cam_fwd.dot((stove_target - cam_pos).normalize());
-    let dot_oven = cam_fwd.dot((oven_target - cam_pos).normalize());
+    // let dot_oven = cam_fwd.dot((oven_target - cam_pos).normalize());
     let dot_loose = cam_fwd.dot((loose_target - cam_pos).normalize());
 
     // When the player interacts or grabs while holding the hose:
     // Automatically attach to whichever anchor point the player is facing!
     if is_holding_nozzle {
-        if dot_stove > 0.40 && dist_stove < 3.8 && (dot_stove >= dot_oven || dist_stove < dist_oven) {
+        if dot_stove > 0.40 && dist_stove < 3.8 
+        // && (dot_stove >= dot_oven || dist_stove < dist_oven)
+         {
             hose.attached_to = HoseAttachment::Stove;
             hose.is_venting_gas = false;
             hose.loose_nozzle_pos = stove_target;
@@ -1177,23 +1174,24 @@ pub fn gas_hose_interaction_system(
                 }
             }
             return;
-        } else if dot_oven > 0.40 && dist_oven < 3.8 {
-            hose.attached_to = HoseAttachment::Oven;
-            hose.is_venting_gas = false;
-            hose.loose_nozzle_pos = oven_target;
-            if let Some(nozzle_e) = hose.nozzle_entity {
-                commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
-            }
-            for mut hands in &mut q_hands {
-                if hands.left_grabbed == hose.nozzle_entity {
-                    hands.left_grabbed = None;
-                }
-                if hands.right_grabbed == hose.nozzle_entity {
-                    hands.right_grabbed = None;
-                }
-            }
-            return;
-        }
+        // } else if dot_oven > 0.40 && dist_oven < 3.8 {
+        //     hose.attached_to = HoseAttachment::Oven;
+        //     hose.is_venting_gas = false;
+        //     hose.loose_nozzle_pos = oven_target;
+        //     if let Some(nozzle_e) = hose.nozzle_entity {
+        //         commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
+        //     }
+        //     for mut hands in &mut q_hands {
+        //         if hands.left_grabbed == hose.nozzle_entity {
+        //             hands.left_grabbed = None;
+        //         }
+        //         if hands.right_grabbed == hose.nozzle_entity {
+        //             hands.right_grabbed = None;
+        //         }
+        //     }
+        //     return;
+        // }
+         }
     }
 
     // Standard interaction when not holding the nozzle:
@@ -1204,13 +1202,13 @@ pub fn gas_hose_interaction_system(
         } else {
             hose.attached_to = HoseAttachment::Stove;
         }
-    } else if dist_oven < 3.2 && dot_oven > 0.55 {
-        // Toggle / attach to Oven
-        if hose.attached_to == HoseAttachment::Oven {
-            hose.attached_to = HoseAttachment::Neither;
-        } else {
-            hose.attached_to = HoseAttachment::Oven;
-        }
+    // } else if dist_oven < 3.2 && dot_oven > 0.55 {
+    //     // Toggle / attach to Oven
+    //     if hose.attached_to == HoseAttachment::Oven {
+    //         hose.attached_to = HoseAttachment::Neither;
+    //     } else {
+    //         hose.attached_to = HoseAttachment::Oven;
+    //     }
     } else if (dist_loose < 3.0 && dot_loose > 0.55) || (cam_pos.distance(hose.wall_inlet_pos) < 3.0) {
         // Cycle attachment: Neither -> Stove -> Oven -> Neither
         hose.attached_to = match hose.attached_to {

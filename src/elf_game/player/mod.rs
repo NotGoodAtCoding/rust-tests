@@ -170,17 +170,22 @@ pub fn update_elf_physics(
             }
             movement.is_grounded = false;
             movement.velocity.y = 7.0; // Jump impulse
-        } else if jump_held {
-            // Held space on ground: does not trigger hop
-            if movement.time_since_landing > config.window.duration_secs() {
-                movement.consecutive_bhops = 0;
-                movement.current_max_speed = movement.base_speed;
-            }
         } else {
-            // Player lingered on ground without jumping, decay bhop combo
-            if movement.time_since_landing > config.window.duration_secs() {
-                movement.consecutive_bhops = 0;
-                movement.current_max_speed = movement.base_speed;
+            // Reset vertical velocity to 0.0 upon landing on ground after jumping
+            movement.velocity.y = 0.0;
+
+            if jump_held {
+                // Held space on ground: does not trigger hop
+                if movement.time_since_landing > config.window.duration_secs() {
+                    movement.consecutive_bhops = 0;
+                    movement.current_max_speed = movement.base_speed;
+                }
+            } else {
+                // Player lingered on ground without jumping, decay bhop combo
+                if movement.time_since_landing > config.window.duration_secs() {
+                    movement.consecutive_bhops = 0;
+                    movement.current_max_speed = movement.base_speed;
+                }
             }
         }
 

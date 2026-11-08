@@ -165,7 +165,13 @@ pub fn dual_hand_interaction_system(
     };
 
     let player_vel = movement_opt
-        .map(|m| m.velocity)
+        .map(|m| {
+            if m.is_grounded && m.velocity.y < 0.0 {
+                Vec3::new(m.velocity.x, 0.0, m.velocity.z)
+            } else {
+                m.velocity
+            }
+        })
         .unwrap_or(Vec3::ZERO);
 
     let left_hand_pos = q_left_visual.single().map(|gt| gt.translation()).unwrap_or(Vec3::ZERO);

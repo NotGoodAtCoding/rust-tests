@@ -286,6 +286,9 @@ pub fn elf_player_controller_system(
     for (transform, mut movement, mut controller, output_opt) in &mut q_player {
         if let Some(output) = output_opt {
             movement.is_grounded = output.grounded;
+            if movement.is_grounded && movement.velocity.y < 0.0 {
+                movement.velocity.y = 0.0;
+            }
         }
 
         // Calculate wish direction in local player space

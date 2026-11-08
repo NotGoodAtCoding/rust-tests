@@ -1063,6 +1063,80 @@ fn test_player_jump_throw_velocity_inheritance() {
 }
 
 #[test]
+fn test_player_vertical_velocity_reset_to_zero_on_landing_and_throw_unaffected() {
+    use rust_tests::elf_game::player::hands::{Grabbable, dual_hand_interaction_system};
+    use rust_tests::elf_game::player::controller::{RightHandVisual, FirstPersonCamera};
+    use rust_tests::elf_game::player::{BhopConfig, ElfHands, ElfMovement, update_elf_physics};
+    use bevy_rapier3d::prelude::Velocity;
+
+    // 1. Verify update_elf_physics resets vertical velocity to 0.0 upon landing
+    let mut movement = ElfMovement {
+        velocity: Vec3::new(2.0, -12.5, -4.0), // Falling velocity after jumping
+        is_grounded: true,                     // Just touched ground
+        ..default()
+    };
+    let config = BhopConfig::default();
+    let dt = 1.0 / 60.0;
+    let wish_dir = Vec3::ZERO;
+
+    update_elf_physics(dt, wish_dir, false, false, &config, &mut movement);
+    assert_eq!(
+        movement.velocity.y, 0.0,
+        "Player vertical velocity must be reset to 0.0 upon landing on ground"
+    );
+
+    // 2. Verify throw velocity logic inherits 0.0 vertical velocity (not negative) after landing
+    let mut app = App::new();
+    app.insert_resource(ButtonInput::<KeyCode>::default());
+    app.insert_resource(ButtonInput::<MouseButton>::default());
+    app.add_message::<rust_tests::elf_game::wrapping::UseToolOnPresentMessage>();
+    app.add_systems(Update, dual_hand_interaction_system);
+
+    let player_e = app.world_mut().spawn((
+        ElfHands::default(),
+        movement, // Grounded player with velocity.y = 0.0
+        Transform::from_xyz(0.0, 1.0, 0.0),
+    )).id();
+
+    app.world_mut().spawn((
+        FirstPersonCamera,
+        GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0)),
+    ));
+
+    app.world_mut().spawn((
+        RightHandVisual,
+        GlobalTransform::from(Transform::from_xyz(0.35, 1.0, -0.6)),
+    ));
+
+    let cube_entity = app.world_mut().spawn((
+        Grabbable,
+        Transform::from_xyz(0.35, 1.0, -0.7),
+        Velocity::zero(),
+    )).id();
+
+    // Grab into right hand
+    {
+        let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+        hands.right_grabbed = Some(cube_entity);
+    }
+
+    // Throw on ground
+    {
+        let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        mouse.press(MouseButton::Left);
+    }
+    app.update();
+
+    let vel = app.world().get::<Velocity>(cube_entity).unwrap();
+    // Base throw upward arc is ~1.48 m/s. It must NOT be negative!
+    assert!(
+        vel.linear.y > 1.0,
+        "Thrown object on the ground must retain positive upward arc (vy > 1.0), got vy = {}",
+        vel.linear.y
+    );
+}
+
+#[test]
 fn test_player_collision_box_spacing() {
     use rust_tests::elf_game::player::controller::{spawn_elf_player, ElfPlayer};
     use bevy_rapier3d::prelude::*;

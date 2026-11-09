@@ -418,14 +418,14 @@ To keep the project continuously moving forward without exceeding your 5-hour qu
 ### 9.1 Cookie Baking, Outdoor Gas Infrastructure & Pyro Hazard Chain
 * **Cookie Baking Task Loop**:
   * **Ingredient Retrieval**: The player retrieves recipe ingredients (flour sacks, sugar bags, butter blocks, and chocolate chip tins) from the newly expanded, spacious **Pantry**.
-  * **Kitchen Prep & Workshop Oven**: Ingredients are carried to the kitchen prep area, combined into cookie dough on a baking sheet, and placed into a newly constructed brick-and-iron **Workshop Oven**.
+  * **Kitchen Prep & Workshop Stove**: Ingredients are carried to the kitchen prep area, combined into cookie dough on a baking sheet, and baked using the cast-iron **Gas Furnace Stove**.
 * **Outdoor Propane Gas Valve**:
-  * The oven runs on external bottled gas.
-  * To fuel the oven burners, the player must open the exterior cabin door, run outside into the freezing snowy blizzard to turn on the heavy outdoor brass gas valve on the exterior wall, and sprint back inside before freezing or losing interior cabin heat.
+  * The stove runs on external bottled gas.
+  * To fuel the stove burners, the player must open the exterior cabin door, run outside into the freezing snowy blizzard to turn on the heavy outdoor brass gas valve on the exterior wall, and sprint back inside before freezing or losing interior cabin heat.
 * **Elf Mischief & Pyro Hazard Chain**:
-  * **Unattended Oven Risk**: If the player leaves the oven unattended with the outdoor gas valve open for too long:
-    1. A **Mischievous elf** creeps over to the oven and turns on the burner knobs, allowing unignited flammable gas to steadily fill the workshop air.
+  * **Unattended Stove Risk**: If the player leaves the stove unattended with the outdoor gas valve open for too long:
+    1. A **Mischievous elf** creeps over to the stove and turns on the burner knobs, allowing unignited flammable gas to steadily fill the workshop air.
     2. After a **15-second delay** of unignited gas flow, a **Pyro elf** (`ElfMischiefTrait::Pyro`) detects the gas concentration.
     3. The Pyro elf scouts the room for an active flame source (such as dynamic sparks drifting from the candle chandeliers, a workbench match, or a lighter).
-    4. Upon securing an ignition source, the Pyro elf gleefully rushes over to the oven.
+    4. Upon securing an ignition source, the Pyro elf gleefully rushes over to the stove.
     5. **Slapstick Catastrophic Explosion**: Ignites a massive physics blast that blows open doors, shatters windows, and launches presents, snack jars, and ragdoll elves flying into the high ceiling rafters!

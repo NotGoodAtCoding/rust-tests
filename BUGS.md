@@ -13,6 +13,8 @@ Cleanup: Colors and materials should be defined in assets/materials instead of i
 
 The lighting from the candles is flickering. This may be just due to debug fastbuild in cargo rather than a full binary build.
 
+Feature: Propane tank fixes: Make the outside propane receptacles a platform with the AnchorPoint function with an activation area that locks the propane tank in a specific fixed place until the player interacts with it. The platform near the house supplies the stove. The platform near the outside larger propane main tank refills the smaller propane tanks. The Stove inside should be able to be turned off and on separately from the gas supply. While off AND connected, propane is not consumed. If disconnected, then propane is consumed since it's leaking. 
+
 
 DONE:
 

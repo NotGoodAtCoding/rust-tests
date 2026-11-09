@@ -173,15 +173,15 @@ This document tracks the short-form task breakdown for each section of [`PLAN.md
 
 ### 5.1 Cookie Baking, Outdoor Gas Infrastructure & Pyro Hazard Chain
 * **Ingredient Gathering from Pantry**: Player fetches baking ingredients (flour sacks, sugar bags, butter blocks, chocolate chip tins) from the spacious **Pantry**.
-* **Workshop Brick Oven & Dough Prep**: Bring ingredients to the kitchen workstation, prepare cookie dough on baking sheets, and insert into a newly modeled **Workshop Brick Oven**.
-* **Outdoor Propane Gas Valve**: The oven is powered by exterior propane tanks. The player must open the exterior cabin door, run outside into the freezing blizzard to manually turn on the brass wall valve, and sprint back inside before taking freeze damage or cooling down the workshop.
-* **Elf Mischief & Pyro Hazard Chain**: Leaving the oven unattended with the outdoor gas valve active triggers a chaotic escalation:
-  1. A **Mischievous elf** sneaks up to the oven and turns on the burner dials, letting flammable gas permeate the workshop.
+* **Workshop Stove & Dough Prep**: Bring ingredients to the kitchen workstation, prepare cookie dough on baking sheets, and bake using the cast-iron **Gas Furnace Stove**.
+* **Outdoor Propane Gas Valve**: The stove is powered by exterior propane tanks. The player must open the exterior cabin door, run outside into the freezing blizzard to manually turn on the brass wall valve, and sprint back inside before taking freeze damage or cooling down the workshop.
+* **Elf Mischief & Pyro Hazard Chain**: Leaving the stove unattended with the outdoor gas valve active triggers a chaotic escalation:
+  1. A **Mischievous elf** sneaks up to the stove and turns on the burner dials, letting flammable gas permeate the workshop.
   2. After **15 seconds** of unignited gas accumulation, a **Pyro elf** (`ElfMischiefTrait::Pyro`) detects the gas concentration.
-  3. The Pyro elf searches for an open flame source (chandelier candle embers, matches, or a lighter) and charges toward the oven.
+  3. The Pyro elf searches for an open flame source (chandelier candle embers, matches, or a lighter) and charges toward the stove.
   4. **Slapstick Catastrophic Explosion**: Ignites a massive physics shockwave that knocks open doors, shatters windows, and propels presents, snack jars, and ragdoll elves flying into the high ceiling rafters!
 
 ### 5.2 Items and Interactions
 * **Auto Wrapper**: Wraps any physics object in wrapping paper. The larger the item, the longer it takes. Show a progress bar when MOUSE1 is held on a physics item. Once complete, the item should have a wrapping paper shader or texture. If used on an elf, this immobilizes them for 10 seconds, they become a ragdoll and occasionally bounce around slightly until they break free, at which time the wrapping paper texture is removed.
 * **Tinsel Hand Cannon**: Shoots a strand of tinsel, which can act as a climbable rope and has high friction so that it hangs on to beams and rafters and items. This is equipable by elves if they have the Mischief trait. If an elf equips it, it can fire at the last thing that knocked it down. When an elf fires the Tinsel Hand Cannon, it knocks themselves backward at high speed and ragdolls them. 
-* **Item classes** There are grabbable items, like presents and physics objects, and some while held in hand can produce an effect like shooting. Other items can be equipped by the player like hats. Hats are equipped by holding them and then pressing F. If wearing a hat, pressing F will put it in a free hand if there is a free hand. If there is no free hand, then pressing F does not unequip the hat, unless a hand is holding a different hat, in which case they are swapped.
+* **Item classes** There are grabbable items, like presents and physics objects, and some while held in hand can produce an effect like shooting wrapping paper or tinsel. Other items can be equipped by the player like hats. Hats are equipped by holding them and then pressing F. If wearing a hat, pressing F will put it in a free hand if there is a free hand. If there is no free hand, then pressing F does not unequip the hat, unless a hand is holding a different hat, in which case they are swapped.

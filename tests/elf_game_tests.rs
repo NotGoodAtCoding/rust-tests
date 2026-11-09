@@ -7793,7 +7793,7 @@ fn test_dialogue_ui_bottom_prompt_box_and_keyboard_cursor_reset() {
 #[test]
 fn test_oven_stove_models_and_gas_hose_attachment() {
     use rust_tests::elf_game::workshop::stove::{
-        spawn_oven_stove_and_propane_scene, GasFurnaceStove, WorkshopOven, GasHose,
+        spawn_oven_stove_and_propane_scene, GasFurnaceStove, GasHose,
         HoseAttachment, PropaneTankHolder, MainPropaneRefillStation, PropaneTank,
     };
 
@@ -7807,22 +7807,18 @@ fn test_oven_stove_models_and_gas_hose_attachment() {
     let mut stove_q = app.world_mut().query::<(&GasFurnaceStove, &Transform)>();
     let (stove, stove_tf) = stove_q.iter(app.world()).next().expect("Stove must exist");
     assert!(stove.is_lit, "Furnace stove should be lit by default");
+    assert_eq!(stove.internal_temp, 20.0, "Stove incorporates oven baking temp functionality");
+    assert!(stove.is_heated, "Stove incorporates oven heating functionality");
     assert!((stove_tf.translation.x - (-6.5)).abs() < 0.2, "Stove must be at X ≈ -6.5");
     assert!((stove_tf.translation.z - (-11.4)).abs() < 0.2, "Stove must be at Z ≈ -11.4");
 
-    // 2. Baker's oven entity
-    let mut oven_q = app.world_mut().query::<(&WorkshopOven, &Transform)>();
-    let (oven, oven_tf) = oven_q.iter(app.world()).next().expect("Oven must exist");
-    assert_eq!(oven.internal_temp, 20.0);
-    assert!((oven_tf.translation.x - (-11.4)).abs() < 0.2, "Oven must be at X ≈ -11.4");
-
-    // 3. Flexible yellow gas hose entity
+    // 2. Flexible yellow gas hose entity
     let mut hose_q = app.world_mut().query::<&GasHose>();
     let hose = hose_q.iter(app.world()).next().expect("Flexible yellow hose must exist");
     assert_eq!(hose.attached_to, HoseAttachment::Stove, "Hose must default to Stove attachment");
     assert!(!hose.is_venting_gas);
 
-    // 4. Outside propane tank holder and tanks
+    // 3. Outside propane tank holder and tanks
     let mut holder_q = app.world_mut().query::<(&PropaneTankHolder, &Transform)>();
     let (holder, holder_tf) = holder_q.iter(app.world()).next().expect("Propane holder must exist");
     assert!(holder.connected_tank.is_some(), "Holder must have active connected tank");
@@ -7832,7 +7828,7 @@ fn test_oven_stove_models_and_gas_hose_attachment() {
     let tank_count = tanks_q.iter(app.world()).count();
     assert!(tank_count >= 2, "Must spawn at least active and spare propane tanks");
 
-    // 5. Main bulk propane refill tank station in snowy landscape
+    // 4. Main bulk propane refill tank station in snowy landscape
     let mut station_q = app.world_mut().query::<(&MainPropaneRefillStation, &Transform)>();
     let (_, station_tf) = station_q.iter(app.world()).next().expect("Main bulk tank must exist");
     assert!((station_tf.translation.x - (-16.0)).abs() < 0.2, "Main bulk tank at X ≈ -16.0");
@@ -7861,12 +7857,11 @@ fn test_workshop_temperature_heating_and_freezing_spawner_halt() {
     app.add_systems(Update, (workshop_temperature_system, conveyor_cube_spawner_system));
 
     // Spawn stove and hose
-    app.world_mut().spawn(GasFurnaceStove { is_lit: true, heat_output: 1.5 });
+    app.world_mut().spawn(GasFurnaceStove { is_lit: true, heat_output: 1.5, ..default() });
     let hose_e = app.world_mut().spawn(GasHose {
         attached_to: HoseAttachment::Stove,
         wall_inlet_pos: Vec3::ZERO,
         stove_anchor_pos: Vec3::ZERO,
-        oven_anchor_pos: Vec3::ZERO,
         loose_nozzle_pos: Vec3::ZERO,
         is_venting_gas: false,
         ..default()
@@ -8017,7 +8012,6 @@ fn test_propane_tank_flow_consumption_and_refill() {
         attached_to: HoseAttachment::Stove,
         wall_inlet_pos: Vec3::ZERO,
         stove_anchor_pos: Vec3::ZERO,
-        oven_anchor_pos: Vec3::ZERO,
         loose_nozzle_pos: Vec3::ZERO,
         is_venting_gas: false,
         ..default()
@@ -8127,7 +8121,6 @@ fn test_gas_leak_flame_explosion() {
         attached_to: HoseAttachment::Neither,
         wall_inlet_pos: Vec3::new(-10.0, 0.85, -12.85),
         stove_anchor_pos: Vec3::new(-9.6, 0.65, -12.2),
-        oven_anchor_pos: Vec3::new(-10.4, 0.65, -12.2),
         loose_nozzle_pos: nozzle_pos,
         is_venting_gas: true,
         snap_distance: 0.22,
@@ -8188,7 +8181,7 @@ fn test_gas_leak_flame_explosion() {
 fn test_flexible_chain_yellow_gas_hose_and_anchors() {
     use rust_tests::elf_game::workshop::stove::{
         spawn_oven_stove_and_propane_scene, GasHose, GasHoseSegment, GasHoseCouplerNozzle,
-        StoveGasAnchor, OvenGasAnchor, HoseAttachment,
+        StoveGasAnchor, HoseAttachment,
     };
     use rust_tests::elf_game::player::hands::Grabbable;
 
@@ -8206,7 +8199,6 @@ fn test_flexible_chain_yellow_gas_hose_and_anchors() {
     assert!((hose.wall_inlet_pos.y - 1.15).abs() < 0.1);
     assert!((hose.wall_inlet_pos.z - (-12.85)).abs() < 0.1);
     assert!((hose.stove_anchor_pos.x - (-7.34)).abs() < 0.1);
-    assert!((hose.oven_anchor_pos.x - (-10.42)).abs() < 0.1);
 
     // 2. 7 chain links
     let mut seg_q = app.world_mut().query::<&GasHoseSegment>();
@@ -8217,12 +8209,9 @@ fn test_flexible_chain_yellow_gas_hose_and_anchors() {
     let mut nozzle_q = app.world_mut().query::<(&GasHoseCouplerNozzle, &Grabbable)>();
     assert_eq!(nozzle_q.iter(app.world()).count(), 1, "Coupler nozzle must be Grabbable by player");
 
-    // 4. Detachable anchors on stove and oven
+    // 4. Detachable anchor on stove
     let mut stove_anchor_q = app.world_mut().query::<&StoveGasAnchor>();
     assert_eq!(stove_anchor_q.iter(app.world()).count(), 1, "Stove must have a gas anchor fitting");
-
-    let mut oven_anchor_q = app.world_mut().query::<&OvenGasAnchor>();
-    assert_eq!(oven_anchor_q.iter(app.world()).count(), 1, "Oven must have a gas anchor fitting");
 
     // 5. Rapier RopeJoint physics integration
     use bevy_rapier3d::prelude::{ImpulseJoint, TypedJoint, RigidBody};
@@ -8267,7 +8256,7 @@ fn test_gas_hose_snap_to_connect_mechanics() {
         GasHoseCouplerNozzle,
         Grabbable,
         HeldByPlayer,
-        Transform::from_xyz(-9.60, 0.85, -12.0), // Within 0.05m of oven anchor (-9.62, 0.85, -12.0)
+        Transform::from_xyz(-8.42, 0.85, -12.0), // Within 0.05m of stove anchor (-8.44, 0.85, -12.0)
     )).id();
 
     // Spawn hose attached to neither
@@ -8275,7 +8264,6 @@ fn test_gas_hose_snap_to_connect_mechanics() {
         attached_to: HoseAttachment::Neither,
         wall_inlet_pos: Vec3::new(-9.05, 1.15, -12.85),
         stove_anchor_pos: Vec3::new(-8.44, 0.85, -12.0),
-        oven_anchor_pos: Vec3::new(-9.62, 0.85, -12.0),
         loose_nozzle_pos: Vec3::new(-9.05, 0.05, -12.0),
         is_venting_gas: true,
         snap_distance: 0.22,
@@ -8293,10 +8281,10 @@ fn test_gas_hose_snap_to_connect_mechanics() {
 
     app.update();
 
-    // 1. Verify hose snapped to Oven
+    // 1. Verify hose snapped to Stove
     let mut hose_q = app.world_mut().query::<&GasHose>();
     let hose = hose_q.iter(app.world()).next().unwrap();
-    assert_eq!(hose.attached_to, HoseAttachment::Oven, "Hose must snap to Oven when held within 0.22m");
+    assert_eq!(hose.attached_to, HoseAttachment::Stove, "Hose must snap to Stove when held within 0.22m");
     assert!(!hose.is_venting_gas);
 
     // 2. Verify player grab was cleanly released upon snapping
@@ -8538,7 +8526,7 @@ fn test_taller_stable_door_feeding_bucket_and_gas_hose_visual_indicators() {
                 spawn_oven_stove_and_propane_scene, appliance_visual_indicators_system,
                 gas_hose_interaction_system, ApplianceVisualMaterials, FurnaceFireboxWindow,
                 FurnaceFireGlowLight, GasHose,
-                HoseAttachment, OvenDoorWindow, OvenGasAnchor, StoveBurnerFlame, StoveGasAnchor,
+                HoseAttachment, StoveBurnerFlame, StoveGasAnchor,
                 WorkshopGasLine,
             },
         },
@@ -8612,8 +8600,6 @@ fn test_taller_stable_door_feeding_bucket_and_gas_hose_visual_indicators() {
 
     let mut anchor_q = stove_app.world_mut().query::<(&StoveGasAnchor, &Collider)>();
     let (_, _stove_col) = anchor_q.iter(stove_app.world()).next().expect("StoveGasAnchor must exist");
-    let mut oven_anchor_q = stove_app.world_mut().query::<(&OvenGasAnchor, &Collider)>();
-    let (_, _oven_col) = oven_anchor_q.iter(stove_app.world()).next().expect("OvenGasAnchor must exist");
 
     // 5. Appliance visual indicators (Furnace window glowing vs cool dark gray, Stove blue burner flames)
     let mut vis_app = App::new();
@@ -8654,14 +8640,14 @@ fn test_taller_stable_door_feeding_bucket_and_gas_hose_visual_indicators() {
         assert_eq!(light.intensity, 0.0, "Furnace fire light must be off when detached");
     }
 
-    // Attach hose to Oven:
+    // Re-attach hose to Stove:
     let mut hose = vis_app.world_mut().query::<&mut GasHose>().single_mut(vis_app.world_mut()).unwrap();
-    hose.attached_to = HoseAttachment::Oven;
+    hose.attached_to = HoseAttachment::Stove;
     vis_app.update();
 
-    let mut oven_win_q = vis_app.world_mut().query::<(&OvenDoorWindow, &MeshMaterial3d<StandardMaterial>)>();
-    for (_, mat) in oven_win_q.iter(vis_app.world()) {
-        assert_eq!(mat.0, mats.glowing_ember, "Oven window must glow when attached to Oven");
+    let mut flame_q = vis_app.world_mut().query::<(&StoveBurnerFlame, &Visibility)>();
+    for (_, vis) in flame_q.iter(vis_app.world()) {
+        assert_eq!(*vis, Visibility::Inherited, "Stove burners must show blue flames when re-attached to Stove");
     }
 
     // 6. Automatic attach to anchor player is facing while holding hose
@@ -8675,10 +8661,10 @@ fn test_taller_stable_door_feeding_bucket_and_gas_hose_visual_indicators() {
     auto_app.add_systems(Update, gas_hose_interaction_system);
     auto_app.update();
 
-    let (nozzle_e, _stove_anchor_pos, oven_anchor_pos) = {
+    let (nozzle_e, stove_anchor_pos) = {
         let mut q = auto_app.world_mut().query::<&GasHose>();
         let h = q.single(auto_app.world()).unwrap();
-        (h.nozzle_entity.unwrap(), h.stove_anchor_pos, h.oven_anchor_pos)
+        (h.nozzle_entity.unwrap(), h.stove_anchor_pos)
     };
 
     // Detach hose, player holds nozzle
@@ -8688,9 +8674,9 @@ fn test_taller_stable_door_feeding_bucket_and_gas_hose_visual_indicators() {
     }
     auto_app.world_mut().entity_mut(nozzle_e).insert(HeldByPlayer);
 
-    // Player faces Oven anchor: cam placed 2m south of oven anchor, looking North towards oven_anchor_pos
-    let cam_pos = Vec3::new(oven_anchor_pos.x, 1.2, oven_anchor_pos.z + 2.0);
-    let cam_target = oven_anchor_pos;
+    // Player faces Stove anchor: cam placed 2m south of stove anchor, looking North towards stove_anchor_pos
+    let cam_pos = Vec3::new(stove_anchor_pos.x, 1.2, stove_anchor_pos.z + 2.0);
+    let cam_target = stove_anchor_pos;
     let cam_fwd = (cam_target - cam_pos).normalize();
     auto_app.world_mut().spawn((
         FirstPersonCamera,
@@ -8703,7 +8689,7 @@ fn test_taller_stable_door_feeding_bucket_and_gas_hose_visual_indicators() {
 
     let mut check_q = auto_app.world_mut().query::<&GasHose>();
     let updated_h = check_q.single(auto_app.world()).unwrap();
-    assert_eq!(updated_h.attached_to, HoseAttachment::Oven, "Hose must automatically attach to the Oven anchor player is facing");
+    assert_eq!(updated_h.attached_to, HoseAttachment::Stove, "Hose must automatically attach to the Stove anchor player is facing");
     assert!(auto_app.world().get::<HeldByPlayer>(nozzle_e).is_none(), "Player hold must be released upon automatic attachment");
 }
 
@@ -8868,10 +8854,10 @@ fn test_gas_hose_rapier_rope_joint_physics_simulation() {
         assert_eq!(*nozzle_rb, RigidBody::Dynamic, "Nozzle must switch to Dynamic when detached");
     }
 
-    // 4. Attach hose to Oven: nozzle becomes Fixed rigid body at oven anchor
+    // 4. Re-attach hose to Stove: nozzle becomes Fixed rigid body at stove anchor
     {
         let mut hose = app.world_mut().get_mut::<GasHose>(hose_e).unwrap();
-        hose.attached_to = HoseAttachment::Oven;
+        hose.attached_to = HoseAttachment::Stove;
     }
     app.update();
 
@@ -8879,8 +8865,8 @@ fn test_gas_hose_rapier_rope_joint_physics_simulation() {
         let nozzle_rb = app.world().get::<RigidBody>(nozzle_e).unwrap();
         let nozzle_tf = app.world().get::<Transform>(nozzle_e).unwrap();
         let hose = app.world().get::<GasHose>(hose_e).unwrap();
-        assert_eq!(*nozzle_rb, RigidBody::Fixed, "Nozzle must switch to Fixed when attached to Oven");
-        assert_eq!(nozzle_tf.translation, hose.oven_anchor_pos, "Nozzle must be positioned at oven anchor");
+        assert_eq!(*nozzle_rb, RigidBody::Fixed, "Nozzle must switch to Fixed when attached to Stove");
+        assert_eq!(nozzle_tf.translation, hose.stove_anchor_pos, "Nozzle must be positioned at stove anchor");
     }
 }
 
@@ -8927,8 +8913,8 @@ fn test_generic_reusable_anchor_point_and_matching_traits() {
 
     let mut hose_q = app.world_mut().query::<&GasHose>();
     let hose = hose_q.iter(app.world()).next().expect("GasHose must exist");
-    let anchor_dist = hose.stove_anchor_pos.distance(hose.oven_anchor_pos);
-    assert!(anchor_dist > 3.0, "Stove and Oven anchors must be further away (> 3.0m apart), dist = {}", anchor_dist);
+    let anchor_dist = hose.stove_anchor_pos.distance(hose.wall_inlet_pos);
+    assert!(anchor_dist > 1.5, "Stove anchor must be distanced from wall inlet (> 1.5m apart), dist = {}", anchor_dist);
 
     // 2. Verify Stove attachment point is red and has smaller active area (< 0.25)
     let mut anchor_q = app.world_mut().query::<(&StoveGasAnchor, &MeshMaterial3d<StandardMaterial>, &Collider)>();

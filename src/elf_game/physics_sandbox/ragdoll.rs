@@ -43,6 +43,12 @@ pub enum ElfNpcState {
     Philosophizing,
     /// Perched fast asleep atop the dynamic candle chandelier until knocked loose by an impulse.
     PerchedAsleep,
+    /// Mischievous elf sneaking over to unattended stove to tamper with burner knobs and leak unignited gas.
+    TamperingWithStove,
+    /// Pyro elf detecting unignited gas concentration and scouting the workshop for an open flame source.
+    SeekingFlameSource,
+    /// Pyro elf carrying an ignition flame source and gleefully sprinting toward the stove to ignite it.
+    ChargingStoveWithFlame,
 }
 
 /// Easter egg state for an elf perched asleep atop a dynamic candle chandelier.
@@ -139,6 +145,7 @@ pub enum ElfNodePurpose {
     HatCloset,
     KleptoStash,
     MirrorNode,
+    FurnaceStove,
 }
 
 /// Target option for dynamic waypoint navigation for Elves, Moose, and other NPCs.
@@ -229,7 +236,7 @@ impl ElfNavGraph {
                 name: "NorthwestPass".to_string(),
                 position: Vec3::new(-6.5, 0.45, -5.5),
                 radius: 1.4,
-                neighbors: vec![1, 4, 7, 16],
+                neighbors: vec![1, 4, 7, 16, 20],
                 purpose: None,
             },
             // Node 6: Central Crossing
@@ -357,6 +364,15 @@ impl ElfNavGraph {
                 radius: 1.2,
                 neighbors: vec![11, 12],
                 purpose: Some(ElfNodePurpose::MirrorNode),
+            },
+            // Node 20: Furnace Stove (North wall at X = -7.34, Z = -10.0)
+            ElfNavNode {
+                id: 20,
+                name: "FurnaceStove".to_string(),
+                position: Vec3::new(-7.34, 0.45, -10.0),
+                radius: 1.2,
+                neighbors: vec![5],
+                purpose: Some(ElfNodePurpose::FurnaceStove),
             },
         ];
 
@@ -1586,6 +1602,9 @@ pub fn elf_assistant_ai_system(
             | ElfNpcState::FetchingMooseTreat
             | ElfNpcState::DeliveringMooseTreat
             | ElfNpcState::OpeningPantryDoor
+            | ElfNpcState::TamperingWithStove
+            | ElfNpcState::SeekingFlameSource
+            | ElfNpcState::ChargingStoveWithFlame
             | ElfNpcState::Philosophizing => {
                 // If Moose is agitated or rampaging, panic immediately!
                 if moose_breached || moose_agitated {
@@ -2719,7 +2738,10 @@ pub fn elf_ragdoll_limb_animation_system(
             | ElfNpcState::StashingPresent
             | ElfNpcState::FetchingMooseTreat
             | ElfNpcState::DeliveringMooseTreat
-            | ElfNpcState::OpeningPantryDoor => {
+            | ElfNpcState::OpeningPantryDoor
+            | ElfNpcState::TamperingWithStove
+            | ElfNpcState::SeekingFlameSource
+            | ElfNpcState::ChargingStoveWithFlame => {
                 let walk_t = elf.walk_timer;
                 let gait_sin = (walk_t * 7.5).sin();
 

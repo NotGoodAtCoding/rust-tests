@@ -54,6 +54,7 @@ impl Plugin for WorkshopPlugin {
             .init_resource::<room::CandleLightingConfig>()
             .init_resource::<stove::WorkshopTemperature>()
             .init_resource::<stove::WorkshopGasLine>()
+            .init_resource::<stove::WorkshopGasConcentration>()
             .add_message::<UnlockDoorMessage>()
             .add_message::<progression::PlasmaExplosionEvent>()
             .add_message::<progression::TriggerPlasmaWrapperMessage>()
@@ -92,10 +93,16 @@ impl Plugin for WorkshopPlugin {
                     stove::stove_interaction_system,
                     stove::gas_hose_chain_physics_system,
                     stove::gas_hose_interaction_system,
+                ),
+            )
+            .add_systems(
+                Update,
+                (
                     stove::appliance_visual_indicators_system,
                     stove::propane_tank_refill_and_holder_system,
                     stove::gas_leak_flame_explosion_system,
                     stove::explosion_flash_fade_system,
+                    stove::unattended_stove_and_pyro_hazard_system,
                 ),
             )
             .add_systems(

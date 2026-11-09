@@ -3,9 +3,16 @@ use bevy::ecs::message::Message;
 use bevy_rapier3d::prelude::*;
 use crate::elf_game::{
     assets::{WorkshopMaterials, objects::{AnchorPoint, AnchorTrait, LockedInAnchor}},
-    physics_sandbox::{ElfAssistant, ElfNpcState},
+    physics_sandbox::{
+        ragdoll::{ElfMischiefTrait, ElfNavGraph, ElfNodePurpose},
+        ElfAssistant, ElfNpcState,
+    },
     player::{
         ElfMovement, controller::{ElfPlayer, FirstPersonCamera}, hands::{Grabbable, HeldByPlayer, HeavyItem},
+    },
+    workshop::{
+        pantry::PantryDoor,
+        progression::{DoorState, WorkshopDoor},
     },
 };
 
@@ -1678,3 +1685,293 @@ pub fn explosion_flash_fade_system(
 
 // Particle helper for candle emitter import
 pub use crate::elf_game::workshop::room::CandleParticle;
+
+/// Tracks accumulation of flammable gas concentration in the workshop atmosphere
+/// from unignited stove venting or disconnected hoses, and manages the unattended stove risk timer.
+#[derive(Resource, Debug, Clone)]
+pub struct WorkshopGasConcentration {
+    pub concentration_timer: f32,
+    pub is_leaking_unignited: bool,
+    pub detection_threshold: f32, // 15.0 seconds
+    pub stove_tampered_by_elf: bool,
+    pub unattended_timer: f32,
+}
+
+impl Default for WorkshopGasConcentration {
+    fn default() -> Self {
+        Self {
+            concentration_timer: 0.0,
+            is_leaking_unignited: false,
+            detection_threshold: 15.0,
+            stove_tampered_by_elf: false,
+            unattended_timer: 0.0,
+        }
+    }
+}
+
+fn resolve_pos(tf: &Transform, gt: Option<&GlobalTransform>) -> Vec3 {
+    if let Some(gt) = gt {
+        let t = gt.translation();
+        if t != Vec3::ZERO {
+            return t;
+        }
+    }
+    tf.translation
+}
+
+/// Orchestrates the 4-stage Elf Mischief Pyro Hazard Chain:
+/// 1. Unattended stove tracking (> 3.5m from player for 5+s) triggers mischievous elf tampering
+/// 2. Elf tampers with burner knobs, venting unignited gas
+/// 3. Gas concentration accumulates to 15s threshold
+/// 4. Pyro elf detects gas concentration, scouts for active FlameSource, and charges stove causing catastrophic slapstick explosion
+pub fn unattended_stove_and_pyro_hazard_system(
+    time: Option<Res<Time>>,
+    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
+    mut commands: Commands,
+    gas_line: Option<Res<WorkshopGasLine>>,
+    mut gas_concentration: Option<ResMut<WorkshopGasConcentration>>,
+    mut explosion_events: MessageWriter<FieryExplosionEvent>,
+    mut q_stove: Query<(&Transform, Option<&GlobalTransform>, &mut GasFurnaceStove)>,
+    q_hose: Query<&GasHose>,
+    q_flames: Query<(Entity, &Transform, Option<&GlobalTransform>), With<FlameSource>>,
+    mut q_player: Query<(&Transform, Option<&GlobalTransform>, Option<&mut ElfMovement>), With<ElfPlayer>>,
+    mut q_elves: Query<
+        (Entity, &Transform, Option<&GlobalTransform>, &mut Velocity, &mut ElfAssistant),
+        Without<ElfPlayer>,
+    >,
+    mut q_doors: Query<&mut WorkshopDoor>,
+    mut q_pantry_doors: Query<&mut PantryDoor>,
+    mut q_dynamics: Query<
+        (&Transform, &mut Velocity),
+        (With<Grabbable>, Without<ElfPlayer>, Without<ElfAssistant>),
+    >,
+    nav_graph: Option<Res<ElfNavGraph>>,
+) {
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+
+    let dt = time.as_ref().map(|t| t.delta_secs()).unwrap_or(0.016);
+    let gas_pressure = gas_line.as_ref().map(|g| g.pressure_psi).unwrap_or(100.0);
+    let hose_attached_to_stove = q_hose.iter().any(|h| h.attached_to == HoseAttachment::Stove);
+    let hose_disconnected = q_hose.iter().any(|h| h.attached_to == HoseAttachment::Neither);
+
+    let Some((stove_tf, stove_gt, mut stove)) = q_stove.iter_mut().next() else {
+        return;
+    };
+    let stove_pos = resolve_pos(stove_tf, stove_gt);
+
+    let Some(ref mut gas_conc) = gas_concentration else {
+        return;
+    };
+
+    // 1. Unattended stove tracking
+    let player_near_stove = q_player.iter().any(|(p_tf, p_gt, _)| {
+        let p_pos = resolve_pos(p_tf, p_gt);
+        p_pos.distance(stove_pos) <= 3.5
+    });
+
+    if player_near_stove {
+        gas_conc.unattended_timer = 0.0;
+    } else {
+        gas_conc.unattended_timer += dt;
+    }
+
+    // If unattended for 5+s, gas is connected & pressurized, recruit a mischievous elf to tamper
+    if gas_conc.unattended_timer >= 5.0 && hose_attached_to_stove && gas_pressure > 0.0 && !gas_conc.stove_tampered_by_elf {
+        for (_e, _tf, _gt, _vel, mut elf) in &mut q_elves {
+            if elf.state == ElfNpcState::Wandering && elf.mischief_trait != ElfMischiefTrait::Lazy {
+                elf.state = ElfNpcState::TamperingWithStove;
+                elf.target_waypoint = stove_pos;
+                if let Some(ref graph) = nav_graph {
+                    if let Some(stove_node) = graph.find_node_by_purpose(ElfNodePurpose::FurnaceStove) {
+                        elf.target_node = stove_node;
+                        if let Some(path) = graph.find_path(elf.current_node, stove_node) {
+                            elf.path = path;
+                            elf.path_step = 0;
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    // 2. Mischievous elf tampering interaction
+    for (_e, elf_tf, elf_gt, mut vel, mut elf) in &mut q_elves {
+        if elf.state == ElfNpcState::TamperingWithStove {
+            let elf_pos = resolve_pos(elf_tf, elf_gt);
+            let dist_to_stove = elf_pos.distance(stove_pos);
+
+            if dist_to_stove < 1.3 {
+                // Tamper with burner knobs: turn gas ON but leave unignited / unlit!
+                stove.is_on = true;
+                stove.is_lit = false;
+                gas_conc.stove_tampered_by_elf = true;
+                gas_conc.is_leaking_unignited = true;
+                elf.state = ElfNpcState::Wandering;
+                vel.linear = Vec3::ZERO;
+            } else {
+                // Steer towards stove
+                let dir = (stove_pos - elf_pos).normalize_or_zero();
+                vel.linear.x = dir.x * elf.walk_speed;
+                vel.linear.z = dir.z * elf.walk_speed;
+            }
+        }
+    }
+
+    // 3. Gas Concentration Accumulation
+    let is_venting_unignited = (stove.is_on && !stove.is_lit && hose_attached_to_stove && gas_pressure > 0.0)
+        || (hose_disconnected && gas_pressure > 0.0);
+
+    if is_venting_unignited {
+        gas_conc.is_leaking_unignited = true;
+        gas_conc.concentration_timer = (gas_conc.concentration_timer + dt).min(30.0);
+    } else if stove.is_on && stove.is_lit {
+        gas_conc.is_leaking_unignited = false;
+        gas_conc.concentration_timer = (gas_conc.concentration_timer - dt * 2.0).max(0.0);
+    } else {
+        gas_conc.is_leaking_unignited = false;
+        gas_conc.concentration_timer = (gas_conc.concentration_timer - dt * 0.5).max(0.0);
+    }
+
+    // 4. Pyro elf detection at >= 15s threshold
+    if gas_conc.concentration_timer >= gas_conc.detection_threshold {
+        for (_e, _tf, _gt, _vel, mut elf) in &mut q_elves {
+            if elf.mischief_trait == ElfMischiefTrait::Pyro
+                && elf.state != ElfNpcState::SeekingFlameSource
+                && elf.state != ElfNpcState::ChargingStoveWithFlame
+                && elf.state != ElfNpcState::RagdollTumble
+            {
+                elf.state = ElfNpcState::SeekingFlameSource;
+            }
+        }
+    }
+
+    // 5. Pyro elf seeking flame source
+    for (_e, elf_tf, elf_gt, mut vel, mut elf) in &mut q_elves {
+        if elf.state == ElfNpcState::SeekingFlameSource {
+            let elf_pos = resolve_pos(elf_tf, elf_gt);
+
+            // Find nearest FlameSource
+            let nearest_flame = q_flames.iter().min_by(|(_, tf_a, gt_a), (_, tf_b, gt_b)| {
+                let pos_a = resolve_pos(tf_a, *gt_a);
+                let pos_b = resolve_pos(tf_b, *gt_b);
+                let dist_a = elf_pos.distance_squared(pos_a);
+                let dist_b = elf_pos.distance_squared(pos_b);
+                dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            if let Some((_flame_e, f_tf, f_gt)) = nearest_flame {
+                let flame_pos = resolve_pos(f_tf, f_gt);
+                let dist_to_flame = elf_pos.distance(flame_pos);
+
+                if dist_to_flame < 1.3 {
+                    // Acquired flame source! Transition to sprinting charge toward stove!
+                    elf.state = ElfNpcState::ChargingStoveWithFlame;
+                    elf.walk_speed = 4.5; // gleeful sprint!
+                } else {
+                    let dir = (flame_pos - elf_pos).normalize_or_zero();
+                    vel.linear.x = dir.x * elf.walk_speed;
+                    vel.linear.z = dir.z * elf.walk_speed;
+                }
+            } else {
+                // Fallback: if no flames found, Pyro elf uses matches in pocket and charges directly
+                elf.state = ElfNpcState::ChargingStoveWithFlame;
+                elf.walk_speed = 4.5;
+            }
+        }
+    }
+
+    // 6. Charging toward stove with flame & Slapstick Catastrophic Explosion!
+    let mut triggered_explosion = false;
+    for (_e, elf_tf, elf_gt, mut vel, elf) in &mut q_elves {
+        if elf.state == ElfNpcState::ChargingStoveWithFlame {
+            let elf_pos = resolve_pos(elf_tf, elf_gt);
+            let dist_to_stove = elf_pos.distance(stove_pos);
+
+            if dist_to_stove < 1.3 {
+                // BOOM! Slapstick Catastrophic Explosion!
+                triggered_explosion = true;
+                break;
+            } else {
+                let dir = (stove_pos - elf_pos).normalize_or_zero();
+                vel.linear.x = dir.x * 4.5;
+                vel.linear.z = dir.z * 4.5;
+            }
+        }
+    }
+
+    if triggered_explosion {
+        let blast_radius = 6.0;
+        let blast_impulse = 35.0;
+
+        explosion_events.write(FieryExplosionEvent {
+            origin: stove_pos,
+            blast_radius,
+            blast_impulse,
+        });
+
+        // Reset gas state and turn off stove to avoid instant re-ignition
+        gas_conc.concentration_timer = 0.0;
+        gas_conc.stove_tampered_by_elf = false;
+        gas_conc.is_leaking_unignited = false;
+        stove.is_on = false;
+        stove.is_lit = false;
+
+        // 1. Blast light flash
+        commands.spawn((
+            PointLight {
+                color: Color::srgb(1.0, 0.40, 0.05),
+                intensity: 45000.0,
+                radius: 12.0,
+                shadow_maps_enabled: false,
+                ..default()
+            },
+            Transform::from_translation(stove_pos + Vec3::Y * 0.8),
+            ExplosionFlash { timer: 0.6 },
+            Name::new("CatastrophicGasExplosionFlash"),
+        ));
+
+        // 2. Blow open doors
+        for mut door in &mut q_doors {
+            door.state = DoorState::Open;
+        }
+        for mut p_door in &mut q_pantry_doors {
+            p_door.current_angle = 1.4;
+            p_door.was_closed = false;
+        }
+
+        // 3. Player blast impulse
+        for (_, _, ref mut p_mov) in &mut q_player {
+            if let Some(mov) = p_mov {
+                mov.velocity += Vec3::new(0.0, 10.0, 15.0);
+            }
+        }
+
+        // 4. Knock ragdoll elves flying into high vaulted rafters!
+        for (_e, e_tf, e_gt, mut vel, mut elf) in &mut q_elves {
+            let e_pos = e_gt.map(|g| g.translation()).unwrap_or(e_tf.translation);
+            let diff = e_pos - stove_pos;
+            let dist = diff.length().max(0.1);
+            let dir = diff / dist;
+
+            vel.linear = dir * blast_impulse + Vec3::Y * 14.0; // Launch high into rafters!
+            vel.angular = Vec3::new(12.0, 6.0, -8.0);
+            elf.state = ElfNpcState::RagdollTumble;
+            elf.tumble_timer = 0.0;
+        }
+
+        // 5. Scatter dynamic physics props
+        for (d_tf, mut vel) in &mut q_dynamics {
+            let diff = d_tf.translation - stove_pos;
+            let dist = diff.length().max(0.1);
+            if dist < blast_radius * 1.5 {
+                let dir = diff / dist;
+                let force = (1.0 - dist / (blast_radius * 1.5)) * blast_impulse * 1.4;
+                vel.linear = dir * force + Vec3::Y * 9.0;
+            }
+        }
+    }
+}

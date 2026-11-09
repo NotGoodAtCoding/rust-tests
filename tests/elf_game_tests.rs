@@ -13114,4 +13114,239 @@ fn test_baking_unheated_stove_does_not_bake() {
     assert_eq!(sheet.bake_timer, 0.0);
 }
 
+#[test]
+fn test_unattended_stove_accumulates_gas_concentration_over_15s() {
+    use rust_tests::elf_game::workshop::stove::{
+        unattended_stove_and_pyro_hazard_system, FieryExplosionEvent, GasFurnaceStove, GasHose,
+        HoseAttachment, WorkshopGasConcentration, WorkshopGasLine,
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.insert_resource(WorkshopGasLine {
+        pressure_psi: 100.0,
+        ..default()
+    });
+    app.insert_resource(WorkshopGasConcentration::default());
+    app.add_message::<FieryExplosionEvent>();
+
+    // Stove is ON but unlit (venting unignited gas)
+    let stove_pos = Vec3::new(-7.34, 0.0, -11.4);
+    app.world_mut().spawn((
+        GasFurnaceStove {
+            is_on: true,
+            is_lit: false,
+            ..default()
+        },
+        Transform::from_translation(stove_pos),
+    ));
+
+    app.world_mut().spawn(GasHose {
+        attached_to: HoseAttachment::Stove,
+        ..default()
+    });
+
+    app.add_systems(Update, unattended_stove_and_pyro_hazard_system);
+
+    // Advance 16 seconds (past 15s threshold)
+    {
+        let mut time = app.world_mut().resource_mut::<Time>();
+        time.advance_by(std::time::Duration::from_secs(16));
+    }
+    app.update();
+
+    let gas_conc = app.world().resource::<WorkshopGasConcentration>();
+    assert!(gas_conc.is_leaking_unignited, "Gas should be flagged as leaking unignited");
+    assert!(
+        gas_conc.concentration_timer >= 15.0,
+        "Gas concentration timer should reach >= 15s: {}",
+        gas_conc.concentration_timer
+    );
+}
+
+#[test]
+fn test_pyro_elf_detects_gas_and_seeks_flame_source() {
+    use bevy_rapier3d::prelude::Velocity;
+    use rust_tests::elf_game::{
+        physics_sandbox::ragdoll::{ElfAssistant, ElfMischiefTrait, ElfNpcState},
+        workshop::stove::{
+            unattended_stove_and_pyro_hazard_system, FieryExplosionEvent, FlameSource,
+            GasFurnaceStove, GasHose, HoseAttachment, WorkshopGasConcentration, WorkshopGasLine,
+        },
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.insert_resource(WorkshopGasLine {
+        pressure_psi: 100.0,
+        ..default()
+    });
+    app.insert_resource(WorkshopGasConcentration {
+        concentration_timer: 16.0,
+        detection_threshold: 15.0,
+        is_leaking_unignited: true,
+        ..default()
+    });
+    app.add_message::<FieryExplosionEvent>();
+
+    let stove_pos = Vec3::new(-7.34, 0.0, -11.4);
+    app.world_mut().spawn((
+        GasFurnaceStove {
+            is_on: true,
+            is_lit: false,
+            ..default()
+        },
+        Transform::from_translation(stove_pos),
+    ));
+
+    app.world_mut().spawn(GasHose {
+        attached_to: HoseAttachment::Stove,
+        ..default()
+    });
+
+    // Spawn an active flame source (e.g. candle point light / match)
+    let flame_pos = Vec3::new(0.0, 1.2, -4.5);
+    app.world_mut().spawn((
+        FlameSource,
+        Transform::from_translation(flame_pos),
+    ));
+
+    // Spawn Pyro elf (id 2, Jingles) close to flame
+    let mut elf = ElfAssistant::new(2, "Elf Jingles", Vec::new());
+    elf.mischief_trait = ElfMischiefTrait::Pyro;
+    elf.state = ElfNpcState::Wandering;
+
+    let elf_e = app
+        .world_mut()
+        .spawn((
+            elf,
+            Velocity::zero(),
+            Transform::from_xyz(0.2, 0.45, -4.5),
+        ))
+        .id();
+
+    app.add_systems(Update, unattended_stove_and_pyro_hazard_system);
+    app.update();
+
+    // The elf should have detected the gas, sought the nearby flame (< 1.3m), and transitioned to ChargingStoveWithFlame!
+    let elf_check = app.world().get::<ElfAssistant>(elf_e).unwrap();
+    assert_eq!(
+        elf_check.state,
+        ElfNpcState::ChargingStoveWithFlame,
+        "Pyro elf must secure flame and transition to ChargingStoveWithFlame"
+    );
+}
+
+#[test]
+fn test_pyro_elf_charges_stove_and_triggers_catastrophic_explosion() {
+    use bevy_rapier3d::prelude::Velocity;
+    use rust_tests::elf_game::{
+        physics_sandbox::ragdoll::{ElfAssistant, ElfMischiefTrait, ElfNpcState},
+        workshop::{
+            pantry::PantryDoor,
+            progression::{DoorState, WorkshopDoor},
+            stove::{
+                unattended_stove_and_pyro_hazard_system, FieryExplosionEvent, GasFurnaceStove,
+                GasHose, HoseAttachment, WorkshopGasConcentration, WorkshopGasLine,
+            },
+        },
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.insert_resource(WorkshopGasLine {
+        pressure_psi: 100.0,
+        ..default()
+    });
+    app.insert_resource(WorkshopGasConcentration {
+        concentration_timer: 18.0,
+        detection_threshold: 15.0,
+        is_leaking_unignited: true,
+        ..default()
+    });
+    app.add_message::<FieryExplosionEvent>();
+
+    let stove_pos = Vec3::new(-7.34, 0.0, -11.4);
+    app.world_mut().spawn((
+        GasFurnaceStove {
+            is_on: true,
+            is_lit: false,
+            ..default()
+        },
+        Transform::from_translation(stove_pos),
+    ));
+
+    app.world_mut().spawn(GasHose {
+        attached_to: HoseAttachment::Stove,
+        ..default()
+    });
+
+    let door_e = app
+        .world_mut()
+        .spawn((
+            WorkshopDoor {
+                door_id: "StorageWing".to_string(),
+                required_tier: 2,
+                state: DoorState::Locked,
+                closed_position: Vec3::new(13.0, 0.0, 0.0),
+                open_position: Vec3::new(13.0, 4.0, 0.0),
+            },
+            Transform::from_xyz(13.0, 0.0, 0.0),
+        ))
+        .id();
+
+    let pdoor_e = app
+        .world_mut()
+        .spawn(PantryDoor {
+            current_angle: 0.0,
+            was_closed: true,
+            ..default()
+        })
+        .id();
+
+    // Spawn Pyro elf reaching stove (< 1.2m)
+    let mut elf = ElfAssistant::new(2, "Elf Jingles", Vec::new());
+    elf.mischief_trait = ElfMischiefTrait::Pyro;
+    elf.state = ElfNpcState::ChargingStoveWithFlame;
+
+    let elf_e = app
+        .world_mut()
+        .spawn((
+            elf,
+            Velocity::zero(),
+            Transform::from_xyz(-7.34, 0.45, -11.0),
+        ))
+        .id();
+
+    app.add_systems(Update, unattended_stove_and_pyro_hazard_system);
+    app.update();
+
+    // 1. Verify gas concentration timer reset
+    let gas_conc = app.world().resource::<WorkshopGasConcentration>();
+    assert_eq!(gas_conc.concentration_timer, 0.0);
+
+    // 2. Verify doors blown open
+    let door = app.world().get::<WorkshopDoor>(door_e).unwrap();
+    assert_eq!(door.state, DoorState::Open, "Explosion blast must blow open doors");
+
+    let pdoor = app.world().get::<PantryDoor>(pdoor_e).unwrap();
+    assert!(pdoor.current_angle > 1.0, "Pantry door must be blown open");
+
+    // 3. Verify Pyro elf thrown into dynamic ragdoll tumble with extreme rafter launch
+    let elf_check = app.world().get::<ElfAssistant>(elf_e).unwrap();
+    assert_eq!(
+        elf_check.state,
+        ElfNpcState::RagdollTumble,
+        "Pyro elf must be thrown into RagdollTumble from explosion blast"
+    );
+
+    let elf_vel = app.world().get::<Velocity>(elf_e).unwrap();
+    assert!(
+        elf_vel.linear.y >= 12.0,
+        "Elf must be launched high into vaulted ceiling rafters (Y >= 12.0), got {}",
+        elf_vel.linear.y
+    );
+}
+
+
 

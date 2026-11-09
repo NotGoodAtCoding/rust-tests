@@ -7,6 +7,7 @@ use crate::elf_game::{
     wrapping::{Present, PresentDeliveredMessage},
     workshop::room::{BreakableWindowPane, PresentDeliveryChute},
     moose::toy_model::{MrMoose, MooseHead, WindowShutters},
+    physics_sandbox::DynamicWaypointTarget,
 };
 
 #[derive(Component, Debug, Clone)]
@@ -27,6 +28,11 @@ pub struct MooseRampageTracker {
     pub is_bucking: bool,
     /// Current pitch angle in radians of the bucking tilt
     pub current_buck_pitch: f32,
+    // Dynamic Player Targeting
+    pub dynamic_target: Option<DynamicWaypointTarget>,
+    pub is_targeting_player: bool,
+    pub target_player_timer: f32,
+    pub player_target_cooldown: f32,
 }
 
 impl Default for MooseRampageTracker {
@@ -51,7 +57,29 @@ impl Default for MooseRampageTracker {
             buck_duration: 0.85,
             is_bucking: false,
             current_buck_pitch: 0.0,
+            dynamic_target: None,
+            is_targeting_player: false,
+            target_player_timer: 0.0,
+            player_target_cooldown: 0.0,
         }
+    }
+}
+
+impl MooseRampageTracker {
+    /// Forces the rampaging moose to target the player if not on cooldown.
+    pub fn target_player(&mut self) {
+        if self.player_target_cooldown <= 0.0 {
+            self.is_targeting_player = true;
+            self.dynamic_target = Some(DynamicWaypointTarget::Player);
+            self.target_player_timer = 0.0;
+        }
+    }
+
+    /// Clears any active player targeting, returning to waypoints.
+    pub fn clear_player_target(&mut self) {
+        self.is_targeting_player = false;
+        self.dynamic_target = None;
+        self.target_player_timer = 0.0;
     }
 }
 
@@ -264,11 +292,60 @@ pub fn moose_rampage_path_and_physics_impulse_system(
             continue;
         }
 
-        let target = tracker.waypoints[tracker.current_waypoint_index];
+        // Update player targeting cooldown
+        if tracker.player_target_cooldown > 0.0 {
+            tracker.player_target_cooldown = (tracker.player_target_cooldown - dt).max(0.0);
+        }
+
+        let opt_player_pos = q_player.iter().next().map(|(tf, _)| tf.translation);
+        if let Some(player_pos) = opt_player_pos {
+            let flat_player_diff = Vec3::new(
+                player_pos.x - moose_tf.translation.x,
+                0.0,
+                player_pos.z - moose_tf.translation.z,
+            );
+            let player_dist = flat_player_diff.length();
+
+            // When the moose is rampaging, if the player gets within 2m of the moose, set target location to the player.
+            if !tracker.is_targeting_player && tracker.player_target_cooldown <= 0.0 {
+                if player_dist <= 2.0 {
+                    tracker.is_targeting_player = true;
+                    tracker.dynamic_target = Some(DynamicWaypointTarget::Player);
+                    tracker.target_player_timer = 0.0;
+                }
+            }
+
+            // As long as the player is within 3m of the moose once triggered, or 5 seconds have passed since the moose targeted the player,
+            // keep updating the target location of the moose to the Player.
+            if tracker.is_targeting_player {
+                tracker.target_player_timer += dt;
+                if player_dist <= 3.0 || tracker.target_player_timer < 5.0 {
+                    tracker.dynamic_target = Some(DynamicWaypointTarget::Player);
+                } else {
+                    tracker.is_targeting_player = false;
+                    tracker.dynamic_target = None;
+                    tracker.target_player_timer = 0.0;
+                }
+            }
+        } else {
+            tracker.is_targeting_player = false;
+            tracker.dynamic_target = None;
+        }
+
+        let (target, is_player_target) = if tracker.is_targeting_player {
+            if let Some(p_pos) = opt_player_pos {
+                (p_pos, true)
+            } else {
+                (tracker.waypoints[tracker.current_waypoint_index], false)
+            }
+        } else {
+            (tracker.waypoints[tracker.current_waypoint_index], false)
+        };
+
         let flat_diff = Vec3::new(target.x - moose_tf.translation.x, 0.0, target.z - moose_tf.translation.z);
         let dist = flat_diff.length();
 
-        if dist < 0.6 {
+        if !is_player_target && dist < 0.6 {
             tracker.current_waypoint_index += 1;
             tracker.is_bucking = false;
             tracker.current_buck_pitch = 0.0;
@@ -308,7 +385,7 @@ pub fn moose_rampage_path_and_physics_impulse_system(
             }
         } else {
             // Update "bucking" animation cycle at semi-randomized intervals inside workshop
-            let can_buck = tracker.current_waypoint_index >= 1 && tracker.current_waypoint_index < tracker.waypoints.len() - 1;
+            let can_buck = tracker.is_targeting_player || (tracker.current_waypoint_index >= 1 && tracker.current_waypoint_index < tracker.waypoints.len() - 1);
 
             if can_buck {
                 if !tracker.is_bucking {
@@ -357,13 +434,14 @@ pub fn moose_rampage_path_and_physics_impulse_system(
                 tracker.speed = tracker.base_speed;
             }
 
-            let dir = flat_diff / dist;
+            let dir = if dist > 0.001 { flat_diff / dist } else { Vec3::ZERO };
             moose_tf.translation.x += dir.x * tracker.speed * dt;
             moose_tf.translation.z += dir.z * tracker.speed * dt;
 
             // Lift torso upwards proportionally so Moose pivots cleanly around rear feet on the floor
             let buck_height_lift = 0.95 * tracker.current_buck_pitch.sin() - 1.4 * (1.0 - tracker.current_buck_pitch.cos());
-            moose_tf.translation.y = target.y + buck_height_lift.max(0.0);
+            let base_y = if is_player_target { 1.4 } else { target.y };
+            moose_tf.translation.y = base_y + buck_height_lift.max(0.0);
 
             // Face forward along movement direction, then pitch upward around local X
             if dir.length_squared() > 0.001 {
@@ -388,8 +466,13 @@ pub fn moose_rampage_path_and_physics_impulse_system(
 
             // Launch player in a random upwards direction on contact with rampaging Moose
             for (player_tf, mut movement) in &mut q_player {
-                let p_dist = player_tf.translation.distance(moose_tf.translation);
-                if p_dist < 2.2 && movement.velocity.y < 8.0 {
+                let flat_p_dist = Vec3::new(
+                    player_tf.translation.x - moose_tf.translation.x,
+                    0.0,
+                    player_tf.translation.z - moose_tf.translation.z,
+                ).length();
+                let y_diff = (player_tf.translation.y - moose_tf.translation.y).abs();
+                if flat_p_dist < 0.8 && y_diff < 1.8 && movement.velocity.y < 8.0 {
                     let angle = rand::random::<f32>() * std::f32::consts::TAU;
                     let h_speed = 6.0 + rand::random::<f32>() * 6.0;
                     let v_speed = 10.0 + rand::random::<f32>() * 6.0;
@@ -403,6 +486,12 @@ pub fn moose_rampage_path_and_physics_impulse_system(
                     movement.velocity = launch_vel;
                     movement.is_grounded = false;
                     movement.current_max_speed = movement.current_max_speed.max(h_speed);
+
+                    // Once the moose contacts the player, the moose cannot target the player again for 3 seconds.
+                    tracker.is_targeting_player = false;
+                    tracker.dynamic_target = None;
+                    tracker.target_player_timer = 0.0;
+                    tracker.player_target_cooldown = 3.0;
                 }
             }
         }

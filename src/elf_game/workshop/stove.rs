@@ -4,7 +4,7 @@ use bevy_rapier3d::prelude::*;
 use crate::elf_game::{
     assets::WorkshopMaterials, physics_sandbox::{ElfAssistant, ElfNpcState}, player::{
         ElfMovement, controller::{ElfPlayer, FirstPersonCamera}, hands::Grabbable,
-    }, workshop::stove,
+    },
 };
 
 /// Thermal state of Santa's Workshop. The player must keep the furnace stove fueled and burning
@@ -74,7 +74,7 @@ pub struct GasHose {
     pub attached_to: HoseAttachment,
     pub wall_inlet_pos: Vec3,
     pub stove_anchor_pos: Vec3,
-    // pub oven_anchor_pos: Vec3,
+    pub oven_anchor_pos: Vec3,
     pub loose_nozzle_pos: Vec3,
     pub is_venting_gas: bool,
     pub snap_distance: f32,
@@ -107,7 +107,7 @@ impl Default for GasHose {
             attached_to: HoseAttachment::Stove,
             wall_inlet_pos: Vec3::new(-9.05, 1.15, -12.85),
             stove_anchor_pos: Vec3::new(-7.34, 0.85, -11.4),
-            // oven_anchor_pos: Vec3::new(-10.42, 0.85, -11.4),
+            oven_anchor_pos: Vec3::new(-10.42, 0.85, -11.4),
             loose_nozzle_pos: Vec3::new(-9.05, 0.05, -11.4),
             is_venting_gas: false,
             snap_distance: 0.85,
@@ -561,6 +561,7 @@ pub fn spawn_oven_stove_and_propane_scene(
             attached_to: HoseAttachment::Stove,
             wall_inlet_pos,
             stove_anchor_pos,
+            oven_anchor_pos: Vec3::new(-10.42, 0.85, -11.4),
             loose_nozzle_pos: stove_anchor_pos,
             is_venting_gas: false,
             snap_distance: 0.85,

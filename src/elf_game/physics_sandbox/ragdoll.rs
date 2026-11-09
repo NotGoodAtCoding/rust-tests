@@ -81,6 +81,14 @@ pub enum ElfNodePurpose {
     KleptoStash,
 }
 
+/// Target option for dynamic waypoint navigation for Elves, Moose, and other NPCs.
+#[derive(Component, Debug, Clone, PartialEq)]
+pub enum DynamicWaypointTarget {
+    Player,
+    Npc(Entity),
+    Position(Vec3),
+}
+
 /// Node in the workshop waypoint pathfinding graph.
 #[derive(Debug, Clone)]
 pub struct ElfNavNode {
@@ -115,7 +123,7 @@ impl ElfNavGraph {
                 id: 0,
                 name: "WorkbenchFront".to_string(),
                 position: Vec3::new(0.0, 0.45, -1.8),
-                radius: 0.8,
+                radius: 1.2,
                 neighbors: vec![1, 2, 6],
                 purpose: Some(ElfNodePurpose::Workbench),
             },
@@ -124,7 +132,7 @@ impl ElfNavGraph {
                 id: 1,
                 name: "WorkbenchWest".to_string(),
                 position: Vec3::new(-3.8, 0.45, -4.0),
-                radius: 0.8,
+                radius: 1.2,
                 neighbors: vec![0, 4, 5, 6, 7],
                 purpose: Some(ElfNodePurpose::MainTableTreatJar),
             },
@@ -133,7 +141,7 @@ impl ElfNavGraph {
                 id: 2,
                 name: "WorkbenchEast".to_string(),
                 position: Vec3::new(3.8, 0.45, -4.0),
-                radius: 0.8,
+                radius: 1.2,
                 neighbors: vec![0, 3, 6, 9],
                 purpose: Some(ElfNodePurpose::Workbench),
             },
@@ -142,7 +150,7 @@ impl ElfNavGraph {
                 id: 3,
                 name: "SendingPlatform".to_string(),
                 position: Vec3::new(5.5, 0.45, -4.0),
-                radius: 0.9,
+                radius: 1.3,
                 neighbors: vec![2, 9],
                 purpose: None,
             },
@@ -151,7 +159,7 @@ impl ElfNavGraph {
                 id: 4,
                 name: "MooseTrough".to_string(),
                 position: Vec3::new(-2.0, 0.45, -10.5),
-                radius: 1.2,
+                radius: 1.6,
                 neighbors: vec![1, 5],
                 purpose: Some(ElfNodePurpose::MooseFeedingStation),
             },
@@ -160,7 +168,7 @@ impl ElfNavGraph {
                 id: 5,
                 name: "NorthwestPass".to_string(),
                 position: Vec3::new(-6.5, 0.45, -5.5),
-                radius: 1.0,
+                radius: 1.4,
                 neighbors: vec![1, 4, 7],
                 purpose: None,
             },
@@ -169,7 +177,7 @@ impl ElfNavGraph {
                 id: 6,
                 name: "CentralCrossing".to_string(),
                 position: Vec3::new(0.0, 0.45, 0.5),
-                radius: 1.0,
+                radius: 1.5,
                 neighbors: vec![0, 1, 2, 7, 9],
                 purpose: None,
             },
@@ -178,7 +186,7 @@ impl ElfNavGraph {
                 id: 7,
                 name: "WestConveyorBypass".to_string(),
                 position: Vec3::new(-11.0, 0.45, 0.5),
-                radius: 0.8,
+                radius: 1.2,
                 neighbors: vec![1, 5, 6, 8],
                 purpose: None,
             },
@@ -187,7 +195,7 @@ impl ElfNavGraph {
                 id: 8,
                 name: "WestSouthCorridor".to_string(),
                 position: Vec3::new(-11.0, 0.45, 5.5),
-                radius: 0.8,
+                radius: 1.2,
                 neighbors: vec![7, 11, 12, 13, 15],
                 purpose: None,
             },
@@ -196,7 +204,7 @@ impl ElfNavGraph {
                 id: 9,
                 name: "EastConveyorBypass".to_string(),
                 position: Vec3::new(11.5, 0.45, 0.5),
-                radius: 0.7,
+                radius: 1.1,
                 neighbors: vec![2, 3, 6, 10],
                 purpose: None,
             },
@@ -205,7 +213,7 @@ impl ElfNavGraph {
                 id: 10,
                 name: "EastSouthCorridor".to_string(),
                 position: Vec3::new(11.5, 0.45, 5.5),
-                radius: 0.7,
+                radius: 1.1,
                 neighbors: vec![9, 11, 14],
                 purpose: None,
             },
@@ -214,7 +222,7 @@ impl ElfNavGraph {
                 id: 11,
                 name: "SouthCentralHall".to_string(),
                 position: Vec3::new(0.0, 0.45, 7.0),
-                radius: 1.2,
+                radius: 1.6,
                 neighbors: vec![8, 10, 12, 14],
                 purpose: None,
             },
@@ -223,7 +231,7 @@ impl ElfNavGraph {
                 id: 12,
                 name: "HatCloset".to_string(),
                 position: Vec3::new(-4.5, 0.45, 10.5),
-                radius: 1.0,
+                radius: 1.4,
                 neighbors: vec![8, 11, 13],
                 purpose: Some(ElfNodePurpose::HatCloset),
             },
@@ -232,7 +240,7 @@ impl ElfNavGraph {
                 id: 13,
                 name: "KleptoStash".to_string(),
                 position: Vec3::new(-10.5, 0.45, 10.5),
-                radius: 1.0,
+                radius: 1.4,
                 neighbors: vec![8, 12],
                 purpose: Some(ElfNodePurpose::KleptoStash),
             },
@@ -241,7 +249,7 @@ impl ElfNavGraph {
                 id: 14,
                 name: "SoutheastRest".to_string(),
                 position: Vec3::new(5.5, 0.45, 10.0),
-                radius: 1.0,
+                radius: 1.4,
                 neighbors: vec![10, 11],
                 purpose: None,
             },
@@ -250,7 +258,7 @@ impl ElfNavGraph {
                 id: 15,
                 name: "PantryShelves".to_string(),
                 position: Vec3::new(-15.0, 0.45, 5.5),
-                radius: 1.1,
+                radius: 1.5,
                 neighbors: vec![8],
                 purpose: Some(ElfNodePurpose::PantryShelves),
             },
@@ -342,6 +350,10 @@ pub struct ElfAssistant {
     pub waypoints: Vec<Vec3>,
     pub current_waypoint_idx: usize,
 
+    // Dynamic Waypoint Targeting
+    pub dynamic_target: Option<DynamicWaypointTarget>,
+    pub wander_radius: f32,
+
     // Speeds & Timers
     pub walk_speed: f32,
     pub run_speed: f32,
@@ -386,6 +398,8 @@ impl ElfAssistant {
             target_waypoint: first,
             waypoints,
             current_waypoint_idx: 0,
+            dynamic_target: None,
+            wander_radius: 1.5,
             walk_speed: 1.8,
             run_speed: 3.6,
             walk_timer: 0.0,
@@ -399,6 +413,26 @@ impl ElfAssistant {
             carried_treat: None,
             missing_treats_panic: false,
         }
+    }
+
+    /// Sets the dynamic navigation target to follow the Player.
+    pub fn target_player(&mut self) {
+        self.dynamic_target = Some(DynamicWaypointTarget::Player);
+    }
+
+    /// Sets the dynamic navigation target to follow another NPC.
+    pub fn target_npc(&mut self, npc: Entity) {
+        self.dynamic_target = Some(DynamicWaypointTarget::Npc(npc));
+    }
+
+    /// Sets the dynamic navigation target to a specific 3D coordinate.
+    pub fn target_position(&mut self, pos: Vec3) {
+        self.dynamic_target = Some(DynamicWaypointTarget::Position(pos));
+    }
+
+    /// Clears any active dynamic navigation target, returning to graph/waypoint navigation.
+    pub fn clear_dynamic_target(&mut self) {
+        self.dynamic_target = None;
     }
 }
 
@@ -1008,6 +1042,7 @@ pub fn elf_assistant_ai_system(
         &mut ExternalImpulse,
         &mut LockedAxes,
         &mut ElfAssistant,
+        Option<&DynamicWaypointTarget>,
     )>,
     q_player: Query<
         (&Transform, &ElfMovement),
@@ -1080,8 +1115,16 @@ pub fn elf_assistant_ai_system(
     let moose_agitated = hunger.as_ref().map(|h| h.value >= 50.0).unwrap_or(false);
 
     let opt_moose_tf = q_moose.iter().next().map(|(tf, _)| *tf);
+    let opt_player_pos = q_player.iter().next().map(|(tf, _)| tf.translation);
+    let elf_positions: Vec<(Entity, Vec3)> = q_elves
+        .iter()
+        .map(|(e, tf, _, _, _, _, _)| (e, tf.translation))
+        .collect();
 
-    for (_elf_entity, mut elf_tf, mut vel, mut impulse, mut locked_axes, mut elf) in &mut q_elves {
+    for (_elf_entity, mut elf_tf, mut vel, mut impulse, mut locked_axes, mut elf, opt_comp_target) in &mut q_elves {
+        if let Some(comp_dyn) = opt_comp_target {
+            elf.dynamic_target = Some(comp_dyn.clone());
+        }
         // Carry present follow if Klepto is currently stashing
         if let Some(pres_e) = elf.carried_present {
             if let Ok((_, mut pres_tf, mut pres_vel)) = q_presents.get_mut(pres_e) {
@@ -1524,8 +1567,25 @@ pub fn elf_assistant_ai_system(
                 } else if elf.state == ElfNpcState::Wandering {
                     elf.walk_timer += dt;
 
-                    // Choose next target using NavGraph if available, otherwise fallback to waypoints
-                    let target_pos = if let Some(ref graph) = nav_graph {
+                    // Choose next target using DynamicWaypointTarget if set, otherwise NavGraph or waypoints
+                    let (target_pos, is_dynamic) = if let Some(ref dyn_target) = elf.dynamic_target {
+                        let pos = match dyn_target {
+                            DynamicWaypointTarget::Player => {
+                                opt_player_pos.unwrap_or(elf.target_waypoint)
+                            }
+                            DynamicWaypointTarget::Npc(npc_e) => {
+                                if let Some((_, p)) = elf_positions.iter().find(|(e, _)| *e == *npc_e) {
+                                    *p
+                                } else if let Some(moose_tf) = opt_moose_tf {
+                                    moose_tf.translation
+                                } else {
+                                    elf.target_waypoint
+                                }
+                            }
+                            DynamicWaypointTarget::Position(p) => *p,
+                        };
+                        (pos, true)
+                    } else if let Some(ref graph) = nav_graph {
                         if elf.path.is_empty() || elf.path_step >= elf.path.len() {
                             // Pick a new random goal node
                             let next_goal = (elf.target_node + (elf.id as usize * 3 + 2)) % graph.nodes.len();
@@ -1535,13 +1595,14 @@ pub fn elf_assistant_ai_system(
                                 elf.path_step = 0;
                             }
                         }
-                        if elf.path_step < elf.path.len() {
+                        let pos = if elf.path_step < elf.path.len() {
                             graph.nodes[elf.path[elf.path_step]].position
                         } else {
                             elf.target_waypoint
-                        }
+                        };
+                        (pos, false)
                     } else {
-                        elf.target_waypoint
+                        (elf.target_waypoint, false)
                     };
 
                     let flat_diff = Vec3::new(
@@ -1550,9 +1611,15 @@ pub fn elf_assistant_ai_system(
                         target_pos.z - elf_tf.translation.z,
                     );
                     let dist = flat_diff.length();
+                    let arrival_dist = if is_dynamic { 1.2 } else { 0.5 };
 
-                    if dist < 0.5 {
-                        if let Some(ref graph) = nav_graph {
+                    if dist < arrival_dist {
+                        if is_dynamic {
+                            elf.state = ElfNpcState::Inspecting;
+                            elf.state_timer = 0.0;
+                            vel.linear.x = 0.0;
+                            vel.linear.z = 0.0;
+                        } else if let Some(ref graph) = nav_graph {
                             if !elf.path.is_empty() && elf.path_step + 1 < elf.path.len() {
                                 elf.current_node = elf.path[elf.path_step];
                                 elf.path_step += 1;
@@ -1565,9 +1632,9 @@ pub fn elf_assistant_ai_system(
                                 vel.linear.z = 0.0;
 
                                 // Pick free-movement target within node radius
-                                let node_radius = graph.nodes[elf.current_node].radius;
+                                let node_radius = graph.nodes[elf.current_node].radius.max(elf.wander_radius);
                                 let angle = (elf.id as f32 * 1.7) + elf.walk_timer;
-                                let offset = Vec3::new(angle.cos(), 0.0, angle.sin()) * (node_radius * 0.7);
+                                let offset = Vec3::new(angle.cos(), 0.0, angle.sin()) * (node_radius * 0.95);
                                 elf.free_move_target = Some(graph.nodes[elf.current_node].position + offset);
                             }
                         } else {
@@ -1604,7 +1671,10 @@ pub fn elf_assistant_ai_system(
                     }
 
                     if elf.state_timer > 2.5 {
-                        if let Some(ref graph) = nav_graph {
+                        if elf.dynamic_target.is_some() {
+                            elf.state = ElfNpcState::Wandering;
+                            elf.free_move_target = None;
+                        } else if let Some(ref graph) = nav_graph {
                             // Done inspecting, choose next goal node
                             let next_goal = (elf.current_node + (elf.id as usize * 3 + 1)) % graph.nodes.len();
                             elf.target_node = next_goal;
@@ -1612,12 +1682,14 @@ pub fn elf_assistant_ai_system(
                                 elf.path = path;
                                 elf.path_step = 0;
                             }
+                            elf.state = ElfNpcState::Wandering;
+                            elf.free_move_target = None;
                         } else if !elf.waypoints.is_empty() {
                             elf.current_waypoint_idx = (elf.current_waypoint_idx + 1) % elf.waypoints.len();
                             elf.target_waypoint = elf.waypoints[elf.current_waypoint_idx];
+                            elf.state = ElfNpcState::Wandering;
+                            elf.free_move_target = None;
                         }
-                        elf.state = ElfNpcState::Wandering;
-                        elf.free_move_target = None;
                     }
                 }
             }

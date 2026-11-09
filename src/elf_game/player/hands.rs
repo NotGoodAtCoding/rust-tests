@@ -24,6 +24,43 @@ pub struct ToolItem {
     pub tool: WrappingTool,
 }
 
+/// Bulky/heavy physics items that require both hands to carry stably without slipping, sagging, or tilting.
+#[derive(Component, Debug, Clone)]
+pub struct HeavyItem {
+    pub mass: f32,
+    pub slip_rate: f32,
+    pub max_single_hand_duration: f32,
+    pub single_hand_timer: f32,
+    pub drag_tilt_angle: f32,
+    pub is_two_handed: bool,
+}
+
+impl Default for HeavyItem {
+    fn default() -> Self {
+        Self {
+            mass: 18.0,
+            slip_rate: 0.35,
+            max_single_hand_duration: 2.5,
+            single_hand_timer: 0.0,
+            drag_tilt_angle: 0.38,
+            is_two_handed: false,
+        }
+    }
+}
+
+impl HeavyItem {
+    pub fn new(mass: f32, slip_rate: f32, max_duration: f32) -> Self {
+        Self {
+            mass,
+            slip_rate,
+            max_single_hand_duration: max_duration,
+            single_hand_timer: 0.0,
+            drag_tilt_angle: 0.38,
+            is_two_handed: false,
+        }
+    }
+}
+
 pub fn spawn_workshop_tools_and_materials(
     mut commands: Commands,
     meshes: Option<ResMut<Assets<Mesh>>>,
@@ -269,6 +306,7 @@ pub fn dual_hand_interaction_system(
         Option<Res<crate::elf_game::ui::MenuState>>,
         Option<Res<crate::elf_game::dialogue::ActiveDialogue>>,
         Option<Res<State<crate::elf_game::core::GameState>>>,
+        Option<Res<Time>>,
     ),
     mut q_player: Query<(&Transform, &mut ElfHands, Option<&ElfMovement>), Without<Grabbable>>,
     q_camera: Query<&GlobalTransform, With<crate::elf_game::player::controller::FirstPersonCamera>>,
@@ -280,11 +318,14 @@ pub fn dual_hand_interaction_system(
     q_presents: Query<Entity, With<Present>>,
     mut q_rolls: Query<&mut PaperPatternRoll>,
     q_pens: Query<&GiftTagPenTool>,
+    mut q_heavy: Query<&mut HeavyItem>,
     mut tool_messages: MessageWriter<UseToolOnPresentMessage>,
     mut commands: Commands,
 ) {
     let (keys, mouse_buttons) = inputs;
-    let (menu_state, dialogue_state, game_state) = states;
+    let (menu_state, dialogue_state, game_state, time_opt) = states;
+    let dt = time_opt.as_ref().map(|t| t.delta_secs()).unwrap_or(0.016);
+
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
         return;
     }
@@ -319,7 +360,11 @@ pub fn dual_hand_interaction_system(
     // inheriting the player's current velocity (enabling jump-throws to fling items further)
     if throw_clicked {
         let thrown_entity_opt = if hands.right_grabbed.is_some() {
-            hands.right_grabbed.take()
+            let r = hands.right_grabbed.take();
+            if hands.left_grabbed == r {
+                hands.left_grabbed = None;
+            }
+            r
         } else if hands.left_grabbed.is_some() {
             hands.left_grabbed.take()
         } else {
@@ -359,21 +404,31 @@ pub fn dual_hand_interaction_system(
     // 2. Left Hand Toggle Grab & Set Down (KeyQ)
     if left_toggle {
         if let Some(held_e) = hands.left_grabbed {
-            // Setting down: release gently with zero velocity at hand location
             hands.left_grabbed = None;
-            commands.entity(held_e).remove::<(HeldByPlayer, Sensor)>();
-            commands.entity(held_e).insert(CollisionGroups::new(Group::ALL, Group::ALL));
-            if let Ok(mut vel) = q_velocities.get_mut(held_e) {
-                vel.linear = Vec3::ZERO;
-                vel.angular = Vec3::ZERO;
+            if hands.right_grabbed != Some(held_e) {
+                commands.entity(held_e).remove::<(HeldByPlayer, Sensor)>();
+                commands.entity(held_e).insert(CollisionGroups::new(Group::ALL, Group::ALL));
+                if let Ok(mut vel) = q_velocities.get_mut(held_e) {
+                    vel.linear = Vec3::ZERO;
+                    vel.angular = Vec3::ZERO;
+                }
             }
         } else {
-            // Find object in direct raycasted Line of Sight with player's reticle
+            // Find object in reticle LOS. If right hand holds a HeavyItem, don't exclude it so we can two-hand grab!
+            let excluded = if let Some(r_e) = hands.right_grabbed {
+                if q_heavy.contains(r_e) {
+                    None
+                } else {
+                    Some(r_e)
+                }
+            } else {
+                None
+            };
             if let Some(target_e) = find_grabbable_in_reticle_los(
                 ray_origin,
                 ray_dir,
                 max_reach,
-                hands.right_grabbed,
+                excluded,
                 &q_grabbables,
                 &q_obstacles,
             ) {
@@ -394,21 +449,30 @@ pub fn dual_hand_interaction_system(
     // 3. Right Hand Toggle Grab & Set Down (KeyE)
     if right_toggle {
         if let Some(held_e) = hands.right_grabbed {
-            // Setting down: release gently with zero velocity at hand location
             hands.right_grabbed = None;
-            commands.entity(held_e).remove::<(HeldByPlayer, Sensor)>();
-            commands.entity(held_e).insert(CollisionGroups::new(Group::ALL, Group::ALL));
-            if let Ok(mut vel) = q_velocities.get_mut(held_e) {
-                vel.linear = Vec3::ZERO;
-                vel.angular = Vec3::ZERO;
+            if hands.left_grabbed != Some(held_e) {
+                commands.entity(held_e).remove::<(HeldByPlayer, Sensor)>();
+                commands.entity(held_e).insert(CollisionGroups::new(Group::ALL, Group::ALL));
+                if let Ok(mut vel) = q_velocities.get_mut(held_e) {
+                    vel.linear = Vec3::ZERO;
+                    vel.angular = Vec3::ZERO;
+                }
             }
         } else {
-            // Find object in direct raycasted Line of Sight with player's reticle
+            let excluded = if let Some(l_e) = hands.left_grabbed {
+                if q_heavy.contains(l_e) {
+                    None
+                } else {
+                    Some(l_e)
+                }
+            } else {
+                None
+            };
             if let Some(target_e) = find_grabbable_in_reticle_los(
                 ray_origin,
                 ray_dir,
                 max_reach,
-                hands.left_grabbed,
+                excluded,
                 &q_grabbables,
                 &q_obstacles,
             ) {
@@ -447,64 +511,146 @@ pub fn dual_hand_interaction_system(
     let left_hold_pos = left_hand_pos + camera_fwd * hold_forward_offset;
     let right_hold_pos = right_hand_pos + camera_fwd * hold_forward_offset;
 
-    if let Some(left_e) = hands.left_grabbed {
-        let left_tool = if let Ok((_, mut tf, _, tool_opt)) = q_grabbables.get_mut(left_e) {
-            tf.translation = left_hold_pos;
+    let both_hold_same = match (hands.left_grabbed, hands.right_grabbed) {
+        (Some(l), Some(r)) => l == r,
+        _ => false,
+    };
+
+    if both_hold_same {
+        let held_e = hands.left_grabbed.unwrap();
+        let center_hold_pos = (left_hold_pos + right_hold_pos) * 0.5;
+        if let Ok((_, mut tf, _, _)) = q_grabbables.get_mut(held_e) {
+            tf.translation = center_hold_pos;
             tf.rotation = camera_rot;
-            tool_opt.map(|t| t.tool)
-        } else {
-            hands.left_grabbed = None;
-            None
-        };
-        if let Ok(mut vel) = q_velocities.get_mut(left_e) {
+        }
+        if let Ok(mut vel) = q_velocities.get_mut(held_e) {
             vel.linear = Vec3::ZERO;
             vel.angular = Vec3::ZERO;
         }
+        if let Ok(mut heavy) = q_heavy.get_mut(held_e) {
+            heavy.is_two_handed = true;
+            heavy.single_hand_timer = 0.0;
+        }
+    } else {
+        if let Some(left_e) = hands.left_grabbed {
+            let mut left_slipped_out = false;
+            if let Ok(mut heavy) = q_heavy.get_mut(left_e) {
+                heavy.is_two_handed = false;
+                heavy.single_hand_timer += dt;
+                if heavy.single_hand_timer >= heavy.max_single_hand_duration {
+                    left_slipped_out = true;
+                }
+            }
 
-        if let Some(tool) = left_tool {
-            let pattern = q_rolls.get(left_e).ok().map(|r| r.pattern);
-            let inscription = q_pens.get(left_e).ok().map(|p| p.inscription.clone());
-            for present_e in &q_presents {
-                if let Ok((_, p_tf, _, _)) = q_grabbables.get(present_e) {
-                    if p_tf.translation.distance(left_hold_pos) < 1.0 {
-                        tool_messages.write(UseToolOnPresentMessage {
-                            tool,
-                            present_entity: present_e,
-                            pattern,
-                            inscription: inscription.clone(),
-                        });
+            if left_slipped_out {
+                hands.left_grabbed = None;
+                commands.entity(left_e).remove::<(HeldByPlayer, Sensor)>();
+                commands.entity(left_e).insert(CollisionGroups::new(Group::ALL, Group::ALL));
+                if let Ok(mut vel) = q_velocities.get_mut(left_e) {
+                    vel.linear = Vec3::new(0.0, -2.5, 0.0);
+                    vel.angular = Vec3::new(1.0, 0.5, -0.8);
+                }
+                if let Ok(mut heavy) = q_heavy.get_mut(left_e) {
+                    heavy.single_hand_timer = 0.0;
+                }
+            } else {
+                let left_tool = if let Ok((_, mut tf, _, tool_opt)) = q_grabbables.get_mut(left_e) {
+                    let mut hold_pos = left_hold_pos;
+                    let mut rot = camera_rot;
+                    if let Ok(heavy) = q_heavy.get(left_e) {
+                        let sag = (heavy.single_hand_timer * heavy.slip_rate).min(0.40);
+                        hold_pos.y -= sag;
+                        let tilt = Quat::from_rotation_z(-heavy.drag_tilt_angle) * Quat::from_rotation_x(0.20);
+                        rot = camera_rot * tilt;
+                    }
+                    tf.translation = hold_pos;
+                    tf.rotation = rot;
+                    tool_opt.map(|t| t.tool)
+                } else {
+                    hands.left_grabbed = None;
+                    None
+                };
+                if let Ok(mut vel) = q_velocities.get_mut(left_e) {
+                    vel.linear = Vec3::ZERO;
+                    vel.angular = Vec3::ZERO;
+                }
+
+                if let Some(tool) = left_tool {
+                    let pattern = q_rolls.get(left_e).ok().map(|r| r.pattern);
+                    let inscription = q_pens.get(left_e).ok().map(|p| p.inscription.clone());
+                    for present_e in &q_presents {
+                        if let Ok((_, p_tf, _, _)) = q_grabbables.get(present_e) {
+                            if p_tf.translation.distance(left_hold_pos) < 1.0 {
+                                tool_messages.write(UseToolOnPresentMessage {
+                                    tool,
+                                    present_entity: present_e,
+                                    pattern,
+                                    inscription: inscription.clone(),
+                                });
+                            }
+                        }
                     }
                 }
             }
         }
-    }
 
-    if let Some(right_e) = hands.right_grabbed {
-        let right_tool = if let Ok((_, mut tf, _, tool_opt)) = q_grabbables.get_mut(right_e) {
-            tf.translation = right_hold_pos;
-            tf.rotation = camera_rot;
-            tool_opt.map(|t| t.tool)
-        } else {
-            hands.right_grabbed = None;
-            None
-        };
-        if let Ok(mut vel) = q_velocities.get_mut(right_e) {
-            vel.linear = Vec3::ZERO;
-            vel.angular = Vec3::ZERO;
-        }
+        if let Some(right_e) = hands.right_grabbed {
+            let mut right_slipped_out = false;
+            if let Ok(mut heavy) = q_heavy.get_mut(right_e) {
+                heavy.is_two_handed = false;
+                heavy.single_hand_timer += dt;
+                if heavy.single_hand_timer >= heavy.max_single_hand_duration {
+                    right_slipped_out = true;
+                }
+            }
 
-        if let Some(tool) = right_tool {
-            let pattern = q_rolls.get(right_e).ok().map(|r| r.pattern);
-            let inscription = q_pens.get(right_e).ok().map(|p| p.inscription.clone());
-            for present_e in &q_presents {
-                if let Ok((_, p_tf, _, _)) = q_grabbables.get(present_e) {
-                    if p_tf.translation.distance(right_hold_pos) < 1.0 {
-                        tool_messages.write(UseToolOnPresentMessage {
-                            tool,
-                            present_entity: present_e,
-                            pattern,
-                            inscription: inscription.clone(),
-                        });
+            if right_slipped_out {
+                hands.right_grabbed = None;
+                commands.entity(right_e).remove::<(HeldByPlayer, Sensor)>();
+                commands.entity(right_e).insert(CollisionGroups::new(Group::ALL, Group::ALL));
+                if let Ok(mut vel) = q_velocities.get_mut(right_e) {
+                    vel.linear = Vec3::new(0.0, -2.5, 0.0);
+                    vel.angular = Vec3::new(1.0, 0.5, -0.8);
+                }
+                if let Ok(mut heavy) = q_heavy.get_mut(right_e) {
+                    heavy.single_hand_timer = 0.0;
+                }
+            } else {
+                let right_tool = if let Ok((_, mut tf, _, tool_opt)) = q_grabbables.get_mut(right_e) {
+                    let mut hold_pos = right_hold_pos;
+                    let mut rot = camera_rot;
+                    if let Ok(heavy) = q_heavy.get(right_e) {
+                        let sag = (heavy.single_hand_timer * heavy.slip_rate).min(0.40);
+                        hold_pos.y -= sag;
+                        let tilt = Quat::from_rotation_z(heavy.drag_tilt_angle) * Quat::from_rotation_x(0.20);
+                        rot = camera_rot * tilt;
+                    }
+                    tf.translation = hold_pos;
+                    tf.rotation = rot;
+                    tool_opt.map(|t| t.tool)
+                } else {
+                    hands.right_grabbed = None;
+                    None
+                };
+                if let Ok(mut vel) = q_velocities.get_mut(right_e) {
+                    vel.linear = Vec3::ZERO;
+                    vel.angular = Vec3::ZERO;
+                }
+
+                if let Some(tool) = right_tool {
+                    let pattern = q_rolls.get(right_e).ok().map(|r| r.pattern);
+                    let inscription = q_pens.get(right_e).ok().map(|p| p.inscription.clone());
+                    for present_e in &q_presents {
+                        if let Ok((_, p_tf, _, _)) = q_grabbables.get(present_e) {
+                            if p_tf.translation.distance(right_hold_pos) < 1.0 {
+                                tool_messages.write(UseToolOnPresentMessage {
+                                    tool,
+                                    present_entity: present_e,
+                                    pattern,
+                                    inscription: inscription.clone(),
+                                });
+                            }
+                        }
                     }
                 }
             }

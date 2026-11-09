@@ -5,7 +5,7 @@ use crate::elf_game::{
     assets::{WorkshopMaterials, objects::{AnchorPoint, AnchorTrait, LockedInAnchor}},
     physics_sandbox::{ElfAssistant, ElfNpcState},
     player::{
-        ElfMovement, controller::{ElfPlayer, FirstPersonCamera}, hands::{Grabbable, HeldByPlayer},
+        ElfMovement, controller::{ElfPlayer, FirstPersonCamera}, hands::{Grabbable, HeldByPlayer, HeavyItem},
     },
 };
 
@@ -511,6 +511,7 @@ pub fn spawn_oven_stove_and_propane_scene(
             Collider::cylinder(0.325, 0.20),
             RigidBody::Fixed,
             Grabbable,
+            HeavyItem::default(),
             Name::new("ActivePropaneTank"),
         ))
         .id();
@@ -555,6 +556,7 @@ pub fn spawn_oven_stove_and_propane_scene(
         Collider::cylinder(0.325, 0.20),
         RigidBody::Dynamic,
         Grabbable,
+        HeavyItem::default(),
         Name::new("SparePropaneTank"),
     ));
 

@@ -5221,6 +5221,126 @@ fn test_chandelier_sparky_easter_egg_unlock() {
 }
 
 #[test]
+fn test_two_handed_heavy_item_lifting_penalty_and_two_hand_stability() {
+    use rust_tests::elf_game::player::{
+        ElfHands,
+        hands::{Grabbable, HeavyItem, HeldByPlayer, dual_hand_interaction_system},
+        controller::{FirstPersonCamera, LeftHandVisual, RightHandVisual},
+    };
+    use rust_tests::elf_game::wrapping::UseToolOnPresentMessage;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.add_message::<UseToolOnPresentMessage>();
+    app.add_systems(Update, dual_hand_interaction_system);
+
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(500)); // dt = 0.5s
+    app.insert_resource(time);
+
+    // Player with hands at origin facing -Z
+    let player_e = app.world_mut().spawn((
+        Transform::from_xyz(0.0, 1.0, 0.0),
+        ElfHands::default(),
+    )).id();
+
+    // Camera
+    app.world_mut().spawn((
+        FirstPersonCamera,
+        GlobalTransform::from_xyz(0.0, 1.6, 0.0),
+    ));
+
+    // Left and Right Hand visual anchors
+    app.world_mut().spawn((
+        LeftHandVisual,
+        GlobalTransform::from_xyz(-0.25, 1.4, -0.4),
+    ));
+    app.world_mut().spawn((
+        RightHandVisual,
+        GlobalTransform::from_xyz(0.25, 1.4, -0.4),
+    ));
+
+    // Heavy bulky item (e.g. 20kg propane tank or large gift crate)
+    let heavy_item_e = app.world_mut().spawn((
+        Grabbable,
+        HeavyItem {
+            mass: 20.0,
+            slip_rate: 0.30,
+            max_single_hand_duration: 1.5,
+            single_hand_timer: 0.0,
+            drag_tilt_angle: 0.35,
+            is_two_handed: false,
+        },
+        Transform::from_xyz(0.0, 1.4, -0.85),
+        Velocity::default(),
+    )).id();
+
+    // --- PHASE 1: Single-hand grab (Left hand) ---
+    {
+        let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+        hands.left_grabbed = Some(heavy_item_e);
+        app.world_mut().entity_mut(heavy_item_e).insert(HeldByPlayer);
+    }
+
+    // Step 0.5s: Sag and tilt begin
+    app.update();
+
+    let heavy = app.world().get::<HeavyItem>(heavy_item_e).unwrap();
+    assert!(!heavy.is_two_handed, "Single hand carry must be marked as not two-handed");
+    assert!((heavy.single_hand_timer - 0.5).abs() < 0.01);
+
+    let tf = app.world().get::<Transform>(heavy_item_e).unwrap();
+    // Normal hold Y is 1.4, with sag it should be 1.4 - (0.5 * 0.30) = 1.25
+    assert!(tf.translation.y < 1.35, "Single hand hold must sag downwards under heavy mass");
+    assert_ne!(tf.rotation, Quat::IDENTITY, "Single hand hold must tilt/drag sideways");
+
+    // Advance by another 1.2s (total 1.7s > max_single_hand_duration 1.5s) -> Must slip out!
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(1200));
+        app.insert_resource(time);
+    }
+    app.update();
+
+    let hands = app.world().get::<ElfHands>(player_e).unwrap();
+    assert_eq!(hands.left_grabbed, None, "Heavy item must slip completely out of single-hand grip");
+    assert!(app.world().get::<HeldByPlayer>(heavy_item_e).is_none(), "HeldByPlayer must be removed on slip");
+    let vel = app.world().get::<Velocity>(heavy_item_e).unwrap();
+    assert!(vel.linear.y < -1.0, "Item receives downward physics velocity on slip");
+
+    // --- PHASE 2: Two-handed carry ---
+    // Player holds with BOTH hands (Q + E on the same entity)
+    {
+        let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+        hands.left_grabbed = Some(heavy_item_e);
+        hands.right_grabbed = Some(heavy_item_e);
+        app.world_mut().entity_mut(heavy_item_e).insert(HeldByPlayer);
+    }
+
+    // Advance 3.0s (well beyond 1.5s max single hand duration)
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(3));
+        app.insert_resource(time);
+    }
+    app.update();
+
+    let hands = app.world().get::<ElfHands>(player_e).unwrap();
+    assert_eq!(hands.left_grabbed, Some(heavy_item_e));
+    assert_eq!(hands.right_grabbed, Some(heavy_item_e), "Both hands retain grasp on heavy item");
+
+    let heavy = app.world().get::<HeavyItem>(heavy_item_e).unwrap();
+    assert!(heavy.is_two_handed, "Two-handed carry must be active");
+    assert_eq!(heavy.single_hand_timer, 0.0, "Single hand timer stays reset to zero when two-handed");
+
+    let tf = app.world().get::<Transform>(heavy_item_e).unwrap();
+    // Centered hold position: X = 0.0, Y = 1.4 (no sag!)
+    assert!((tf.translation.x).abs() < 0.01, "Two-handed hold centers item horizontally");
+    assert!((tf.translation.y - 1.4).abs() < 0.05, "Two-handed hold maintains stable height without sagging");
+    assert_eq!(tf.rotation, Quat::IDENTITY, "Two-handed hold eliminates tilt/drag");
+}
+
+#[test]
 fn test_elf_mischief_traits_assignment_and_lazy_slacking() {
     use rust_tests::elf_game::physics_sandbox::{
         ElfAssistant, ElfMischiefTrait, ElfNpcState, elf_assistant_ai_system,

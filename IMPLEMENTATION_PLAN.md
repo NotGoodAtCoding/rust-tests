@@ -109,7 +109,7 @@ This document tracks the short-form task breakdown for each section of [`PLAN.md
 | Procedural viewmodel hand bobbing while walking/grounded | **DONE** | [`controller.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/controller.rs) |
 | Two-handed tape pulling up to length limit ($0.40\,\text{m}$) with tangling penalty | **DONE** | [`player/mod.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/mod.rs) |
 | Two-handed ribbon shaking: rapid shaking ($\Delta v$) ties ribbon into decorative bow | **DONE** | [`player/mod.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/mod.rs) |
-| Two-handed heavy item lifting penalty (single-hand dragging/slipping for bulky items) | TODO | Planned |
+| Two-handed heavy item lifting penalty (single-hand dragging/slipping for bulky items) | **DONE** | [`hands.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/hands.rs) |
 
 ### 2.6 Player Movement Physics: Air Control & Bunny-Hopping (BHOP)
 | Task Description | Status | Reference Files |

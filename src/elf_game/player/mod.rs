@@ -8,6 +8,7 @@ pub use bunny_ears::{
     BunnyEarsEquipped, BunnyEarsItem, FloppyEar, ViewmodelBunnyEars,
     spawn_bunny_ears_item, spawn_viewmodel_bunny_ears,
 };
+pub use hands::HeavyItem;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BhopWindow {

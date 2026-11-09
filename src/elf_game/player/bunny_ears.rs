@@ -93,6 +93,8 @@ pub fn spawn_bunny_ears_item(
     commands
         .spawn((
             BunnyEarsItem,
+            crate::elf_game::player::items::WearableHatItem::new(crate::elf_game::player::items::HatType::BunnyEars),
+            crate::elf_game::player::items::ItemClass::WearableHat,
             Grabbable,
             RigidBody::Dynamic,
             Collider::ball(0.22),

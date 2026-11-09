@@ -1020,6 +1020,8 @@ pub fn spawn_single_job_hat(
             RigidBody::Dynamic,
             Velocity::default(),
             Grabbable,
+            crate::elf_game::player::items::WearableHatItem::new(crate::elf_game::player::items::HatType::Job(job)),
+            crate::elf_game::player::items::ItemClass::WearableHat,
             ElfJobHat {
                 job,
                 worn_by: None,
@@ -1399,6 +1401,8 @@ pub fn spawn_philosopher_pipe(
 ) -> Entity {
     let mut cmd = commands.spawn((
         PhilosopherPipe::default(),
+        crate::elf_game::player::items::WearableHatItem::new(crate::elf_game::player::items::HatType::PhilosopherPipe),
+        crate::elf_game::player::items::ItemClass::WearableHat,
         Transform::from_translation(pos),
         Velocity::default(),
         RigidBody::Dynamic,

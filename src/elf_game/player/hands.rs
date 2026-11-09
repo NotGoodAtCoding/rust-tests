@@ -105,6 +105,7 @@ pub fn spawn_workshop_tools_and_materials(
         RigidBody::Dynamic,
         Velocity::default(),
         Grabbable,
+        crate::elf_game::player::items::ItemClass::HandheldTool,
         ToolItem { tool: WrappingTool::Scissors },
         Name::new("WorkbenchScissors"),
     ));
@@ -118,6 +119,7 @@ pub fn spawn_workshop_tools_and_materials(
         RigidBody::Dynamic,
         Velocity::default(),
         Grabbable,
+        crate::elf_game::player::items::ItemClass::HandheldTool,
         ToolItem { tool: WrappingTool::TapeDispenser },
         Name::new("WorkbenchTapeDispenser"),
     ));
@@ -138,6 +140,7 @@ pub fn spawn_workshop_tools_and_materials(
         RigidBody::Dynamic,
         Velocity::default(),
         Grabbable,
+        crate::elf_game::player::items::ItemClass::HandheldTool,
         ToolItem { tool: WrappingTool::GiftTagPen },
         GiftTagPenTool::default(),
         Name::new("WorkbenchGiftTagPen"),
@@ -152,6 +155,7 @@ pub fn spawn_workshop_tools_and_materials(
         RigidBody::Dynamic,
         Velocity::default(),
         Grabbable,
+        crate::elf_game::player::items::ItemClass::HandheldTool,
         ToolItem { tool: WrappingTool::WrappingPaperRoll },
         PaperPatternRoll::default(),
         Name::new("WrappingPaperRoll"),
@@ -166,6 +170,7 @@ pub fn spawn_workshop_tools_and_materials(
         RigidBody::Dynamic,
         Velocity::default(),
         Grabbable,
+        crate::elf_game::player::items::ItemClass::HandheldTool,
         ToolItem { tool: WrappingTool::DecorativeBowBox },
         Name::new("DecorativeBowBox"),
     ));

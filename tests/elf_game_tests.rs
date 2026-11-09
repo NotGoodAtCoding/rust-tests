@@ -11778,3 +11778,329 @@ fn test_back_wall_subrooms_staircase_mezzanine_and_hat_rack() {
         assert_ne!(new_hat, initial_hat, "New hat must be a newly spawned entity");
     }
 }
+
+#[test]
+fn test_item_classes_and_hat_equipping_with_f_key() {
+    use rust_tests::elf_game::{
+        physics_sandbox::{ElfJob, ElfJobHat},
+        player::{
+            controller::{ElfPlayer, ViewModelRoot},
+            items::{player_hat_equip_system, HatType, ItemClass, PlayerWornHat, WearableHatItem},
+            ElfHands, ElfMovement,
+        },
+    };
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+
+    // 1. Spawn player
+    let player_e = app
+        .world_mut()
+        .spawn((
+            ElfPlayer,
+            ElfMovement::default(),
+            ElfHands::default(),
+            Transform::from_xyz(0.0, 1.2, 0.0),
+            Name::new("ElfPlayer"),
+        ))
+        .id();
+
+    let _vm_root = app
+        .world_mut()
+        .spawn((
+            ViewModelRoot,
+            Transform::IDENTITY,
+            Visibility::default(),
+            ChildOf(player_e),
+            Name::new("ViewModelRoot"),
+        ))
+        .id();
+
+    // 2. Spawn a wearable job hat in world
+    let hat_e = app
+        .world_mut()
+        .spawn((
+            ElfJobHat {
+                job: ElfJob::MooseFeeder,
+                worn_by: None,
+            },
+            WearableHatItem::new(HatType::Job(ElfJob::MooseFeeder)),
+            ItemClass::WearableHat,
+            Transform::from_xyz(1.0, 0.5, 0.0),
+            Visibility::Inherited,
+            Name::new("MooseFeederHat"),
+        ))
+        .id();
+
+    app.add_systems(Update, player_hat_equip_system);
+    app.update();
+
+    // Verify ItemClass is WearableHat
+    assert_eq!(
+        *app.world().get::<ItemClass>(hat_e).unwrap(),
+        ItemClass::WearableHat
+    );
+
+    // 3. Put hat in player's right hand
+    {
+        let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+        hands.right_grabbed = Some(hat_e);
+    }
+
+    // 4. Press KeyF to equip hat
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::KeyF);
+    }
+    app.update();
+
+    // Verify hat cleared from hand and equipped on player
+    {
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.right_grabbed, None, "Hat must be cleared from hand on equip");
+
+        let worn = app.world().get::<PlayerWornHat>(player_e).expect("Player must have PlayerWornHat");
+        assert_eq!(worn.hat_entity, hat_e);
+        assert_eq!(worn.hat_type, HatType::Job(ElfJob::MooseFeeder));
+
+        let vis = app.world().get::<Visibility>(hat_e).unwrap();
+        assert_eq!(*vis, Visibility::Hidden, "Equipped hat should be hidden in world");
+    }
+}
+
+#[test]
+fn test_hat_unequip_to_free_hand_when_pressing_f() {
+    use rust_tests::elf_game::{
+        physics_sandbox::{ElfJob, ElfJobHat},
+        player::{
+            controller::ElfPlayer,
+            hands::HeldByPlayer,
+            items::{player_hat_equip_system, HatType, ItemClass, PlayerWornHat, WearableHatItem},
+            ElfHands, ElfMovement,
+        },
+    };
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+
+    let hat_e = app
+        .world_mut()
+        .spawn((
+            ElfJobHat {
+                job: ElfJob::PresentWrapper,
+                worn_by: None,
+            },
+            WearableHatItem::new(HatType::Job(ElfJob::PresentWrapper)),
+            ItemClass::WearableHat,
+            Transform::from_xyz(0.0, 0.0, 0.0),
+            Visibility::Hidden,
+            Name::new("PresentWrapperHat"),
+        ))
+        .id();
+
+    let player_e = app
+        .world_mut()
+        .spawn((
+            ElfPlayer,
+            ElfMovement::default(),
+            ElfHands::default(),
+            PlayerWornHat {
+                hat_entity: hat_e,
+                hat_type: HatType::Job(ElfJob::PresentWrapper),
+            },
+            Transform::from_xyz(0.0, 1.2, 0.0),
+            Name::new("ElfPlayer"),
+        ))
+        .id();
+
+    app.add_systems(Update, player_hat_equip_system);
+
+    // Player has both hands free. Press KeyF to unequip!
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::KeyF);
+    }
+    app.update();
+
+    // Verify player is no longer wearing hat, and hat is placed into free hand (right hand)
+    assert!(app.world().get::<PlayerWornHat>(player_e).is_none(), "Player must no longer wear hat");
+    let hands = app.world().get::<ElfHands>(player_e).unwrap();
+    assert_eq!(hands.right_grabbed, Some(hat_e), "Hat must be unequipped into free right hand");
+    assert!(app.world().get::<HeldByPlayer>(hat_e).is_some());
+    assert_eq!(*app.world().get::<Visibility>(hat_e).unwrap(), Visibility::Inherited);
+}
+
+#[test]
+fn test_hat_swap_when_both_hands_full_and_holding_different_hat() {
+    use rust_tests::elf_game::{
+        physics_sandbox::{ElfJob, ElfJobHat, PhilosopherPipe},
+        player::{
+            controller::ElfPlayer,
+            items::{player_hat_equip_system, HatType, ItemClass, PlayerWornHat, WearableHatItem},
+            ElfHands, ElfMovement,
+        },
+    };
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+
+    // Hat A (currently worn)
+    let hat_a_e = app
+        .world_mut()
+        .spawn((
+            ElfJobHat {
+                job: ElfJob::MooseFeeder,
+                worn_by: None,
+            },
+            WearableHatItem::new(HatType::Job(ElfJob::MooseFeeder)),
+            ItemClass::WearableHat,
+            Transform::from_xyz(0.0, 0.0, 0.0),
+            Visibility::Hidden,
+            Name::new("HatA_MooseFeeder"),
+        ))
+        .id();
+
+    // Hat B (held in right hand)
+    let hat_b_e = app
+        .world_mut()
+        .spawn((
+            PhilosopherPipe::default(),
+            WearableHatItem::new(HatType::PhilosopherPipe),
+            ItemClass::WearableHat,
+            Transform::from_xyz(0.0, 0.0, 0.0),
+            Visibility::Inherited,
+            Name::new("HatB_PhilosopherPipe"),
+        ))
+        .id();
+
+    // Non-hat item (held in left hand)
+    let present_e = app
+        .world_mut()
+        .spawn((
+            ItemClass::GrabbablePhysics,
+            Transform::from_xyz(0.0, 0.0, 0.0),
+            Visibility::Inherited,
+            Name::new("PresentCube"),
+        ))
+        .id();
+
+    let player_e = app
+        .world_mut()
+        .spawn((
+            ElfPlayer,
+            ElfMovement::default(),
+            ElfHands {
+                left_grabbed: Some(present_e),
+                right_grabbed: Some(hat_b_e),
+                ..default()
+            },
+            PlayerWornHat {
+                hat_entity: hat_a_e,
+                hat_type: HatType::Job(ElfJob::MooseFeeder),
+            },
+            Transform::from_xyz(0.0, 1.2, 0.0),
+            Name::new("ElfPlayer"),
+        ))
+        .id();
+
+    app.add_systems(Update, player_hat_equip_system);
+
+    // Both hands full! Press KeyF to trigger SWAP:
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::KeyF);
+    }
+    app.update();
+
+    // Verify swap:
+    // Player now wears Hat B
+    let worn = app.world().get::<PlayerWornHat>(player_e).expect("Player must wear Hat B");
+    assert_eq!(worn.hat_entity, hat_b_e);
+    assert_eq!(worn.hat_type, HatType::PhilosopherPipe);
+
+    // Right hand now holds Hat A
+    let hands = app.world().get::<ElfHands>(player_e).unwrap();
+    assert_eq!(hands.right_grabbed, Some(hat_a_e), "Right hand must now hold swapped Hat A");
+    assert_eq!(hands.left_grabbed, Some(present_e), "Left hand must still hold non-hat present");
+}
+
+#[test]
+fn test_hat_cannot_unequip_when_both_hands_full_with_non_hats() {
+    use rust_tests::elf_game::{
+        physics_sandbox::{ElfJob, ElfJobHat},
+        player::{
+            controller::ElfPlayer,
+            items::{player_hat_equip_system, HatType, ItemClass, PlayerWornHat, WearableHatItem},
+            ElfHands, ElfMovement,
+        },
+    };
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+
+    let hat_e = app
+        .world_mut()
+        .spawn((
+            ElfJobHat {
+                job: ElfJob::WorkshopMaintenance,
+                worn_by: None,
+            },
+            WearableHatItem::new(HatType::Job(ElfJob::WorkshopMaintenance)),
+            ItemClass::WearableHat,
+            Transform::from_xyz(0.0, 0.0, 0.0),
+            Visibility::Hidden,
+            Name::new("MaintenanceHat"),
+        ))
+        .id();
+
+    let non_hat1 = app.world_mut().spawn((ItemClass::GrabbablePhysics, Name::new("Cube1"))).id();
+    let non_hat2 = app.world_mut().spawn((ItemClass::HandheldTool, Name::new("Tape"))).id();
+
+    let player_e = app
+        .world_mut()
+        .spawn((
+            ElfPlayer,
+            ElfMovement::default(),
+            ElfHands {
+                left_grabbed: Some(non_hat1),
+                right_grabbed: Some(non_hat2),
+                ..default()
+            },
+            PlayerWornHat {
+                hat_entity: hat_e,
+                hat_type: HatType::Job(ElfJob::WorkshopMaintenance),
+            },
+            Transform::from_xyz(0.0, 1.2, 0.0),
+            Name::new("ElfPlayer"),
+        ))
+        .id();
+
+    app.add_systems(Update, player_hat_equip_system);
+
+    // Both hands full of NON-hat items! Press KeyF:
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::KeyF);
+    }
+    app.update();
+
+    // Player must STILL wear hat! (no unequip because no free hand, and no swap because neither hand holds a hat)
+    let worn = app.world().get::<PlayerWornHat>(player_e).expect("Hat must remain equipped");
+    assert_eq!(worn.hat_entity, hat_e);
+
+    let hands = app.world().get::<ElfHands>(player_e).unwrap();
+    assert_eq!(hands.left_grabbed, Some(non_hat1));
+    assert_eq!(hands.right_grabbed, Some(non_hat2));
+}

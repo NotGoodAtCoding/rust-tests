@@ -3,12 +3,12 @@ Bug descriptions will be added to the ACTIVE section. Fix the bug and move them 
 
 ACTIVE:
 
-The lighting from the candles is flickering. This may be just due to debug fastbuild in cargo rather than a full binary build.
-
 Feature: Propane tank fixes: Make the outside propane receptacles a platform with the AnchorPoint function with an activation area that locks the propane tank in a specific fixed place until the player interacts with it. The platform near the house supplies the stove. The platform near the outside larger propane main tank refills the smaller propane tanks. The Stove inside should be able to be turned off and on separately from the gas supply. While off AND connected, propane is not consumed. If disconnected, then propane is consumed since it's leaking. 
 
 
 DONE:
+
+The lighting from the candles is flickering. This may be just due to debug fastbuild in cargo rather than a full binary build.
 
 Move the Pantry to be inside the main cabin room as a subroom, and keep the door. The back wall of the cabin should have different rooms for the Pantry, and at least 2 more unused rooms. There should be a staircase to get to a mezzanine area above these rooms. Make the staircase have a smooth collision ramp for the player so that they ascend smoothly, but keep the stairs as the collision for objects that are not the player or elves. The mezzanine should have a wood railing and wood plank floors. Move the Hat Closet to be up in the mezzanine and turn it into a Hat Rack, which should spawn one random hat on it. Add a Mirror by the Hat Stand. If the hat has been taken off the rack and the player is not looking and not holding a hat, spawn a new random hat on the rack.
 

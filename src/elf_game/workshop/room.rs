@@ -45,6 +45,28 @@ pub struct CandleChandelier {
     pub flicker_seed: f32,
 }
 
+/// Global lighting configuration for workshop candle illumination.
+/// Controls flicker amplitude and frequency to eliminate harsh strobe flickering or debug framerate aliasing.
+#[derive(Resource, Debug, Clone)]
+pub struct CandleLightingConfig {
+    /// Whether candle flickering is enabled (if false, stable constant illumination is maintained).
+    pub flicker_enabled: bool,
+    /// Amplitude of the subtle flame fluctuation (default: 0.015 for gentle warm breathing, avoiding strobe artifacts).
+    pub flicker_amplitude: f32,
+    /// Speed of the subtle flame fluctuation in rad/s (default: 2.0 for slow, smooth drift).
+    pub flicker_frequency: f32,
+}
+
+impl Default for CandleLightingConfig {
+    fn default() -> Self {
+        Self {
+            flicker_enabled: true,
+            flicker_amplitude: 0.015,
+            flicker_frequency: 2.0,
+        }
+    }
+}
+
 #[derive(Component, Debug, Clone)]
 pub struct ChandelierCeilingAnchor;
 
@@ -1354,13 +1376,23 @@ pub fn conveyor_despawn_chute_system(
 }
 
 /// Smooth, organic procedural candle flame flickering for the two rustic chandeliers.
+/// Uses gentle low-frequency breathing to prevent harsh strobe-like flickering or framerate aliasing.
 /// Allowed to continue running when the game is paused so lighting flickers organically
 /// and shadow map render entities remain populated in bevy_pbr.
 pub fn chandelier_candle_flicker_system(
     time_real: Option<Res<Time<bevy::time::Real>>>,
     time: Option<Res<Time>>,
+    config: Option<Res<CandleLightingConfig>>,
     mut q_chandeliers: Query<(&CandleChandelier, &mut PointLight)>,
 ) {
+    let cfg = config.map(|c| c.clone()).unwrap_or_default();
+    if !cfg.flicker_enabled {
+        for (chandelier, mut light) in &mut q_chandeliers {
+            light.intensity = chandelier.base_intensity;
+        }
+        return;
+    }
+
     let elapsed = time_real
         .as_ref()
         .map(|t| t.elapsed_secs())
@@ -1368,9 +1400,12 @@ pub fn chandelier_candle_flicker_system(
         .unwrap_or(0.0);
 
     for (chandelier, mut light) in &mut q_chandeliers {
-        let t = elapsed * 7.5 + chandelier.flicker_seed;
-        let noise = (t * 1.0).sin() * 0.12 + (t * 2.7).sin() * 0.08 + (t * 5.3).sin() * 0.04;
-        let factor = (1.0 + noise).clamp(0.75, 1.25);
+        // Slow, gentle, organic ambient candle drift that avoids harsh flickering
+        // or aliasing under varying framerates.
+        let t = elapsed * cfg.flicker_frequency + chandelier.flicker_seed;
+        let noise = (t * 1.0).sin() * (cfg.flicker_amplitude * 0.7)
+            + (t * 2.1).sin() * (cfg.flicker_amplitude * 0.3);
+        let factor = (1.0 + noise).clamp(1.0 - cfg.flicker_amplitude, 1.0 + cfg.flicker_amplitude);
         light.intensity = chandelier.base_intensity * factor;
     }
 }

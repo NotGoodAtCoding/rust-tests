@@ -5805,6 +5805,75 @@ fn test_pause_allows_lighting_flicker_and_particles_to_continue() {
 }
 
 #[test]
+fn test_candle_lighting_flicker_stabilization_and_config() {
+    use rust_tests::elf_game::workshop::room::{
+        CandleChandelier, CandleLightingConfig, chandelier_candle_flicker_system,
+    };
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time);
+
+    let mut time_real = Time::<bevy::time::Real>::default();
+    time_real.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time_real);
+
+    app.init_resource::<CandleLightingConfig>();
+    app.add_systems(Update, chandelier_candle_flicker_system);
+
+    let base_intensity = 480_000.0;
+    let chandelier_e = app.world_mut().spawn((
+        CandleChandelier {
+            base_intensity,
+            flicker_seed: 0.5,
+        },
+        PointLight {
+            intensity: base_intensity,
+            ..default()
+        },
+    )).id();
+
+    // 1. Verify default gentle breathing: intensity stays within subtle bounds (+/- 1.5%)
+    for _ in 0..20 {
+        {
+            let mut tr = app.world_mut().resource_mut::<Time<bevy::time::Real>>();
+            tr.advance_by(std::time::Duration::from_millis(50));
+        }
+        app.update();
+
+        let light = app.world().get::<PointLight>(chandelier_e).unwrap();
+        assert!(
+            light.intensity >= base_intensity * 0.985 && light.intensity <= base_intensity * 1.015,
+            "Light intensity {} exceeded gentle breathing range [{}, {}]",
+            light.intensity,
+            base_intensity * 0.985,
+            base_intensity * 1.015
+        );
+    }
+
+    // 2. Set flicker_enabled = false to stabilize lighting completely
+    {
+        let mut cfg = app.world_mut().resource_mut::<CandleLightingConfig>();
+        cfg.flicker_enabled = false;
+    }
+
+    for _ in 0..10 {
+        {
+            let mut tr = app.world_mut().resource_mut::<Time<bevy::time::Real>>();
+            tr.advance_by(std::time::Duration::from_millis(50));
+        }
+        app.update();
+
+        let light = app.world().get::<PointLight>(chandelier_e).unwrap();
+        assert_eq!(
+            light.intensity, base_intensity,
+            "Light intensity must be strictly base_intensity when flicker is disabled"
+        );
+    }
+}
+
+#[test]
 fn test_player_hands_model_scale() {
     use rust_tests::elf_game::player::controller::{spawn_elf_player, LeftHandVisual, RightHandVisual};
 

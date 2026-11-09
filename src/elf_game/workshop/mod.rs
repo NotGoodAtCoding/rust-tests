@@ -49,6 +49,7 @@ pub struct WorkshopPlugin;
 impl Plugin for WorkshopPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<room::ConveyorSpawnerTimer>()
+            .init_resource::<room::CandleLightingConfig>()
             .init_resource::<stove::WorkshopTemperature>()
             .init_resource::<stove::WorkshopGasLine>()
             .add_message::<UnlockDoorMessage>()

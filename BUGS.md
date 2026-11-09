@@ -3,8 +3,6 @@ Bug descriptions will be added to the ACTIVE section. Fix the bug and move them 
 
 ACTIVE:
 
-The Pantry Door should be able to be pushed by the player and elves if they run into it. If an elf navigates to the Pantry, it should check if the door is in the way and try to open the door by grabbing the door and pulling it open, then going to the node before the pantry door, then entering the Pantry. 
-
 Idea: Elf Mischief behavior: Philosopher. If an elf gains this Mischief trait, it will go to the Mirror Node and stay there. In order to get the elf back to work, the player needs to navigate through a deep dialogue tree. If left alone, eventually it will start recruiting other elves which will make them navigate to the Philosopher elf and then stay there with a "thinking" pose. This can be granted by putting on the Philosopher Pipe, which is a hat that makes it look like the elf has a tobacco pipe, with smoke particle effects and a soft ember glow that slowly fluctuates from the pipe.
 
 Move the Pantry to be inside the main cabin room as a subroom, and keep the door. The back wall of the cabin should have different rooms for the Pantry, and at least 2 more unused rooms. There should be a staircase to get to a mezzanine area above these rooms. Make the staircase have a smooth collision ramp for the player so that they ascend smoothly, but keep the stairs as the collision for objects that are not the player or elves. The mezzanine should have a wood railing and wood plank floors. Move the Hat Closet to be up in the mezzanine and turn it into a Hat Rack, which should spawn one random hat on it. Add a Mirror by the Hat Stand. If the hat has been taken off the rack and the player is not looking and not holding a hat, spawn a new random hat on the rack.
@@ -17,6 +15,8 @@ Feature: Propane tank fixes: Make the outside propane receptacles a platform wit
 
 
 DONE:
+
+The Pantry Door should be able to be pushed by the player and elves if they run into it. If an elf navigates to the Pantry, it should check if the door is in the way and try to open the door by grabbing the door and pulling it open, then going to the node before the pantry door, then entering the Pantry. 
 
 Update the KleptoStash behavior to add leaf nodes with one edge back to the main graph that are in the corners of the main room. The elf should put the stolen item in front of them when stashing it, and remember the last item stashed and not target that item again to prevent getting stuck in a loop. There should also be a longer cooldown between stashing items, like 15 seconds.
 

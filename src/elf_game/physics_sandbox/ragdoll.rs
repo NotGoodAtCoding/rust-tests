@@ -8,7 +8,7 @@ use crate::elf_game::{
         ElfHands, ElfMovement,
         hands::{Grabbable, HeldByPlayer},
     },
-    workshop::pantry::MooseTreatJar,
+    workshop::pantry::{MooseTreatJar, PantryDoor},
     wrapping::Present,
 };
 
@@ -37,6 +37,8 @@ pub enum ElfNpcState {
     InDialogue,
     /// Respawning from the pneumatic present vacuum with reverse tube transit animation.
     VacuumRespawning,
+    /// Navigating to pantry, checking if door is in the way, grabbing and pulling it open, going to pre-door node, then entering pantry.
+    OpeningPantryDoor,
 }
 
 /// Mischievous behavioral traits assigned to workshop elves.
@@ -414,6 +416,10 @@ pub struct ElfAssistant {
     // Job specific state (Moose Feeder loop)
     pub carried_treat: Option<Entity>,
     pub missing_treats_panic: bool,
+
+    // Pantry door opening navigation sequence
+    pub pantry_door_phase: u8,
+    pub pantry_door_timer: f32,
 }
 
 impl ElfAssistant {
@@ -460,7 +466,24 @@ impl ElfAssistant {
             klepto_cooldown: 0.0,
             carried_treat: None,
             missing_treats_panic: false,
+            pantry_door_phase: 0,
+            pantry_door_timer: 0.0,
         }
+    }
+
+    /// Sets destination to the pantry shelves (Node 15) and plans a path.
+    pub fn navigate_to_pantry(&mut self, graph: Option<&ElfNavGraph>) {
+        let pantry_node = graph
+            .and_then(|g| g.find_node_by_purpose(ElfNodePurpose::PantryShelves))
+            .unwrap_or(15);
+        self.target_node = pantry_node;
+        if let Some(g) = graph {
+            if let Some(path) = g.find_path(self.current_node, pantry_node) {
+                self.path = path;
+                self.path_step = 0;
+            }
+        }
+        self.state = ElfNpcState::Wandering;
     }
 
     /// Sets the dynamic navigation target to follow the Player.
@@ -1091,7 +1114,7 @@ pub fn elf_assistant_ai_system(
         &mut LockedAxes,
         &mut ElfAssistant,
         Option<&DynamicWaypointTarget>,
-    )>,
+    ), Without<PantryDoor>>,
     q_player: Query<
         (&Transform, &ElfMovement),
         (Without<ElfAssistant>, Without<MrMoose>, Without<Present>),
@@ -1144,6 +1167,10 @@ pub fn elf_assistant_ai_system(
             Without<MrMoose>,
             Without<ElfMovement>,
         ),
+    >,
+    mut q_pantry_door: Query<
+        (&Transform, &mut ExternalImpulse, &mut PantryDoor),
+        (Without<ElfAssistant>, Without<Present>, Without<MooseSnack>),
     >,
     mut feed_messages: Option<MessageWriter<FeedMooseMessage>>,
     mut commands: Commands,
@@ -1202,7 +1229,8 @@ pub fn elf_assistant_ai_system(
             | ElfNpcState::Slacking
             | ElfNpcState::StashingPresent
             | ElfNpcState::FetchingMooseTreat
-            | ElfNpcState::DeliveringMooseTreat => {
+            | ElfNpcState::DeliveringMooseTreat
+            | ElfNpcState::OpeningPantryDoor => {
                 // If Moose is agitated or rampaging, panic immediately!
                 if moose_breached || moose_agitated {
                     elf.state = ElfNpcState::Panicking;
@@ -1692,6 +1720,25 @@ pub fn elf_assistant_ai_system(
                         }
                     }
 
+                    // Check if navigating to the Pantry and if the pantry door is in the way
+                    let is_navigating_to_pantry = elf.target_node == 15
+                        || (elf.path_step < elf.path.len() && elf.path[elf.path_step] == 15);
+
+                    if is_navigating_to_pantry {
+                        let door_in_way = q_pantry_door.iter().any(|(door_tf, _, door)| {
+                            let (_, yaw, _) = door_tf.rotation.to_euler(EulerRot::XYZ);
+                            yaw < door.open_threshold || door.was_closed
+                        });
+                        if door_in_way {
+                            elf.state = ElfNpcState::OpeningPantryDoor;
+                            elf.pantry_door_phase = 0;
+                            elf.pantry_door_timer = 0.0;
+                            vel.linear.x = 0.0;
+                            vel.linear.z = 0.0;
+                            continue;
+                        }
+                    }
+
                     // Choose next target using DynamicWaypointTarget if set, otherwise NavGraph or waypoints
                     let (target_pos, is_dynamic) = if let Some(ref dyn_target) = elf.dynamic_target {
                         let pos = match dyn_target {
@@ -1816,6 +1863,123 @@ pub fn elf_assistant_ai_system(
                             elf.target_waypoint = elf.waypoints[elf.current_waypoint_idx];
                             elf.state = ElfNpcState::Wandering;
                             elf.free_move_target = None;
+                        }
+                    }
+                } else if elf.state == ElfNpcState::OpeningPantryDoor {
+                    elf.walk_timer += dt;
+                    elf.pantry_door_timer += dt;
+
+                    let door_opt = q_pantry_door.iter_mut().next();
+
+                    match elf.pantry_door_phase {
+                        0 => {
+                            // Phase 0: Approach door handle / grab reach
+                            let door_pos = door_opt
+                                .as_ref()
+                                .map(|(tf, _, _)| tf.translation)
+                                .unwrap_or(Vec3::new(-13.0, 1.35, 5.48));
+                            // Stand slightly in front of the door handle (at X = -12.4, Z = 5.48)
+                            let approach_target = Vec3::new(door_pos.x + 0.6, 0.45, door_pos.z);
+                            let flat_diff = Vec3::new(
+                                approach_target.x - elf_tf.translation.x,
+                                0.0,
+                                approach_target.z - elf_tf.translation.z,
+                            );
+                            let dist = flat_diff.length();
+
+                            if dist <= 1.8 || elf.pantry_door_timer > 3.0 {
+                                // In reach! Grab the door and begin pulling open
+                                if let Some((_, mut ext, mut door)) = door_opt {
+                                    door.is_grabbed = true;
+                                    door.target_angle = 1.45;
+                                    ext.torque_impulse.y = 8.0;
+                                }
+                                elf.pantry_door_phase = 1;
+                                elf.pantry_door_timer = 0.0;
+                                vel.linear.x = 0.0;
+                                vel.linear.z = 0.0;
+                            } else {
+                                let dir = flat_diff / dist;
+                                vel.linear.x = dir.x * elf.walk_speed;
+                                vel.linear.z = dir.z * elf.walk_speed;
+                                if dir.length_squared() > 0.001 {
+                                    let target_rot = Quat::from_rotation_y(dir.x.atan2(dir.z));
+                                    elf_tf.rotation = elf_tf.rotation.slerp(target_rot, (dt * 8.0).min(1.0));
+                                }
+                            }
+                        }
+                        1 => {
+                            // Phase 1: Pull door open
+                            let mut door_is_open = false;
+                            if let Some((tf, mut ext, mut door)) = door_opt {
+                                door.is_grabbed = true;
+                                door.target_angle = 1.45;
+                                ext.torque_impulse.y = 8.0;
+
+                                let (_, yaw, _) = tf.rotation.to_euler(EulerRot::XYZ);
+                                if yaw >= door.open_threshold || elf.pantry_door_timer >= 0.35 {
+                                    door.is_grabbed = false;
+                                    door_is_open = true;
+                                }
+                            } else {
+                                door_is_open = true;
+                            }
+
+                            if door_is_open {
+                                // Door is pulled open! Now move to the node before pantry door (Node 8)
+                                elf.pantry_door_phase = 2;
+                                elf.pantry_door_timer = 0.0;
+                                vel.linear.x = 0.0;
+                                vel.linear.z = 0.0;
+                            }
+                        }
+                        2 => {
+                            // Phase 2: "going to the node before the pantry door"
+                            // Node 8 (WestSouthCorridor at Vec3(-11.0, 0.45, 5.5))
+                            let before_pos = if let Some(ref graph) = nav_graph {
+                                graph.nodes.get(8).map(|n| n.position).unwrap_or(Vec3::new(-11.0, 0.45, 5.5))
+                            } else {
+                                Vec3::new(-11.0, 0.45, 5.5)
+                            };
+
+                            let flat_diff = Vec3::new(
+                                before_pos.x - elf_tf.translation.x,
+                                0.0,
+                                before_pos.z - elf_tf.translation.z,
+                            );
+                            let dist = flat_diff.length();
+
+                            if dist < 0.8 || elf.pantry_door_timer > 3.0 {
+                                // Arrived at node before pantry door! Now enter the Pantry
+                                elf.current_node = 8;
+                                elf.pantry_door_phase = 3;
+                                elf.pantry_door_timer = 0.0;
+                                vel.linear.x = 0.0;
+                                vel.linear.z = 0.0;
+                            } else {
+                                let dir = flat_diff / dist;
+                                vel.linear.x = dir.x * elf.walk_speed;
+                                vel.linear.z = dir.z * elf.walk_speed;
+                                if dir.length_squared() > 0.001 {
+                                    let target_rot = Quat::from_rotation_y(dir.x.atan2(dir.z));
+                                    elf_tf.rotation = elf_tf.rotation.slerp(target_rot, (dt * 8.0).min(1.0));
+                                }
+                            }
+                        }
+                        _ => {
+                            // Phase 3: "then entering the Pantry."
+                            let pantry_node_idx = if let Some(ref graph) = nav_graph {
+                                graph.find_node_by_purpose(ElfNodePurpose::PantryShelves).unwrap_or(15)
+                            } else {
+                                15
+                            };
+                            elf.current_node = 8;
+                            elf.target_node = pantry_node_idx;
+                            elf.path = vec![pantry_node_idx];
+                            elf.path_step = 0;
+                            elf.state = ElfNpcState::Wandering;
+                            vel.linear.x = 0.0;
+                            vel.linear.z = 0.0;
                         }
                     }
                 }
@@ -2074,7 +2238,8 @@ pub fn elf_ragdoll_limb_animation_system(
             ElfNpcState::Wandering
             | ElfNpcState::StashingPresent
             | ElfNpcState::FetchingMooseTreat
-            | ElfNpcState::DeliveringMooseTreat => {
+            | ElfNpcState::DeliveringMooseTreat
+            | ElfNpcState::OpeningPantryDoor => {
                 let walk_t = elf.walk_timer;
                 let gait_sin = (walk_t * 7.5).sin();
 

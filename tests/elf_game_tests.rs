@@ -10470,3 +10470,191 @@ fn test_klepto_stash_corner_leaf_nodes_placement_and_loop_prevention() {
         assert_eq!(elf.carried_present, Some(pres_e2));
     }
 }
+
+#[test]
+fn test_pantry_door_push_by_player_and_elves() {
+    use rust_tests::elf_game::workshop::pantry::{
+        PantryDoor, pantry_door_interaction_system, pantry_door_spring_system,
+    };
+    use rust_tests::elf_game::player::{
+        controller::ElfPlayer,
+        ElfMovement,
+    };
+    use rust_tests::elf_game::physics_sandbox::ragdoll::ElfAssistant;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(16));
+    app.insert_resource(time);
+
+    let door_entity = app.world_mut().spawn((
+        Transform::from_xyz(-13.0, 1.35, 5.48),
+        Velocity::zero(),
+        ExternalImpulse::default(),
+        PantryDoor::default(),
+    )).id();
+
+    app.add_systems(Update, (pantry_door_interaction_system, pantry_door_spring_system).chain());
+
+    // 1. Player running into the door from inside the pantry towards the room (+X)
+    let player_entity = app.world_mut().spawn((
+        Transform::from_xyz(-13.2, 1.35, 5.48),
+        ElfPlayer,
+        ElfMovement {
+            velocity: Vec3::new(3.0, 0.0, 0.0),
+            ..default()
+        },
+    )).id();
+
+    app.update();
+
+    let door = app.world().get::<PantryDoor>(door_entity).unwrap();
+    let ext = app.world().get::<ExternalImpulse>(door_entity).unwrap();
+    assert!(
+        ext.torque_impulse.y > 0.0 || door.current_angle > 0.0 || door.target_angle > 0.0,
+        "Player running into pantry door must exert push impulse/torque on door"
+    );
+
+    // Despawn player for elf test
+    app.world_mut().despawn(player_entity);
+
+    // Reset door
+    {
+        let mut d = app.world_mut().get_mut::<PantryDoor>(door_entity).unwrap();
+        d.current_angle = 0.0;
+        d.target_angle = 0.0;
+        let mut ext = app.world_mut().get_mut::<ExternalImpulse>(door_entity).unwrap();
+        ext.torque_impulse = Vec3::ZERO;
+    }
+
+    // 2. Elf running into the door from inside the pantry (+X)
+    app.world_mut().spawn((
+        Transform::from_xyz(-13.2, 1.35, 5.48),
+        Velocity {
+            linear: Vec3::new(2.5, 0.0, 0.0),
+            angular: Vec3::ZERO,
+        },
+        ElfAssistant::new(1, "RunnerElf", vec![]),
+    ));
+
+    app.update();
+
+    let door_elf = app.world().get::<PantryDoor>(door_entity).unwrap();
+    let ext_elf = app.world().get::<ExternalImpulse>(door_entity).unwrap();
+    assert!(
+        ext_elf.torque_impulse.y > 0.0 || door_elf.current_angle > 0.0 || door_elf.target_angle > 0.0,
+        "Elf running into pantry door must exert push impulse/torque on door"
+    );
+}
+
+#[test]
+fn test_elf_navigates_pantry_door_opening_sequence() {
+    use rust_tests::elf_game::workshop::pantry::PantryDoor;
+    use rust_tests::elf_game::physics_sandbox::ragdoll::{
+        ElfAssistant, ElfNavGraph, ElfNpcState, elf_assistant_ai_system,
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time);
+    app.insert_resource(ElfNavGraph::default());
+
+    let door_entity = app.world_mut().spawn((
+        Transform::from_xyz(-13.0, 1.35, 5.48),
+        Velocity::zero(),
+        ExternalImpulse::default(),
+        PantryDoor::default(), // closed at angle 0.0
+    )).id();
+
+    // Spawn elf at Node 8 (WestSouthCorridor at Vec3(-11.0, 0.45, 5.5))
+    let elf_e = app.world_mut().spawn((
+        Transform::from_xyz(-11.0, 0.45, 5.5),
+        Velocity::default(),
+        ExternalImpulse::default(),
+        LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
+        ElfAssistant::new(5, "PantryChefElf", vec![]),
+    )).id();
+
+    app.add_systems(Update, elf_assistant_ai_system);
+
+    // 1. Tell elf to navigate to the Pantry
+    {
+        let graph = app.world().resource::<ElfNavGraph>().clone();
+        let mut elf = app.world_mut().get_mut::<ElfAssistant>(elf_e).unwrap();
+        elf.navigate_to_pantry(Some(&graph));
+        assert_eq!(elf.target_node, 15);
+    }
+
+    // Update frame 1: Elf detects closed door in the way and initiates OpeningPantryDoor sequence
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert_eq!(
+            elf.state,
+            ElfNpcState::OpeningPantryDoor,
+            "Elf must enter OpeningPantryDoor state when navigating to pantry with closed door"
+        );
+    }
+
+    // Update frame 2: Elf is close enough to door (within 2m) -> grabs door and pulls open (phase 1)
+    app.update();
+
+    {
+        let door = app.world().get::<PantryDoor>(door_entity).unwrap();
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert!(
+            door.is_grabbed || elf.pantry_door_phase >= 1,
+            "Elf must grab the door and begin pulling open"
+        );
+    }
+
+    // Simulate door swinging open
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+        tf.rotation = Quat::from_rotation_y(1.20);
+    }
+
+    // Update frame 3: Door is open -> Elf releases grab and moves to node before pantry door (Node 8, phase 2)
+    app.update();
+
+    {
+        let door = app.world().get::<PantryDoor>(door_entity).unwrap();
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert!(!door.is_grabbed, "Elf must release door grab once open");
+        assert_eq!(
+            elf.pantry_door_phase, 2,
+            "Elf must go to the node before the pantry door (Node 8) after pulling it open"
+        );
+    }
+
+    // Elf arrives at Node 8 (position is already at Node 8: -11.0, 0.45, 5.5)
+    // Update frame 4: Elf arrives at Node 8 -> phase 3 (entering pantry)
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert_eq!(
+            elf.pantry_door_phase, 3,
+            "Elf should advance to phase 3 (entering pantry)"
+        );
+    }
+
+    // Update frame 5: Elf enters the Pantry (sets target_node = 15, current_node = 8, state = Wandering)
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert_eq!(
+            elf.target_node, 15,
+            "Elf must enter the pantry by targeting Node 15"
+        );
+        assert_eq!(
+            elf.current_node, 8,
+            "Elf current node should be Node 8 before entering pantry"
+        );
+    }
+}

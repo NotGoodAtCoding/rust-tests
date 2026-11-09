@@ -668,7 +668,7 @@ pub fn pantry_door_spring_system(
         }
 
         if door.is_grabbed {
-            // Player is holding and swinging the door!
+            // Player or elf is holding and swinging the door!
             let diff = door.target_angle - yaw;
             let follow_speed = 12.0;
             let max_step = follow_speed * dt;
@@ -677,6 +677,13 @@ pub fn pantry_door_spring_system(
             vel.angular.y = step / dt;
             vel.linear = Vec3::ZERO;
         } else {
+            // If pushed by dynamic torque impulse from player or elf:
+            if ext_impulse.torque_impulse.y.abs() > 0.01 {
+                vel.angular.y += ext_impulse.torque_impulse.y * dt;
+                let push_step = vel.angular.y * dt;
+                yaw = (yaw + push_step).clamp(0.0, 1.65);
+            }
+
             // Auto-close behavior:
             // "slowly close itself if less than 1/4 rad closed and flush with the wall"
             if yaw > 0.0 && yaw < door.close_snap_threshold {
@@ -799,15 +806,57 @@ pub fn pantry_door_restock_cycle_system(
     }
 }
 
+/// Calculates push torque exerted on the pantry door by a moving body at position `pos` with velocity `vel`.
+pub fn calculate_pantry_door_push_torque(
+    door_tf: &Transform,
+    door: &PantryDoor,
+    pos: Vec3,
+    vel: Vec3,
+) -> f32 {
+    let (_, yaw, _) = door_tf.rotation.to_euler(EulerRot::XYZ);
+    let hinge = door.hinge_anchor_pos;
+    let door_dir = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+    let door_normal = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
+
+    let delta = Vec3::new(pos.x - hinge.x, 0.0, pos.z - hinge.z);
+    let span = delta.dot(door_dir);
+    let perp = delta.dot(door_normal);
+
+    // If body is along the length of the door (0.0 to 1.5m) and within contact distance (|perp| <= 0.65m)
+    if span >= -0.2 && span <= 1.6 && perp.abs() <= 0.65 {
+        let v_h = Vec3::new(vel.x, 0.0, vel.z);
+        let speed = v_h.length();
+        if speed > 0.05 {
+            let v_normal = v_h.dot(door_normal);
+            let leverage = span.clamp(0.2, 1.46);
+            // If pushing from outside (+normal) with negative v_normal (towards door)
+            // or from inside (-normal) with positive v_normal (towards door)
+            if (perp >= 0.0 && v_normal < -0.05) || (perp <= 0.0 && v_normal > 0.05) {
+                let push_dir = if perp >= 0.0 { -1.0 } else { 1.0 };
+                return push_dir * leverage * speed * 4.0;
+            }
+        }
+    }
+    0.0
+}
+
 /// Allows the player to grab and swing the pantry door open and shut,
-/// rather than applying a static force.
+/// rather than applying a static force, and handles physical push impulses
+/// when the player or elves run into the door.
 /// If the player moves away while grabbing, the grab is automatically released.
 pub fn pantry_door_interaction_system(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     mouse: Option<Res<ButtonInput<MouseButton>>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
-    q_player: Query<&Transform, With<crate::elf_game::player::controller::ElfPlayer>>,
+    q_player: Query<
+        (&Transform, Option<&crate::elf_game::player::ElfMovement>),
+        With<crate::elf_game::player::controller::ElfPlayer>,
+    >,
+    q_elves: Query<
+        (&Transform, &Velocity),
+        With<crate::elf_game::physics_sandbox::ragdoll::ElfAssistant>,
+    >,
     q_camera: Query<&GlobalTransform, With<crate::elf_game::player::controller::FirstPersonCamera>>,
     mut q_door: Query<(&Transform, &mut ExternalImpulse, &mut PantryDoor)>,
     mut interact_messages: Option<MessageReader<PantryDoorInteractMessage>>,
@@ -819,6 +868,26 @@ pub fn pantry_door_interaction_system(
     let Ok((door_tf, mut ext_impulse, mut door)) = q_door.single_mut() else {
         return;
     };
+
+    // 1. Dynamic physical pushing: check if the player runs into the door
+    for (p_tf, opt_mov) in &q_player {
+        if let Some(mov) = opt_mov {
+            let push_torque = calculate_pantry_door_push_torque(door_tf, &door, p_tf.translation, mov.velocity);
+            if push_torque.abs() > 0.01 {
+                ext_impulse.torque_impulse.y += push_torque;
+                door.target_angle = (door.target_angle + push_torque * 0.1).clamp(0.0, 1.65);
+            }
+        }
+    }
+
+    // Dynamic physical pushing: check if elves run into the door
+    for (elf_tf, elf_vel) in &q_elves {
+        let push_torque = calculate_pantry_door_push_torque(door_tf, &door, elf_tf.translation, elf_vel.linear);
+        if push_torque.abs() > 0.01 {
+            ext_impulse.torque_impulse.y += push_torque;
+            door.target_angle = (door.target_angle + push_torque * 0.1).clamp(0.0, 1.65);
+        }
+    }
 
     let mut trigger = false;
     let mut open_command = None;
@@ -868,7 +937,7 @@ pub fn pantry_door_interaction_system(
 
     let interact_pressed = key_interact || mouse_just_pressed;
 
-    if let Ok(player_tf) = q_player.single() {
+    if let Some((player_tf, _)) = q_player.iter().next() {
         let player_pos = player_tf.translation;
         let dist = player_pos.distance(door_tf.translation);
 

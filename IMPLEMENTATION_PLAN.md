@@ -176,14 +176,14 @@ This document tracks the short-form task breakdown for each section of [`PLAN.md
 ## 5. Idea Section & Future Concepts
 
 ### 5.1 Cookie Baking, Outdoor Gas Infrastructure & Pyro Hazard Chain
-* **Ingredient Gathering from Pantry**: Player fetches baking ingredients (flour sacks, sugar bags, butter blocks, chocolate chip tins) from the spacious **Pantry**.
-* **Workshop Stove & Dough Prep**: Bring ingredients to the kitchen workstation, prepare cookie dough on baking sheets, and bake using the cast-iron **Gas Furnace Stove**.
-* **Outdoor Propane Gas Valve**: The stove is powered by exterior propane tanks. The player must open the exterior cabin door, run outside into the freezing blizzard to manually turn on the brass wall valve, and sprint back inside before taking freeze damage or cooling down the workshop.
-* **Elf Mischief & Pyro Hazard Chain**: Leaving the stove unattended with the outdoor gas valve active triggers a chaotic escalation:
-  1. A **Mischievous elf** sneaks up to the stove and turns on the burner dials, letting flammable gas permeate the workshop.
-  2. After **15 seconds** of unignited gas accumulation, a **Pyro elf** (`ElfMischiefTrait::Pyro`) detects the gas concentration.
-  3. The Pyro elf searches for an open flame source (chandelier candle embers, matches, or a lighter) and charges toward the stove.
-  4. **Slapstick Catastrophic Explosion**: Ignites a massive physics shockwave that knocks open doors, shatters windows, and propels presents, snack jars, and ragdoll elves flying into the high ceiling rafters!
+
+| Task Description | Status | Reference Files |
+|---|:---:|---|
+| **Ingredient Gathering from Pantry**: Grabbable ingredient props (Flour Sack, Sugar Bag, Butter Block, Chocolate Chip Tin) spawned on the West Pantry Shelves with automatic infinite restock on pantry door cycle | **DONE** | [`baking.rs`](file:///home/stef/repo/rust-tests/src/elf_game/workshop/baking.rs), [`pantry.rs`](file:///home/stef/repo/rust-tests/src/elf_game/workshop/pantry.rs) |
+| **Workshop Stove & Dough Prep**: Grabbable `BakingSheet` on the pantry staging counter; bringing ingredients within reach absorbs them into the tray; assembling all 4 ingredients yields raw festive cookie dough | **DONE** | [`baking.rs`](file:///home/stef/repo/rust-tests/src/elf_game/workshop/baking.rs) |
+| **Stove Cookie Baking & Moose Feeding**: Placing dough-filled `BakingSheet` on active heated Gas Furnace Stove bakes over duration and spawns 4 fresh `BakedFestiveCookie` with `MooseSnack` (30 nutrition) to feed Mr. Moose on `MooseCookiePlate` | **DONE** | [`baking.rs`](file:///home/stef/repo/rust-tests/src/elf_game/workshop/baking.rs), [`toy_model.rs`](file:///home/stef/repo/rust-tests/src/elf_game/moose/toy_model.rs) |
+| **Outdoor Propane Gas Valve**: The stove is powered by exterior propane tanks. The player must open the exterior cabin door, run outside into the freezing blizzard to manually turn on the brass wall valve, and sprint back inside before taking freeze damage or cooling down the workshop | **DONE** | [`stove.rs`](file:///home/stef/repo/rust-tests/src/elf_game/workshop/stove.rs) |
+| **Elf Mischief & Pyro Hazard Chain**: Leaving stove unattended with gas active triggers mischievous elf stove tampering, 15s gas concentration accumulation, Pyro elf flame seeking, and slapstick catastrophic shockwave explosion | TODO | Planned |
 
 ### 5.2 Items and Interactions
 * **Auto Wrapper**: [**DONE**] Wraps any physics object in festive wrapping paper with volume/size-scaled progress duration (larger items take longer). Progress bar accumulates while Mouse1 is held. Once complete, the item receives festive wrapping paper texture and `WrappedInPaper`. If used on an elf, immobilizes them for 10 seconds in ragdoll mode with periodic slight physics bounces until they break free and restore original appearance. (Reference: [`auto_wrapper.rs`](file:///home/stef/repo/rust-tests/src/elf_game/wrapping/auto_wrapper.rs))

@@ -12922,3 +12922,196 @@ fn test_player_statistics_tracking_and_bhop_streak() {
     assert_eq!(stats.best_bhop_streak, 9);
 }
 
+#[test]
+fn test_baking_ingredient_assembly_into_dough() {
+    use rust_tests::elf_game::workshop::baking::{
+        ingredient_baking_sheet_assembly_system, BakingIngredient, BakingIngredientType,
+        BakingSheet,
+    };
+
+    let mut app = App::new();
+    let sheet_e = app
+        .world_mut()
+        .spawn((
+            BakingSheet::default(),
+            Transform::from_xyz(-7.35, 0.95, 11.0),
+        ))
+        .id();
+
+    // Spawn 4 ingredients within 0.3m of the baking sheet
+    let ing_types = [
+        BakingIngredientType::Flour,
+        BakingIngredientType::Sugar,
+        BakingIngredientType::Butter,
+        BakingIngredientType::ChocolateChips,
+    ];
+
+    let mut ing_entities = Vec::new();
+    for ing_type in ing_types {
+        let e = app
+            .world_mut()
+            .spawn((
+                BakingIngredient {
+                    ingredient_type: ing_type,
+                    home_shelf_pos: Vec3::new(-7.35, 0.95, 11.0),
+                },
+                Transform::from_xyz(-7.35, 0.98, 11.0),
+            ))
+            .id();
+        ing_entities.push(e);
+    }
+
+    app.add_systems(Update, ingredient_baking_sheet_assembly_system);
+    app.update();
+
+    // Verify all 4 ingredients were absorbed into sheet
+    let sheet = app.world().get::<BakingSheet>(sheet_e).unwrap();
+    assert_eq!(sheet.ingredients_added.len(), 4);
+    assert!(sheet.is_dough_ready, "Dough must be ready when all 4 ingredients are added");
+
+    // Verify ingredient entities are despawned
+    for ing_e in ing_entities {
+        assert!(app.world().get_entity(ing_e).is_err(), "Ingredient entity should be despawned");
+    }
+}
+
+#[test]
+fn test_stove_baking_transforms_dough_into_fresh_cookies() {
+    use rust_tests::elf_game::{
+        moose::MooseSnack,
+        workshop::{
+            baking::{
+                baking_sheet_cookie_harvest_system, stove_baking_system, BakedFestiveCookie,
+                BakingSheet, CookieBakedEvent,
+            },
+            stove::{GasFurnaceStove, GasHose, HoseAttachment, WorkshopGasLine},
+        },
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.insert_resource(WorkshopGasLine {
+        pressure_psi: 100.0,
+        ..default()
+    });
+    app.add_message::<CookieBakedEvent>();
+
+    // Spawn stove with gas hose connected
+    let stove_pos = Vec3::new(-7.34, 0.0, -11.4);
+    app.world_mut().spawn((
+        GasFurnaceStove {
+            is_on: true,
+            is_lit: true,
+            heat_output: 1.5,
+            is_heated: true,
+            internal_temp: 180.0,
+        },
+        Transform::from_translation(stove_pos),
+    ));
+
+    app.world_mut().spawn(GasHose {
+        attached_to: HoseAttachment::Stove,
+        ..default()
+    });
+
+    // Spawn baking sheet with dough ready directly on stove top (Y = 1.35)
+    let sheet_e = app
+        .world_mut()
+        .spawn((
+            BakingSheet {
+                is_dough_ready: true,
+                bake_duration: 2.0,
+                ..default()
+            },
+            Transform::from_xyz(-7.34, 1.35, -11.4),
+        ))
+        .id();
+
+    app.add_systems(
+        Update,
+        (stove_baking_system, baking_sheet_cookie_harvest_system).chain(),
+    );
+
+    // Step time forward 1.0s (halfway)
+    {
+        let mut time = app.world_mut().resource_mut::<Time>();
+        time.advance_by(std::time::Duration::from_secs_f32(1.0));
+    }
+    app.update();
+
+    let sheet = app.world().get::<BakingSheet>(sheet_e).unwrap();
+    assert!(!sheet.is_baked, "Should not be baked yet at 1.0s");
+
+    // Advance past 2.0s
+    {
+        let mut time = app.world_mut().resource_mut::<Time>();
+        time.advance_by(std::time::Duration::from_secs_f32(1.5));
+    }
+    app.update();
+
+    let sheet = app.world().get::<BakingSheet>(sheet_e).unwrap();
+    assert!(sheet.is_baked, "Sheet should be baked after duration passes");
+    assert!(sheet.cookies_spawned, "Cookies should be harvested and spawned");
+
+    // Verify 4 festive cookies with MooseSnack spawned
+    let mut cookie_q = app.world_mut().query::<(&BakedFestiveCookie, &MooseSnack)>();
+    let cookies: Vec<_> = cookie_q.iter(app.world()).collect();
+    assert_eq!(cookies.len(), 4, "Must spawn 4 baked festive cookies");
+    assert_eq!(cookies[0].1.nutrition_value, 30.0);
+}
+
+#[test]
+fn test_baking_unheated_stove_does_not_bake() {
+    use rust_tests::elf_game::workshop::{
+        baking::{stove_baking_system, BakingSheet, CookieBakedEvent},
+        stove::{GasFurnaceStove, GasHose, HoseAttachment, WorkshopGasLine},
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.insert_resource(WorkshopGasLine {
+        pressure_psi: 100.0,
+        ..default()
+    });
+    app.add_message::<CookieBakedEvent>();
+
+    // Stove is turned OFF
+    app.world_mut().spawn((
+        GasFurnaceStove {
+            is_on: false,
+            ..default()
+        },
+        Transform::from_xyz(-7.34, 0.0, -11.4),
+    ));
+
+    app.world_mut().spawn(GasHose {
+        attached_to: HoseAttachment::Stove,
+        ..default()
+    });
+
+    let sheet_e = app
+        .world_mut()
+        .spawn((
+            BakingSheet {
+                is_dough_ready: true,
+                bake_duration: 2.0,
+                ..default()
+            },
+            Transform::from_xyz(-7.34, 1.35, -11.4),
+        ))
+        .id();
+
+    app.add_systems(Update, stove_baking_system);
+
+    {
+        let mut time = app.world_mut().resource_mut::<Time>();
+        time.advance_by(std::time::Duration::from_secs_f32(3.0));
+    }
+    app.update();
+
+    let sheet = app.world().get::<BakingSheet>(sheet_e).unwrap();
+    assert!(!sheet.is_baked, "Dough must not bake if stove is turned off");
+    assert_eq!(sheet.bake_timer, 0.0);
+}
+
+

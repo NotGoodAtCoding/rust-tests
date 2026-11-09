@@ -8,12 +8,14 @@ pub mod progression;
 pub mod pantry;
 pub mod stove;
 pub mod stable_door;
+pub mod baking;
 
 pub use room::VacuumTractorBeamCone;
 pub use progression::*;
 pub use pantry::*;
 pub use stove::*;
 pub use stable_door::*;
+pub use baking::*;
 
 #[derive(Message, Debug, Clone)]
 pub struct UnlockDoorMessage {
@@ -60,7 +62,8 @@ impl Plugin for WorkshopPlugin {
             .add_message::<pantry::PantryRestockEvent>()
             .add_message::<pantry::PantryDoorInteractMessage>()
             .add_message::<stove::FieryExplosionEvent>()
-            .add_systems(Startup, (room::setup_workshop_scene, stove::spawn_oven_stove_and_propane_scene))
+            .add_message::<baking::CookieBakedEvent>()
+            .add_systems(Startup, (room::setup_workshop_scene, stove::spawn_oven_stove_and_propane_scene, baking::spawn_baking_scene))
             .add_systems(
                 Update,
                 (
@@ -75,6 +78,9 @@ impl Plugin for WorkshopPlugin {
                     pantry::pantry_door_interaction_system,
                     stable_door::stable_door_system,
                     stable_door::stable_door_interaction_system,
+                    baking::ingredient_baking_sheet_assembly_system,
+                    (baking::stove_baking_system, baking::baking_sheet_cookie_harvest_system).chain(),
+                    baking::pantry_ingredient_restock_system,
                 ),
             )
             .add_systems(

@@ -6,7 +6,10 @@ use bevy::{
 use bevy_rapier3d::prelude::*;
 use crate::elf_game::{
     assets::{palette::*, WorkshopMaterials},
-    player::{BhopConfig, ElfHands, ElfMovement, update_elf_physics},
+    player::{
+        BhopConfig, ElfHands, ElfMovement, HandSide, update_elf_physics,
+        viewmodel_hands::{HandPoseState, ViewmodelHandSprite},
+    },
     ui::MenuState,
     workshop::room::ConveyorBelt,
 };
@@ -144,8 +147,18 @@ pub fn spawn_elf_player(
                             Transform::from_xyz(-0.35, -0.3, -0.6),
                             LeftHandVisual,
                             FloatyHand::new(Vec3::new(-0.35, -0.3, -0.6), 0.0),
+                            HandPoseState::new(HandSide::Left),
                             Name::new("LeftHandGlove"),
-                        ));
+                        ))
+                        .with_children(|hand| {
+                            hand.spawn((
+                                Mesh3d(meshes.add(Rectangle::new(0.18, 0.18))),
+                                MeshMaterial3d(hand_material.clone()),
+                                Transform::from_xyz(0.0, 0.0, 0.02),
+                                ViewmodelHandSprite { side: HandSide::Left },
+                                Name::new("LeftHandSprite"),
+                            ));
+                        });
 
                         // Right hand model (controlled with E)
                         vm.spawn((
@@ -154,8 +167,18 @@ pub fn spawn_elf_player(
                             Transform::from_xyz(0.35, -0.3, -0.6),
                             RightHandVisual,
                             FloatyHand::new(Vec3::new(0.35, -0.3, -0.6), std::f32::consts::PI),
+                            HandPoseState::new(HandSide::Right),
                             Name::new("RightHandGlove"),
-                        ));
+                        ))
+                        .with_children(|hand| {
+                            hand.spawn((
+                                Mesh3d(meshes.add(Rectangle::new(0.18, 0.18))),
+                                MeshMaterial3d(hand_material.clone()),
+                                Transform::from_xyz(0.0, 0.0, 0.02),
+                                ViewmodelHandSprite { side: HandSide::Right },
+                                Name::new("RightHandSprite"),
+                            ));
+                        });
                     });
                 });
         });

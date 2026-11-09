@@ -5,6 +5,7 @@ pub mod hands;
 pub mod bunny_ears;
 pub mod items;
 pub mod tinsel_cannon;
+pub mod viewmodel_hands;
 
 pub use bunny_ears::{
     BunnyEarsEquipped, BunnyEarsItem, FloppyEar, ViewmodelBunnyEars,
@@ -15,6 +16,11 @@ pub use items::{HatType, ItemClass, PlayerWornHat, WearableHatItem, player_hat_e
 pub use tinsel_cannon::{
     TinselHandCannon, TinselStrand, spawn_tinsel_hand_cannon, fire_tinsel_strand,
     player_tinsel_cannon_system, elf_tinsel_cannon_retaliation_system, elf_equip_tinsel_cannon_system,
+};
+pub use viewmodel_hands::{
+    HandPose, HandPoseState, ViewmodelHandSprite, HandSpriteMaterials,
+    create_hand_sprite_materials, generate_hand_sprite_image,
+    hand_pose_state_machine_system, hand_pose_animation_system,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +100,7 @@ impl Default for ElfMovement {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HandSide {
     Left,
     Right,
@@ -256,13 +262,31 @@ pub fn update_elf_physics(
     }
 }
 
+fn setup_hand_sprite_materials_system(
+    mut commands: Commands,
+    materials: Option<ResMut<Assets<StandardMaterial>>>,
+    images: Option<ResMut<Assets<Image>>>,
+) {
+    if let (Some(mut materials), Some(mut images)) = (materials, images) {
+        let mats = create_hand_sprite_materials(&mut materials, &mut images);
+        commands.insert_resource(mats);
+    }
+}
+
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BhopConfig>()
             .init_resource::<controller::ElfInputSettings>()
-            .add_systems(Startup, (controller::spawn_elf_player, hands::spawn_workshop_tools_and_materials))
+            .add_systems(
+                Startup,
+                (
+                    setup_hand_sprite_materials_system,
+                    controller::spawn_elf_player,
+                    hands::spawn_workshop_tools_and_materials,
+                ),
+            )
             .add_systems(
                 Update,
                 (
@@ -273,6 +297,8 @@ impl Plugin for PlayerPlugin {
                         controller::elf_player_controller_system,
                         controller::viewmodel_bob,
                         controller::floaty_hands_system,
+                        viewmodel_hands::hand_pose_state_machine_system,
+                        viewmodel_hands::hand_pose_animation_system,
                         hands::dual_hand_interaction_system,
                         bunny_ears::player_bunny_ears_equip_system,
                         items::player_hat_equip_system,

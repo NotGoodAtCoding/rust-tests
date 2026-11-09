@@ -13350,3 +13350,224 @@ fn test_pyro_elf_charges_stove_and_triggers_catastrophic_explosion() {
 
 
 
+#[test]
+fn test_viewmodel_sprite_hands_and_poses() {
+    use rust_tests::elf_game::player::{
+        ElfHands, ElfMovement, HandSide, HandPose, HandPoseState, ViewmodelHandSprite,
+        create_hand_sprite_materials, generate_hand_sprite_image,
+        hand_pose_state_machine_system, hand_pose_animation_system,
+        controller::{ElfPlayer, FirstPersonCamera, LeftHandVisual, RightHandVisual},
+        hands::Grabbable,
+    };
+
+    // 1. Test procedural sprite generation for all poses and both sides
+    for side in [HandSide::Left, HandSide::Right] {
+        for pose in [
+            HandPose::Idle,
+            HandPose::Walking,
+            HandPose::Sprinting,
+            HandPose::Grabbing,
+            HandPose::Holding,
+        ] {
+            let img = generate_hand_sprite_image(pose, side);
+            assert_eq!(img.texture_descriptor.size.width, 32);
+            assert_eq!(img.texture_descriptor.size.height, 32);
+            let raw = img.data.as_ref().expect("Image data must exist");
+            assert!(!raw.is_empty(), "Image data must be non-empty");
+
+            // Verify alpha channel has non-transparent pixels (mitten pixels)
+            let mut non_transparent = 0;
+            for i in (3..raw.len()).step_by(4) {
+                if raw[i] > 0 {
+                    non_transparent += 1;
+                }
+            }
+            assert!(
+                non_transparent > 50,
+                "Sprite for {:?} {:?} must contain visible mitten pixels",
+                side,
+                pose
+            );
+        }
+    }
+
+    // 2. Set up app to test state machine transitions and independent hands
+    let mut app = App::new();
+    app.insert_resource(Assets::<Mesh>::default());
+    app.insert_resource(Assets::<StandardMaterial>::default());
+    app.insert_resource(Assets::<Image>::default());
+
+    // Build HandSpriteMaterials
+    let sprite_mats = app
+        .world_mut()
+        .resource_scope(|world, mut mats: Mut<Assets<StandardMaterial>>| {
+            let mut images = world.resource_mut::<Assets<Image>>();
+            create_hand_sprite_materials(&mut mats, &mut images)
+        });
+    app.insert_resource(sprite_mats);
+
+    let dummy_held = app.world_mut().spawn_empty().id();
+
+    // Spawn player with ElfMovement and ElfHands
+    let player_e = app
+        .world_mut()
+        .spawn((
+            ElfPlayer,
+            ElfMovement {
+                velocity: Vec3::ZERO,
+                is_grounded: true,
+                current_max_speed: 6.0,
+                consecutive_bhops: 0,
+                ..default()
+            },
+            ElfHands {
+                left_grabbed: None,
+                right_grabbed: None,
+                ..default()
+            },
+            Transform::IDENTITY,
+        ))
+        .id();
+
+    // Spawn camera
+    let _cam_e = app
+        .world_mut()
+        .spawn((
+            FirstPersonCamera,
+            Transform::from_xyz(0.0, 1.5, 0.0),
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.5, 0.0)),
+        ))
+        .id();
+
+    // Spawn left hand and sprite
+    let left_hand_e = app
+        .world_mut()
+        .spawn((
+            LeftHandVisual,
+            HandPoseState::new(HandSide::Left),
+            Transform::from_xyz(-0.35, -0.3, -0.6),
+        ))
+        .id();
+    let _left_sprite_e = app
+        .world_mut()
+        .spawn((
+            ViewmodelHandSprite { side: HandSide::Left },
+            MeshMaterial3d(Handle::<StandardMaterial>::default()),
+        ))
+        .id();
+
+    // Spawn right hand and sprite
+    let right_hand_e = app
+        .world_mut()
+        .spawn((
+            RightHandVisual,
+            HandPoseState::new(HandSide::Right),
+            Transform::from_xyz(0.35, -0.3, -0.6),
+        ))
+        .id();
+    let _right_sprite_e = app
+        .world_mut()
+        .spawn((
+            ViewmodelHandSprite { side: HandSide::Right },
+            MeshMaterial3d(Handle::<StandardMaterial>::default()),
+        ))
+        .id();
+
+    app.add_systems(
+        Update,
+        (hand_pose_state_machine_system, hand_pose_animation_system),
+    );
+
+    // Initial tick: player is stationary, no items held -> both Idle
+    app.update();
+    assert_eq!(
+        app.world().get::<HandPoseState>(left_hand_e).unwrap().current_pose,
+        HandPose::Idle,
+        "Left hand must start in Idle pose when stationary"
+    );
+    assert_eq!(
+        app.world().get::<HandPoseState>(right_hand_e).unwrap().current_pose,
+        HandPose::Idle,
+        "Right hand must start in Idle pose when stationary"
+    );
+
+    // Test Walking: player moves grounded with walking speed (e.g. 3.0 m/s)
+    {
+        let mut mov = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+        mov.velocity = Vec3::new(3.0, 0.0, 0.0);
+        mov.is_grounded = true;
+    }
+    app.update();
+    assert_eq!(
+        app.world().get::<HandPoseState>(left_hand_e).unwrap().current_pose,
+        HandPose::Walking,
+        "Left hand must enter Walking pose during grounded movement"
+    );
+    assert_eq!(
+        app.world().get::<HandPoseState>(right_hand_e).unwrap().current_pose,
+        HandPose::Walking,
+        "Right hand must enter Walking pose during grounded movement"
+    );
+
+    // Test Sprinting: velocity >= 7.5 m/s
+    {
+        let mut mov = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+        mov.velocity = Vec3::new(8.5, 0.0, 0.0);
+    }
+    app.update();
+    assert_eq!(
+        app.world().get::<HandPoseState>(left_hand_e).unwrap().current_pose,
+        HandPose::Sprinting,
+        "Hands must enter Sprinting pose during high-speed sprint"
+    );
+
+    // Test Independent Hands: Left hand holds item -> Holding, Right hand remains Sprinting
+    {
+        let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+        hands.left_grabbed = Some(dummy_held);
+    }
+    app.update();
+    assert_eq!(
+        app.world().get::<HandPoseState>(left_hand_e).unwrap().current_pose,
+        HandPose::Holding,
+        "Left hand holding an item must enter Holding pose"
+    );
+    assert_eq!(
+        app.world().get::<HandPoseState>(right_hand_e).unwrap().current_pose,
+        HandPose::Sprinting,
+        "Right hand with no item must remain in locomotion pose (Sprinting)"
+    );
+
+    // Test Grabbing: Spawn a grabbable prop in front of player reticle
+    {
+        let mut mov = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+        mov.velocity = Vec3::ZERO;
+        mov.is_grounded = true;
+    }
+    let _prop_e = app
+        .world_mut()
+        .spawn((
+            Grabbable,
+            Transform::from_xyz(0.0, 1.5, -1.0),
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.5, -1.0)),
+        ))
+        .id();
+    app.update();
+    assert_eq!(
+        app.world().get::<HandPoseState>(left_hand_e).unwrap().current_pose,
+        HandPose::Holding,
+        "Left hand must stay in Holding pose while holding an item"
+    );
+    assert_eq!(
+        app.world().get::<HandPoseState>(right_hand_e).unwrap().current_pose,
+        HandPose::Grabbing,
+        "Right hand must enter Grabbing pose when reticle is close to grabbable object"
+    );
+
+    // Test Animation values
+    let right_hand_state = app.world().get::<HandPoseState>(right_hand_e).unwrap();
+    assert!(
+        right_hand_state.forward_reach > 0.0,
+        "Grabbing pose must reach forward (forward_reach > 0.0)"
+    );
+}

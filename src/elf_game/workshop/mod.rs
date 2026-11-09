@@ -9,6 +9,7 @@ pub mod pantry;
 pub mod stove;
 pub mod stable_door;
 pub mod baking;
+pub mod catapult;
 
 pub use room::VacuumTractorBeamCone;
 pub use progression::*;
@@ -16,6 +17,7 @@ pub use pantry::*;
 pub use stove::*;
 pub use stable_door::*;
 pub use baking::*;
+pub use catapult::*;
 
 #[derive(Message, Debug, Clone)]
 pub struct UnlockDoorMessage {
@@ -64,7 +66,26 @@ impl Plugin for WorkshopPlugin {
             .add_message::<pantry::PantryDoorInteractMessage>()
             .add_message::<stove::FieryExplosionEvent>()
             .add_message::<baking::CookieBakedEvent>()
-            .add_systems(Startup, (room::setup_workshop_scene, stove::spawn_oven_stove_and_propane_scene, baking::spawn_baking_scene))
+            .add_message::<catapult::TriggerCatapultMessage>()
+            .add_message::<catapult::ToggleDiverterMessage>()
+            .add_systems(
+                Startup,
+                (
+                    room::setup_workshop_scene,
+                    stove::spawn_oven_stove_and_propane_scene,
+                    baking::spawn_baking_scene,
+                    catapult::spawn_catapult_and_assembly_line_scene,
+                ),
+            )
+            .add_systems(
+                Update,
+                (
+                    catapult::conveyor_diverter_paddle_system,
+                    catapult::assembly_line_ramp_physics_system,
+                    catapult::conveyor_catapult_system,
+                    catapult::catapult_and_diverter_interaction_system,
+                ),
+            )
             .add_systems(
                 Update,
                 (

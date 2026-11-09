@@ -306,20 +306,20 @@ pub fn moose_rampage_path_and_physics_impulse_system(
             );
             let player_dist = flat_player_diff.length();
 
-            // When the moose is rampaging, if the player gets within 2m of the moose, set target location to the player.
+            // When the moose is rampaging, if the player gets within 5m of the moose, set target location to the player.
             if !tracker.is_targeting_player && tracker.player_target_cooldown <= 0.0 {
-                if player_dist <= 2.0 {
+                if player_dist <= 5.0 {
                     tracker.is_targeting_player = true;
                     tracker.dynamic_target = Some(DynamicWaypointTarget::Player);
                     tracker.target_player_timer = 0.0;
                 }
             }
 
-            // As long as the player is within 3m of the moose once triggered, or 5 seconds have passed since the moose targeted the player,
+            // As long as the player is within 6m of the moose once triggered, or 5 seconds have passed since the moose targeted the player,
             // keep updating the target location of the moose to the Player.
             if tracker.is_targeting_player {
                 tracker.target_player_timer += dt;
-                if player_dist <= 3.0 || tracker.target_player_timer < 5.0 {
+                if player_dist <= 6.0 || tracker.target_player_timer < 5.0 {
                     tracker.dynamic_target = Some(DynamicWaypointTarget::Player);
                 } else {
                     tracker.is_targeting_player = false;
@@ -472,7 +472,7 @@ pub fn moose_rampage_path_and_physics_impulse_system(
                     player_tf.translation.z - moose_tf.translation.z,
                 ).length();
                 let y_diff = (player_tf.translation.y - moose_tf.translation.y).abs();
-                if flat_p_dist < 0.8 && y_diff < 1.8 && movement.velocity.y < 8.0 {
+                if flat_p_dist < 1.6 && y_diff < 1.8 && movement.velocity.y < 8.0 {
                     let angle = rand::random::<f32>() * std::f32::consts::TAU;
                     let h_speed = 6.0 + rand::random::<f32>() * 6.0;
                     let v_speed = 10.0 + rand::random::<f32>() * 6.0;

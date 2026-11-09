@@ -22,7 +22,7 @@ The lighting from the candles is flickering. This may be just due to debug fastb
 
 DONE:
 
-Feature: Dynamic waypoint targeting: Elves and NPCs should be able to target other NPCs and the Player location as an option. When the moose is rampaging, if the player gets within 2m of the moose, set the target location to the player. As long as the player is within 3m of the moose once triggered, or 5 seconds have passed since the moose targeted the player, keep updating the target location of the moose to the Player. Once the moose contacts the player, the moose cannot target the player again for 3 seconds. Also, make the wander radius around waypoints slightly larger.
+Feature: Dynamic waypoint targeting: Elves and NPCs should be able to target other NPCs and the Player location as an option. When the moose is rampaging, if the player gets within 5m of the moose, set the target location to the player. As long as the player is within 6m of the moose once triggered, or 5 seconds have passed since the moose targeted the player, keep updating the target location of the moose to the Player. Once the moose contacts the player, the moose cannot target the player again for 3 seconds. Also, make the wander radius around waypoints slightly larger.
 
 The stable door top half opens slowly and smoothly with Mr. Moose as he slowly pokes his head in across the 30+ second peeking stage (hunger 20 to 50), tracking his forward snout progression from fully closed to open.
 

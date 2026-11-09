@@ -9911,9 +9911,9 @@ fn test_moose_rampage_dynamic_player_targeting_and_cooldown() {
         Transform::from_xyz(0.0, 1.4, 0.0),
     )).id();
 
-    // Spawn Player far away at (5.0, 0.45, 0.0) (> 2m)
+    // Spawn Player far away at (10.0, 0.45, 0.0) (> 5m)
     let player_entity = app.world_mut().spawn((
-        Transform::from_xyz(5.0, 0.45, 0.0),
+        Transform::from_xyz(10.0, 0.45, 0.0),
         ElfMovement {
             velocity: Vec3::ZERO,
             base_speed: 6.0,
@@ -9921,40 +9921,40 @@ fn test_moose_rampage_dynamic_player_targeting_and_cooldown() {
         },
     )).id();
 
-    // 1. Player is > 2m away: Moose does NOT target player
+    // 1. Player is > 5m away: Moose does NOT target player
     app.update();
     let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
-    assert!(!tracker.is_targeting_player, "Moose must not target player when > 2m away");
+    assert!(!tracker.is_targeting_player, "Moose must not target player when > 5m away");
     assert_eq!(tracker.dynamic_target, None);
 
-    // 2. Player moves within 2m (1.8m from Moose)
+    // 2. Player moves within 5m (4.5m from Moose)
     {
         let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
         let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
-        p_tf.translation = moose_pos + Vec3::new(1.8, 0.0, 0.0);
+        p_tf.translation = moose_pos + Vec3::new(4.5, 0.0, 0.0);
     }
     app.update();
 
     let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
-    assert!(tracker.is_targeting_player, "Moose must target player when within 2m");
+    assert!(tracker.is_targeting_player, "Moose must target player when within 5m");
     assert_eq!(tracker.dynamic_target, Some(DynamicWaypointTarget::Player));
 
-    // 3. Player moves to 2.8m (<= 3m): Moose keeps targeting player
+    // 3. Player moves to 5.8m (<= 6m): Moose keeps targeting player
     {
         let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
         let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
-        p_tf.translation = moose_pos + Vec3::new(2.8, 0.0, 0.0);
+        p_tf.translation = moose_pos + Vec3::new(5.8, 0.0, 0.0);
     }
     app.update();
 
     let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
-    assert!(tracker.is_targeting_player, "Moose must keep targeting player while within 3m");
+    assert!(tracker.is_targeting_player, "Moose must keep targeting player while within 6m");
 
-    // 4. Player runs away to 3.5m (> 3m), but only 1 second has elapsed (< 5s)
+    // 4. Player runs away to 7.0m (> 6m), but only 1 second has elapsed (< 5s)
     for _ in 0..10 {
         let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
         let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
-        p_tf.translation = moose_pos + Vec3::new(3.5, 0.0, 0.0);
+        p_tf.translation = moose_pos + Vec3::new(7.0, 0.0, 0.0);
         let mut t = app.world_mut().resource_mut::<Time<()>>();
         t.advance_by(std::time::Duration::from_millis(100));
         app.update();
@@ -9963,14 +9963,14 @@ fn test_moose_rampage_dynamic_player_targeting_and_cooldown() {
     let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
     assert!(
         tracker.is_targeting_player,
-        "Moose must keep targeting player for 5 seconds even if player steps beyond 3m"
+        "Moose must keep targeting player for 5 seconds even if player steps beyond 6m"
     );
 
-    // 5. Advance time by 4.5 more seconds (total > 5s, player still running away at 3.5m > 3m)
+    // 5. Advance time by 4.5 more seconds (total > 5s, player still running away at 7.0m > 6m)
     for _ in 0..45 {
         let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
         let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
-        p_tf.translation = moose_pos + Vec3::new(3.5, 0.0, 0.0);
+        p_tf.translation = moose_pos + Vec3::new(7.0, 0.0, 0.0);
         let mut t = app.world_mut().resource_mut::<Time<()>>();
         t.advance_by(std::time::Duration::from_millis(100));
         app.update();
@@ -9979,26 +9979,26 @@ fn test_moose_rampage_dynamic_player_targeting_and_cooldown() {
     let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
     assert!(
         !tracker.is_targeting_player,
-        "Moose must stop targeting player after 5s have elapsed and player is outside 3m"
+        "Moose must stop targeting player after 5s have elapsed and player is outside 6m"
     );
     assert_eq!(tracker.dynamic_target, None);
 
-    // 6. Player comes back within 2m (1.9m): Moose targets player again
+    // 6. Player comes back within 5m (4.0m): Moose targets player again
     {
         let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
         let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
-        p_tf.translation = moose_pos + Vec3::new(1.9, 0.0, 0.0);
+        p_tf.translation = moose_pos + Vec3::new(4.0, 0.0, 0.0);
     }
     app.update();
 
     let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
-    assert!(tracker.is_targeting_player, "Moose must retarget player when entering 2m again");
+    assert!(tracker.is_targeting_player, "Moose must retarget player when entering 5m again");
 
-    // 7. Contact: Player collides with Moose (< 0.8m)
+    // 7. Contact: Player collides with Moose (< 1.6m)
     {
         let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
         let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
-        p_tf.translation = moose_pos + Vec3::new(0.5, 0.0, 0.0);
+        p_tf.translation = moose_pos + Vec3::new(0.8, 0.0, 0.0);
     }
     app.update();
 
@@ -10014,11 +10014,11 @@ fn test_moose_rampage_dynamic_player_targeting_and_cooldown() {
         tracker.player_target_cooldown
     );
 
-    // 8. While on cooldown, player being <= 2m (1.8m) does NOT trigger targeting
+    // 8. While on cooldown, player being <= 5m (3.0m) does NOT trigger targeting
     for _ in 0..10 {
         let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
         let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
-        p_tf.translation = moose_pos + Vec3::new(1.8, 0.0, 0.0);
+        p_tf.translation = moose_pos + Vec3::new(3.0, 0.0, 0.0);
         let mut p_mov = app.world_mut().get_mut::<ElfMovement>(player_entity).unwrap();
         p_mov.velocity = Vec3::ZERO;
         let mut t = app.world_mut().resource_mut::<Time<()>>();
@@ -10037,7 +10037,7 @@ fn test_moose_rampage_dynamic_player_targeting_and_cooldown() {
     for _ in 0..21 {
         let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
         let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
-        p_tf.translation = moose_pos + Vec3::new(1.8, 0.0, 0.0);
+        p_tf.translation = moose_pos + Vec3::new(3.0, 0.0, 0.0);
         let mut p_mov = app.world_mut().get_mut::<ElfMovement>(player_entity).unwrap();
         p_mov.velocity = Vec3::ZERO;
         let mut t = app.world_mut().resource_mut::<Time<()>>();
@@ -10048,6 +10048,6 @@ fn test_moose_rampage_dynamic_player_targeting_and_cooldown() {
     let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
     assert!(
         tracker.is_targeting_player,
-        "Moose should target player again once cooldown expires and player is within 2m"
+        "Moose should target player again once cooldown expires and player is within 5m"
     );
 }

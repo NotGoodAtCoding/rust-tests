@@ -9527,7 +9527,7 @@ fn test_player_elf_collision_default_speed_vs_sprint_bhop_ragdoll() {
     app.add_systems(Update, elf_assistant_ai_system);
 
     let elf_e = app.world_mut().spawn((
-        ElfAssistant::new(1, "TestElf", vec![Vec3::ZERO]),
+        ElfAssistant::new(3, "TestElf", vec![Vec3::ZERO]),
         Transform::from_xyz(0.0, 0.45, 0.0),
         Velocity::zero(),
         ExternalImpulse::default(),
@@ -10184,4 +10184,134 @@ fn test_bunny_ears_item_equip_viewmodel_and_bhop_mechanics() {
 
     let mut item_respawn_q = app.world_mut().query::<&BunnyEarsItem>();
     assert_eq!(item_respawn_q.iter(app.world()).count(), 1, "BunnyEarsItem must drop back into world on unequip");
+}
+
+#[test]
+fn test_elf_navigation_stuck_timer_and_vacuum_respawn() {
+    use rust_tests::elf_game::physics_sandbox::{
+        ragdoll::{ElfAssistant, ElfNavGraph, ElfNpcState, elf_assistant_ai_system},
+    };
+    use rust_tests::elf_game::workshop::room::TubeTravellingLump;
+
+    let mut app = App::new();
+    app.insert_resource(ElfNavGraph::default_workshop_graph());
+
+    let elf_e = app.world_mut().spawn((
+        ElfAssistant::new(3, "TestElf", vec![Vec3::ZERO]),
+        Transform::from_xyz(0.0, 0.45, 0.0),
+        bevy_rapier3d::prelude::Velocity::default(),
+        bevy_rapier3d::prelude::ExternalImpulse::default(),
+        bevy_rapier3d::prelude::LockedAxes::default(),
+    )).id();
+
+    app.add_systems(Update, elf_assistant_ai_system);
+
+    // Initial update
+    app.update();
+
+    let initial_target = {
+        let mut elf = app.world_mut().get_mut::<ElfAssistant>(elf_e).unwrap();
+        elf.state = ElfNpcState::Wandering;
+        elf.current_node = 0;
+        elf.target_node = 3;
+        elf.path = vec![0, 1, 2, 3];
+        elf.path_step = 1;
+        // Place elf far away so it cannot reach within 1 frame
+        elf.target_node
+    };
+
+    // 1. Advance time by 10 seconds: elf fails to reach target node within 10s
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(10));
+        app.insert_resource(time);
+    }
+    // Place elf stuck at a fixed location
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(elf_e).unwrap();
+        tf.translation = Vec3::new(100.0, 0.45, 100.0);
+    }
+    app.update();
+
+    let (failure_1, target_1) = {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        (elf.navigation_failure_count, elf.target_node)
+    };
+    assert_eq!(failure_1, 1, "Navigation failure count must increment to 1 after 10s stuck");
+    assert_ne!(target_1, initial_target, "Elf must choose a different node after being stuck for 10s");
+
+    // 2. Advance time by another 10 seconds: elf fails a second time
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(10));
+        app.insert_resource(time);
+    }
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(elf_e).unwrap();
+        tf.translation = Vec3::new(100.0, 0.45, 100.0);
+    }
+    app.update();
+
+    let (failure_2, target_2) = {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        (elf.navigation_failure_count, elf.target_node)
+    };
+    assert_eq!(failure_2, 2, "Navigation failure count must increment to 2 after second 10s stuck");
+    assert_ne!(target_2, target_1, "Elf must choose another different node after second failure");
+
+    // 3. Advance time by a third 10 seconds: elf fails 3 times -> vacuum respawn!
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(10));
+        app.insert_resource(time);
+    }
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(elf_e).unwrap();
+        tf.translation = Vec3::new(100.0, 0.45, 100.0);
+    }
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert_eq!(elf.state, ElfNpcState::VacuumRespawning, "Elf must enter VacuumRespawning state after 3 failures");
+        assert_eq!(elf.vacuum_respawn_progress, 1.0, "Vacuum respawn progress must start at 1.0 (reverse)");
+    }
+
+    // Verify reverse vacuum lump spawned in the tube
+    let mut lump_q = app.world_mut().query::<&TubeTravellingLump>();
+    let reverse_lump = lump_q.iter(app.world()).find(|l| l.speed < 0.0);
+    assert!(reverse_lump.is_some(), "Reverse vacuum lump with negative speed must be spawned in tube");
+
+    // 4. Advance reverse animation: 0.8s
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(800));
+        app.insert_resource(time);
+    }
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        let tf = app.world().get::<Transform>(elf_e).unwrap();
+        assert!(elf.vacuum_respawn_progress < 0.5, "Vacuum progress should decrease toward 0");
+        // Descending near the funnel/platform area (X ≈ 5.5, Z ≈ -4.0)
+        assert!((tf.translation.x - 5.5).abs() < 0.2, "Elf should be emerging near sending platform X ≈ 5.5");
+        assert!((tf.translation.z - (-4.0)).abs() < 0.2, "Elf should be emerging near sending platform Z ≈ -4.0");
+    }
+
+    // 5. Complete reverse animation: 0.5s more -> respawn onto platform
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(500));
+        app.insert_resource(time);
+    }
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        let tf = app.world().get::<Transform>(elf_e).unwrap();
+        assert_eq!(elf.state, ElfNpcState::Inspecting, "Elf should return to Inspecting state after vacuum respawn");
+        assert_eq!(elf.navigation_failure_count, 0, "Failure count should reset to 0 after vacuum respawn");
+        assert!((tf.translation.y - 0.45).abs() < 0.1, "Elf should land on the platform at Y ≈ 0.45");
+    }
 }

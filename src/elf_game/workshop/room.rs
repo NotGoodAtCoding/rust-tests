@@ -1845,7 +1845,7 @@ pub fn tube_travelling_lump_system(
     for (lump_entity, mut lump) in &mut q_lumps {
         lump.progress += lump.speed * dt;
 
-        if lump.progress >= 1.0 {
+        if lump.speed > 0.0 && lump.progress >= 1.0 {
             completed_deliveries += 1;
             if let Some(ref mut writer) = delivery_messages {
                 writer.write(PresentDeliveredMessage {
@@ -1854,8 +1854,11 @@ pub fn tube_travelling_lump_system(
                 });
             }
             commands.entity(lump_entity).despawn();
+        } else if lump.speed < 0.0 && lump.progress <= 0.0 {
+            // Reverse vacuum lump finished its journey back to the intake funnel
+            commands.entity(lump_entity).despawn();
         } else {
-            let active_seg_idx = lump.progress * 19.0;
+            let active_seg_idx = lump.progress.clamp(0.0, 1.0) * 19.0;
             lump_positions.push((active_seg_idx, lump.size, lump.mass));
         }
     }

@@ -3,8 +3,6 @@ Bug descriptions will be added to the ACTIVE section. Fix the bug and move them 
 
 ACTIVE:
 
-If an elf is unable to navigate to its target node in 10 seconds, randomly choose a different node to navigate to, in order to prevent getting stuck. If the elf fails to navigate to a node 3 times, respawn the elf from the present vaccuum and play the vaccuum animation in reverse.
-
 The Pantry Door should be able to be pushed by the player and elves if they run into it. If an elf navigates to the Pantry, it should check if the door is in the way and try to open the door by grabbing the door and pulling it open, then going to the node before the pantry door, then entering the Pantry. 
 
 Idea: Elf Mischief behavior: Philosopher. If an elf gains this Mischief trait, it will go to the Mirror Node and stay there. In order to get the elf back to work, the player needs to navigate through a deep dialogue tree. If left alone, eventually it will start recruiting other elves which will make them navigate to the Philosopher elf and then stay there with a "thinking" pose. This can be granted by putting on the Philosopher Pipe, which is a hat that makes it look like the elf has a tobacco pipe, with smoke particle effects and a soft ember glow that slowly fluctuates from the pipe.
@@ -19,6 +17,8 @@ The lighting from the candles is flickering. This may be just due to debug fastb
 
 
 DONE:
+
+If an elf is unable to navigate to its target node in 10 seconds, randomly choose a different node to navigate to, in order to prevent getting stuck. If the elf fails to navigate to a node 3 times, respawn the elf from the present vaccuum and play the vaccuum animation in reverse.
 
 Item Idea: Bunny ears. On equip, player viewmodel should show floppy bunny ears with physics bob on the top of the view screen. This should also make bunnyhopping mechanic easier by setting the grace period to 1/10sec when equipped. Players with the bunny ears equipped jump 10% higher and have 2x the in air straining vs. normal limits.
 

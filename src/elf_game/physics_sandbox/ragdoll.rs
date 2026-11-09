@@ -35,6 +35,8 @@ pub enum ElfNpcState {
     DeliveringMooseTreat,
     /// Interacting with the player in dialogue: stopped walking and smoothly facing the player.
     InDialogue,
+    /// Respawning from the pneumatic present vacuum with reverse tube transit animation.
+    VacuumRespawning,
 }
 
 /// Mischievous behavioral traits assigned to workshop elves.
@@ -363,6 +365,9 @@ pub struct ElfAssistant {
     pub tumble_duration: f32,
     pub recovery_timer: f32,
     pub recovery_duration: f32,
+    pub node_navigation_timer: f32,
+    pub navigation_failure_count: u32,
+    pub vacuum_respawn_progress: f32,
 
     // Mischief specific state
     pub slacking_cooldown: f32,
@@ -408,6 +413,9 @@ impl ElfAssistant {
             tumble_duration: 2.2,
             recovery_timer: 0.0,
             recovery_duration: 0.8,
+            node_navigation_timer: 0.0,
+            navigation_failure_count: 0,
+            vacuum_respawn_progress: 0.0,
             slacking_cooldown: 8.0,
             carried_present: None,
             carried_treat: None,
@@ -1567,6 +1575,43 @@ pub fn elf_assistant_ai_system(
                 } else if elf.state == ElfNpcState::Wandering {
                     elf.walk_timer += dt;
 
+                    // Navigation stuck prevention:
+                    // If unable to reach target node in 10s, randomly choose a different node.
+                    // If failed 3 times, respawn from present vacuum and play reverse animation!
+                    elf.node_navigation_timer += dt;
+                    if elf.node_navigation_timer >= 10.0 {
+                        elf.node_navigation_timer = 0.0;
+                        elf.navigation_failure_count += 1;
+                        if elf.navigation_failure_count >= 3 {
+                            elf.state = ElfNpcState::VacuumRespawning;
+                            elf.vacuum_respawn_progress = 1.0;
+                            vel.linear = Vec3::ZERO;
+                            commands.spawn((
+                                crate::elf_game::workshop::room::TubeTravellingLump {
+                                    progress: 1.0,
+                                    speed: -1.25,
+                                    mass: 2.0,
+                                    size: 0.6,
+                                },
+                                Name::new("ReverseVacuumLump"),
+                            ));
+                            continue;
+                        } else if let Some(ref graph) = nav_graph {
+                            let num_nodes = graph.nodes.len();
+                            if num_nodes > 1 {
+                                let mut next_goal = (elf.target_node + (elf.id as usize * 3 + 1) + elf.navigation_failure_count as usize) % num_nodes;
+                                if next_goal == elf.target_node {
+                                    next_goal = (next_goal + 1) % num_nodes;
+                                }
+                                elf.target_node = next_goal;
+                                if let Some(path) = graph.find_path(elf.current_node, next_goal) {
+                                    elf.path = path;
+                                    elf.path_step = 0;
+                                }
+                            }
+                        }
+                    }
+
                     // Choose next target using DynamicWaypointTarget if set, otherwise NavGraph or waypoints
                     let (target_pos, is_dynamic) = if let Some(ref dyn_target) = elf.dynamic_target {
                         let pos = match dyn_target {
@@ -1626,6 +1671,8 @@ pub fn elf_assistant_ai_system(
                             } else {
                                 // Arrived at final destination node: inspect surroundings and allow free movement
                                 elf.current_node = elf.target_node;
+                                elf.node_navigation_timer = 0.0;
+                                elf.navigation_failure_count = 0;
                                 elf.state = ElfNpcState::Inspecting;
                                 elf.state_timer = 0.0;
                                 vel.linear.x = 0.0;
@@ -1845,6 +1892,39 @@ pub fn elf_assistant_ai_system(
                         let target_yaw = flat_diff.x.atan2(flat_diff.z);
                         let target_rot = Quat::from_rotation_y(target_yaw);
                         elf_tf.rotation = elf_tf.rotation.slerp(target_rot, (dt * 8.0).min(1.0));
+                    }
+                }
+            }
+
+            ElfNpcState::VacuumRespawning => {
+                elf.vacuum_respawn_progress -= 1.0 * dt;
+                vel.linear = Vec3::ZERO;
+
+                let funnel_pos = Vec3::new(5.5, 4.0, -4.0);
+                let platform_pos = Vec3::new(5.5, 0.45, -4.0);
+
+                if elf.vacuum_respawn_progress > 0.3 {
+                    elf_tf.translation = funnel_pos;
+                } else if elf.vacuum_respawn_progress > 0.0 {
+                    let descent_t = (0.3 - elf.vacuum_respawn_progress) / 0.3;
+                    elf_tf.translation = funnel_pos.lerp(platform_pos, descent_t);
+                } else {
+                    elf_tf.translation = platform_pos;
+                    elf.state = ElfNpcState::Inspecting;
+                    elf.state_timer = 0.0;
+                    elf.node_navigation_timer = 0.0;
+                    elf.navigation_failure_count = 0;
+                    elf.vacuum_respawn_progress = 0.0;
+
+                    if let Some(ref graph) = nav_graph {
+                        let nearest_node = 6.min(graph.nodes.len() - 1);
+                        elf.current_node = nearest_node;
+                        let next_goal = (nearest_node + (elf.id as usize * 3 + 2)) % graph.nodes.len();
+                        elf.target_node = next_goal;
+                        if let Some(path) = graph.find_path(nearest_node, next_goal) {
+                            elf.path = path;
+                            elf.path_step = 0;
+                        }
                     }
                 }
             }
@@ -2071,6 +2151,40 @@ pub fn elf_ragdoll_limb_animation_system(
                     ElfLimbType::LeftLeg | ElfLimbType::RightLeg => {
                         limb_tf.translation = limb.rest_local_translation;
                         limb_tf.rotation = Quat::IDENTITY;
+                    }
+                    ElfLimbType::ElfHat | ElfLimbType::HatPompom => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = limb.rest_local_rotation;
+                    }
+                }
+            }
+
+            ElfNpcState::VacuumRespawning => {
+                let flutter = (total_time * 12.0).sin();
+                match limb.limb_type {
+                    ElfLimbType::Torso => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = limb.rest_local_rotation;
+                    }
+                    ElfLimbType::Head => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::from_rotation_x(-0.3 + flutter * 0.1);
+                    }
+                    ElfLimbType::LeftArm => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::from_rotation_x(-2.2 + flutter * 0.2) * Quat::from_rotation_z(0.3);
+                    }
+                    ElfLimbType::RightArm => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::from_rotation_x(-2.2 - flutter * 0.2) * Quat::from_rotation_z(-0.3);
+                    }
+                    ElfLimbType::LeftLeg => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::from_rotation_x(0.4 * flutter);
+                    }
+                    ElfLimbType::RightLeg => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::from_rotation_x(-0.4 * flutter);
                     }
                     ElfLimbType::ElfHat | ElfLimbType::HatPompom => {
                         limb_tf.translation = limb.rest_local_translation;

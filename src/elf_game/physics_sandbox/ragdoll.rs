@@ -490,6 +490,11 @@ pub struct ElfAssistant {
     pub is_recruiter: bool,
     pub recruit_timer: f32,
     pub is_recruited: bool,
+
+    // Tinsel cannon & combat retaliation state
+    pub equipped_tinsel_cannon: Option<Entity>,
+    pub last_knockdown_source: Option<Entity>,
+    pub tinsel_fire_cooldown: f32,
 }
 
 impl ElfAssistant {
@@ -541,6 +546,9 @@ impl ElfAssistant {
             is_recruiter: false,
             recruit_timer: 0.0,
             is_recruited: false,
+            equipped_tinsel_cannon: None,
+            last_knockdown_source: None,
+            tinsel_fire_cooldown: 0.0,
         }
     }
 
@@ -1462,7 +1470,7 @@ pub fn elf_assistant_ai_system(
         Option<&DynamicWaypointTarget>,
     ), Without<PantryDoor>>,
     q_player: Query<
-        (&Transform, &ElfMovement),
+        (Entity, &Transform, &ElfMovement),
         (Without<ElfAssistant>, Without<MrMoose>, Without<Present>),
     >,
     q_moose: Query<
@@ -1536,7 +1544,7 @@ pub fn elf_assistant_ai_system(
     let moose_agitated = hunger.as_ref().map(|h| h.value >= 50.0).unwrap_or(false);
 
     let opt_moose_tf = q_moose.iter().next().map(|(tf, _)| *tf);
-    let opt_player_pos = q_player.iter().next().map(|(tf, _)| tf.translation);
+    let opt_player_pos = q_player.iter().next().map(|(_, tf, _)| tf.translation);
     let elf_positions: Vec<(Entity, Vec3)> = q_elves
         .iter()
         .map(|(e, tf, _, _, _, _, _)| (e, tf.translation))
@@ -1594,7 +1602,7 @@ pub fn elf_assistant_ai_system(
                 }
 
                 // Check for player collision: only ragdoll if player is going above default speed cap (sprinting or bunny hopping)
-                for (player_tf, player_mov) in &q_player {
+                for (player_e, player_tf, player_mov) in &q_player {
                     let player_dist = player_tf.translation.distance(elf_tf.translation);
                     let player_speed = player_mov.velocity.length();
                     let default_speed_cap = player_mov.base_speed;
@@ -1608,6 +1616,7 @@ pub fn elf_assistant_ai_system(
                         if player_speed > default_speed_cap + 0.1 {
                             elf.state = ElfNpcState::RagdollTumble;
                             elf.tumble_timer = 0.0;
+                            elf.last_knockdown_source = Some(player_e);
                             *locked_axes = LockedAxes::empty();
 
                             impulse.impulse += knock_dir * 10.0 + Vec3::Y * 5.0;
@@ -1628,12 +1637,13 @@ pub fn elf_assistant_ai_system(
                 }
 
                 // Check for knockdown by moving dynamic physics objects (thrown items, sliding presents, etc.)
-                for (_prop_e, prop_tf, prop_vel) in &q_dynamic_props {
+                for (prop_e, prop_tf, prop_vel) in &q_dynamic_props {
                     let dist = prop_tf.translation.distance(elf_tf.translation);
                     let prop_speed = prop_vel.linear.length();
                     if dist < 0.85 && prop_speed > 1.8 {
                         elf.state = ElfNpcState::RagdollTumble;
                         elf.tumble_timer = 0.0;
+                        elf.last_knockdown_source = Some(prop_e);
                         *locked_axes = LockedAxes::empty();
 
                         let knock_dir = prop_vel.linear.normalize_or_zero();
@@ -2580,7 +2590,7 @@ pub fn elf_assistant_ai_system(
                 vel.linear.z = 0.0;
 
                 // Turn to face the player smoothly
-                if let Some((player_tf, _)) = q_player.iter().next() {
+                if let Some((_, player_tf, _)) = q_player.iter().next() {
                     let flat_diff = Vec3::new(
                         player_tf.translation.x - elf_tf.translation.x,
                         0.0,

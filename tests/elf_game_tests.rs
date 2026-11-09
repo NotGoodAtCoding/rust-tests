@@ -12400,3 +12400,227 @@ fn test_auto_wrapper_on_elf_immobilizes_for_10_seconds_and_breaks_free() {
         );
     }
 }
+
+#[test]
+fn test_tinsel_hand_cannon_player_firing_and_high_friction_anchor() {
+    use rust_tests::elf_game::player::{
+        controller::{ElfPlayer, FirstPersonCamera},
+        tinsel_cannon::{player_tinsel_cannon_system, TinselHandCannon, TinselStrand},
+        ElfHands,
+    };
+    use bevy_rapier3d::prelude::{Friction, Velocity};
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.insert_resource(Time::<()>::default());
+
+    let player_e = app
+        .world_mut()
+        .spawn((
+            ElfPlayer,
+            Transform::from_xyz(0.0, 1.2, 0.0),
+            ElfHands::default(),
+            Name::new("ElfPlayer"),
+        ))
+        .id();
+
+    let _cam_e = app
+        .world_mut()
+        .spawn((
+            FirstPersonCamera,
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.2, 0.0).looking_to(Vec3::Z, Vec3::Y)),
+        ))
+        .id();
+
+    let cannon_e = app
+        .world_mut()
+        .spawn((
+            TinselHandCannon {
+                ammo: 20,
+                ..default()
+            },
+            Transform::from_xyz(0.0, 1.0, 0.0),
+            Name::new("TinselHandCannon"),
+        ))
+        .id();
+
+    {
+        let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+        hands.right_grabbed = Some(cannon_e);
+    }
+
+    app.add_systems(Update, player_tinsel_cannon_system);
+
+    // Click Mouse1 to fire tinsel strand
+    {
+        let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        mouse.press(MouseButton::Left);
+    }
+    app.update();
+
+    // Verify tinsel strand is spawned
+    let mut strand_q = app.world_mut().query::<(Entity, &TinselStrand, &Velocity, &Friction)>();
+    let (_strand_e, strand, vel, friction) = strand_q
+        .iter(app.world())
+        .next()
+        .expect("TinselStrand must be spawned");
+
+    assert!(strand.is_climbable, "Tinsel strand must act as climbable rope");
+    assert!(friction.coefficient >= 3.5, "Tinsel strand must have high friction (>= 3.5)");
+    assert!(vel.linear.z > 15.0, "Strand should be fired forward with high speed: {}", vel.linear.z);
+
+    // Verify ammo decremented and cooldown started on cannon
+    let cannon = app.world().get::<TinselHandCannon>(cannon_e).unwrap();
+    assert_eq!(cannon.ammo, 19, "Ammo must decrement from 20 to 19");
+    assert!(cannon.fire_timer > 0.0, "Cooldown must start on firing");
+}
+
+#[test]
+fn test_tinsel_hand_cannon_elf_equip() {
+    use rust_tests::elf_game::{
+        physics_sandbox::ragdoll::ElfAssistant,
+        player::{
+            controller::ElfPlayer,
+            tinsel_cannon::{elf_equip_tinsel_cannon_system, TinselHandCannon},
+            ElfHands,
+        },
+    };
+
+    let mut app = App::new();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+
+    let cannon_e = app
+        .world_mut()
+        .spawn((
+            TinselHandCannon::default(),
+            Transform::from_xyz(0.0, 1.0, 0.0),
+            Name::new("TinselCannon"),
+        ))
+        .id();
+
+    let player_e = app
+        .world_mut()
+        .spawn((
+            ElfPlayer,
+            Transform::from_xyz(0.0, 1.2, 0.0),
+            ElfHands {
+                right_grabbed: Some(cannon_e),
+                ..default()
+            },
+            Name::new("ElfPlayer"),
+        ))
+        .id();
+
+    let elf_e = app
+        .world_mut()
+        .spawn((
+            ElfAssistant::new(1, "Sparky", vec![Vec3::ZERO]),
+            Transform::from_xyz(0.0, 0.45, 1.2),
+            Name::new("SparkyElf"),
+        ))
+        .id();
+
+    app.add_systems(Update, elf_equip_tinsel_cannon_system);
+
+    // Press KeyE to give cannon to elf
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::KeyE);
+    }
+    app.update();
+
+    // Verify cannon is cleared from player hand and equipped on elf
+    let hands = app.world().get::<ElfHands>(player_e).unwrap();
+    assert_eq!(hands.right_grabbed, None, "Player hand should release cannon");
+
+    let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+    assert_eq!(elf.equipped_tinsel_cannon, Some(cannon_e), "Elf must equip the TinselHandCannon");
+
+    let cannon = app.world().get::<TinselHandCannon>(cannon_e).unwrap();
+    assert_eq!(cannon.equipped_by, Some(elf_e), "Cannon must record equipped elf");
+}
+
+#[test]
+fn test_tinsel_hand_cannon_elf_retaliation_and_slapstick_recoil() {
+    use rust_tests::elf_game::{
+        physics_sandbox::ragdoll::{ElfAssistant, ElfNpcState},
+        player::tinsel_cannon::{
+            elf_tinsel_cannon_retaliation_system, TinselHandCannon, TinselStrand,
+        },
+    };
+    use bevy_rapier3d::prelude::{ExternalImpulse, LockedAxes, Velocity};
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.insert_resource(Time::<()>::default());
+
+    // Attacker entity that knocked down the elf (e.g. at (0, 1.2, 3.0))
+    let attacker_e = app
+        .world_mut()
+        .spawn((
+            Transform::from_xyz(0.0, 1.2, 3.0),
+            Name::new("AttackerPlayer"),
+        ))
+        .id();
+
+    let cannon_e = app
+        .world_mut()
+        .spawn((
+            TinselHandCannon::default(),
+            Transform::from_xyz(0.0, 0.45, 0.0),
+            Name::new("ElfCannon"),
+        ))
+        .id();
+
+    // Elf at origin equipped with cannon and remembering attacker as last_knockdown_source
+    let mut elf = ElfAssistant::new(2, "Tinsel", vec![Vec3::ZERO]);
+    elf.state = ElfNpcState::Wandering; // standing up after recovering
+    elf.equipped_tinsel_cannon = Some(cannon_e);
+    elf.last_knockdown_source = Some(attacker_e);
+
+    let elf_e = app
+        .world_mut()
+        .spawn((
+            elf,
+            Transform::from_xyz(0.0, 0.45, 0.0),
+            Velocity::default(),
+            ExternalImpulse::default(),
+            LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
+            Name::new("ElfTinsel"),
+        ))
+        .id();
+
+    app.add_systems(Update, elf_tinsel_cannon_retaliation_system);
+
+    app.update();
+
+    // 1. Verify tinsel strand fired toward attacker (+Z)
+    let mut strand_q = app.world_mut().query::<(&TinselStrand, &Velocity)>();
+    let (strand, strand_vel) = strand_q
+        .iter(app.world())
+        .next()
+        .expect("Tinsel strand must be fired at attacker");
+    assert_eq!(strand.fired_by, Some(elf_e));
+    assert!(strand_vel.linear.z > 10.0, "Strand should be fired toward attacker (+Z)");
+
+    // 2. Verify SLAPSTICK RECOIL on elf:
+    // Knocks elf backwards (-Z) and upward (+Y), and ragdolls them!
+    let elf_check = app.world().get::<ElfAssistant>(elf_e).unwrap();
+    assert_eq!(
+        elf_check.state,
+        ElfNpcState::RagdollTumble,
+        "Elf must be thrown into RagdollTumble from cannon recoil"
+    );
+    assert_eq!(elf_check.last_knockdown_source, None, "Revenge fulfilled, target cleared");
+
+    let elf_vel = app.world().get::<Velocity>(elf_e).unwrap();
+    assert!(elf_vel.linear.z < -10.0, "Elf must be knocked backward at high speed: {}", elf_vel.linear.z);
+    assert!(elf_vel.linear.y > 4.0, "Elf must be launched upward from recoil: {}", elf_vel.linear.y);
+
+    let locked = app.world().get::<LockedAxes>(elf_e).unwrap();
+    assert_eq!(*locked, LockedAxes::empty(), "Axes must unlock for dynamic ragdoll tumble");
+}

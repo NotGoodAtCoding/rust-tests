@@ -4,6 +4,7 @@ pub mod controller;
 pub mod hands;
 pub mod bunny_ears;
 pub mod items;
+pub mod tinsel_cannon;
 
 pub use bunny_ears::{
     BunnyEarsEquipped, BunnyEarsItem, FloppyEar, ViewmodelBunnyEars,
@@ -11,6 +12,10 @@ pub use bunny_ears::{
 };
 pub use hands::HeavyItem;
 pub use items::{HatType, ItemClass, PlayerWornHat, WearableHatItem, player_hat_equip_system};
+pub use tinsel_cannon::{
+    TinselHandCannon, TinselStrand, spawn_tinsel_hand_cannon, fire_tinsel_strand,
+    player_tinsel_cannon_system, elf_tinsel_cannon_retaliation_system, elf_equip_tinsel_cannon_system,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BhopWindow {
@@ -271,6 +276,9 @@ impl Plugin for PlayerPlugin {
                         hands::dual_hand_interaction_system,
                         bunny_ears::player_bunny_ears_equip_system,
                         items::player_hat_equip_system,
+                        tinsel_cannon::player_tinsel_cannon_system,
+                        tinsel_cannon::elf_equip_tinsel_cannon_system,
+                        tinsel_cannon::elf_tinsel_cannon_retaliation_system,
                         bunny_ears::floppy_ears_physics_bob_system,
                     ).chain(),
                 ),

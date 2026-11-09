@@ -223,6 +223,15 @@ pub fn spawn_workshop_tools_and_materials(
         workshop_mats.as_deref(),
         Vec3::new(-1.8, 0.95, -4.2),
     );
+
+    // 8. Tinsel Hand Cannon placed on workbench (X = -1.5, Y = 0.95, Z = -4.2)
+    crate::elf_game::player::tinsel_cannon::spawn_tinsel_hand_cannon(
+        &mut commands,
+        Some(&mut meshes),
+        Some(&mut materials),
+        workshop_mats.as_deref(),
+        Vec3::new(-1.5, 0.95, -4.2),
+    );
 }
 
 /// Finds the best grabbable object in direct raycasted line of sight with the player's reticle.

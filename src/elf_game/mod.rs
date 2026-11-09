@@ -15,6 +15,7 @@ pub mod ui;
 pub mod audio;
 pub mod assets;
 pub mod dialogue;
+pub mod persistence;
 
 pub struct ElfGamePlugin;
 
@@ -42,6 +43,7 @@ impl Plugin for ElfGamePlugin {
             ui::ElfUiPlugin,
             dialogue::ElfDialoguePlugin,
             audio::ElfAudioPlugin,
+            persistence::PersistencePlugin,
         ));
     }
 }

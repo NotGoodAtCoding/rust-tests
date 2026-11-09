@@ -197,7 +197,7 @@ pub fn spawn_diegetic_screens_and_signs(
     let has_assets = meshes.is_some() && (materials.is_some() || workshop_mats.is_some());
 
     // 1. Materials setup (when running in graphical environment)
-    let (casing_mat, screen_mat, scanline_mat, sweep_mat, wood_sign_mat, brass_sign_mat, metal_sign_mat) = if let Some(ref wm) = workshop_mats {
+    let (casing_mat, screen_mat, scanline_mat, sweep_mat, wood_sign_mat, brass_sign_mat, _metal_sign_mat) = if let Some(ref wm) = workshop_mats {
         (
             Some(wm.cast_iron.clone()),
             Some(wm.crt_screen.clone()),

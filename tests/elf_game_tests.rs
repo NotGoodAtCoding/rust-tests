@@ -12624,3 +12624,301 @@ fn test_tinsel_hand_cannon_elf_retaliation_and_slapstick_recoil() {
     let locked = app.world().get::<LockedAxes>(elf_e).unwrap();
     assert_eq!(*locked, LockedAxes::empty(), "Axes must unlock for dynamic ragdoll tumble");
 }
+
+#[test]
+fn test_save_load_serialization_roundtrip() {
+    use rust_tests::elf_game::persistence::{
+        deserialize_save_data, serialize_save_data, PlayerStatistics, ProgressionMilestones,
+        SavedDoorState, SavedHat, SavedMooseState, SavedPantryTracker, SavedPlayerTransform,
+        SavedTreatJar, WorkshopSaveData,
+    };
+
+    let original = WorkshopSaveData {
+        version: 1,
+        timestamp_secs: 123.456,
+        milestones: ProgressionMilestones {
+            presents_delivered: 8,
+            target_quota: 10,
+            tier: 2,
+            moose_awakened: true,
+            sparky_awakened: true,
+        },
+        player_stats: PlayerStatistics {
+            total_gifts_wrapped: 12,
+            presents_delivered: 8,
+            quota_score: 800,
+            best_bhop_streak: 5,
+            elapsed_play_time: 142.0,
+        },
+        player_transform: Some(SavedPlayerTransform {
+            position: [1.5, 1.2, -3.2],
+            yaw: 0.785,
+            pitch: -0.25,
+        }),
+        moose_state: SavedMooseState {
+            hunger_value: 42.0,
+            stage: "PeekingThrough".to_string(),
+            is_dormant: false,
+            is_breached: false,
+        },
+        doors: vec![SavedDoorState {
+            door_id: "StorageWingDoor".to_string(),
+            required_tier: 2,
+            is_open: true,
+            position: [13.0, 0.0, 0.0],
+        }],
+        treat_jars: vec![SavedTreatJar {
+            position: [-10.0, 0.98, 12.6],
+            treat_count: 3,
+            max_treats: 4,
+        }],
+        spawned_hats: vec![SavedHat {
+            hat_type: "MooseFeeder".to_string(),
+            position: [-4.5, 1.3, 12.0],
+        }],
+        pantry_tracker: SavedPantryTracker {
+            restock_cycle_count: 2,
+            total_restocked_jars: 3,
+        },
+    };
+
+    let serialized = serialize_save_data(&original).expect("Serialization must succeed");
+    assert!(serialized.contains("milestones"));
+    assert!(serialized.contains("StorageWingDoor"));
+
+    let deserialized: WorkshopSaveData = deserialize_save_data(&serialized).expect("Deserialization must succeed");
+    assert_eq!(original, deserialized);
+}
+
+#[test]
+fn test_create_and_apply_save_snapshot() {
+    use rust_tests::elf_game::{
+        core::WorkshopQuota,
+        moose::{MooseHunger, MooseHungerStage},
+        persistence::{apply_save_snapshot, create_save_snapshot, PlayerStatistics},
+        physics_sandbox::ragdoll::{ChandelierPerchedElf, ElfAssistant},
+        player::controller::ElfPlayer,
+        workshop::{
+            pantry::{MooseTreatJar, PantryRestockTracker},
+            progression::{DoorState, WorkshopDoor},
+        },
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.insert_resource(WorkshopQuota {
+        presents_delivered: 7,
+        target_quota: 10,
+        tier: 2,
+    });
+    app.insert_resource(PlayerStatistics {
+        total_gifts_wrapped: 9,
+        presents_delivered: 7,
+        quota_score: 700,
+        best_bhop_streak: 4,
+        elapsed_play_time: 65.0,
+    });
+    app.insert_resource(MooseHunger {
+        value: 35.0,
+        stage: MooseHungerStage::PeekingThrough,
+        is_dormant: false,
+        ..default()
+    });
+    app.insert_resource(PantryRestockTracker {
+        restock_cycle_count: 3,
+        total_restocked_jars: 5,
+        ..default()
+    });
+
+    let _player_e = app.world_mut().spawn((
+        ElfPlayer,
+        Transform::from_xyz(2.0, 1.2, -4.0),
+    )).id();
+
+    let door_e = app.world_mut().spawn((
+        WorkshopDoor {
+            door_id: "StorageWingDoor".to_string(),
+            required_tier: 2,
+            state: DoorState::Open,
+            closed_position: Vec3::new(13.0, 0.0, 0.0),
+            open_position: Vec3::new(13.0, 4.0, 0.0),
+        },
+        Transform::from_xyz(13.0, 4.0, 0.0),
+    )).id();
+
+    let jar_e = app.world_mut().spawn((
+        MooseTreatJar {
+            treat_count: 2,
+            max_treats: 4,
+        },
+        Transform::from_xyz(-10.0, 0.98, 12.6),
+    )).id();
+
+    let sparky_e = app.world_mut().spawn((
+        ElfAssistant::new(0, "Elf Sparky", Vec::new()),
+        ChandelierPerchedElf {
+            is_awakened: true,
+            ..default()
+        },
+    )).id();
+
+    // Capture snapshot
+    let snapshot = create_save_snapshot(app.world_mut());
+    assert_eq!(snapshot.milestones.presents_delivered, 7);
+    assert_eq!(snapshot.milestones.tier, 2);
+    assert!(snapshot.milestones.moose_awakened);
+    assert!(snapshot.milestones.sparky_awakened);
+    assert_eq!(snapshot.moose_state.hunger_value, 35.0);
+    assert_eq!(snapshot.doors.len(), 1);
+    assert!(snapshot.doors[0].is_open);
+
+    // Now corrupt/reset world state
+    {
+        let mut quota = app.world_mut().resource_mut::<WorkshopQuota>();
+        quota.presents_delivered = 0;
+        quota.tier = 1;
+        let mut stats = app.world_mut().resource_mut::<PlayerStatistics>();
+        *stats = PlayerStatistics::default();
+        let mut moose = app.world_mut().resource_mut::<MooseHunger>();
+        moose.value = 0.0;
+        moose.is_dormant = true;
+        moose.stage = MooseHungerStage::BehindShutters;
+        let mut pantry = app.world_mut().resource_mut::<PantryRestockTracker>();
+        pantry.restock_cycle_count = 0;
+
+        let closed_pos = {
+            let mut door = app.world_mut().get_mut::<WorkshopDoor>(door_e).unwrap();
+            door.state = DoorState::Locked;
+            door.closed_position
+        };
+        let mut door_tf = app.world_mut().get_mut::<Transform>(door_e).unwrap();
+        door_tf.translation = closed_pos;
+
+        let mut jar = app.world_mut().get_mut::<MooseTreatJar>(jar_e).unwrap();
+        jar.treat_count = 0;
+
+        let mut sparky = app.world_mut().get_mut::<ChandelierPerchedElf>(sparky_e).unwrap();
+        sparky.is_awakened = false;
+    }
+
+    // Apply snapshot back
+    apply_save_snapshot(app.world_mut(), &snapshot);
+
+    // Verify all restored
+    let quota = app.world().resource::<WorkshopQuota>();
+    assert_eq!(quota.presents_delivered, 7);
+    assert_eq!(quota.tier, 2);
+
+    let stats = app.world().resource::<PlayerStatistics>();
+    assert_eq!(stats.quota_score, 700);
+    assert_eq!(stats.best_bhop_streak, 4);
+
+    let moose = app.world().resource::<MooseHunger>();
+    assert_eq!(moose.value, 35.0);
+    assert_eq!(moose.stage, MooseHungerStage::PeekingThrough);
+    assert!(!moose.is_dormant);
+
+    let door = app.world().get::<WorkshopDoor>(door_e).unwrap();
+    assert_eq!(door.state, DoorState::Open);
+    let door_tf = app.world().get::<Transform>(door_e).unwrap();
+    assert_eq!(door_tf.translation, Vec3::new(13.0, 4.0, 0.0));
+
+    let jar = app.world().get::<MooseTreatJar>(jar_e).unwrap();
+    assert_eq!(jar.treat_count, 2);
+
+    let sparky = app.world().get::<ChandelierPerchedElf>(sparky_e).unwrap();
+    assert!(sparky.is_awakened);
+}
+
+#[test]
+fn test_quicksave_quickload_file_roundtrip() {
+    use std::path::PathBuf;
+    use rust_tests::elf_game::{
+        core::WorkshopQuota,
+        persistence::{load_workshop_from_file, save_workshop_to_file, PlayerStatistics},
+    };
+
+    let test_file = PathBuf::from(format!("/tmp/workshop_save_test_{}.ron", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+
+    let mut app = App::new();
+    app.insert_resource(WorkshopQuota {
+        presents_delivered: 15,
+        target_quota: 20,
+        tier: 3,
+    });
+    app.insert_resource(PlayerStatistics {
+        total_gifts_wrapped: 22,
+        presents_delivered: 15,
+        quota_score: 1500,
+        best_bhop_streak: 7,
+        elapsed_play_time: 320.0,
+    });
+
+    // Save to file
+    save_workshop_to_file(app.world_mut(), &test_file).expect("File save should succeed");
+    assert!(test_file.exists(), "Save file must be written to disk");
+
+    // Mutate world
+    {
+        let mut q = app.world_mut().resource_mut::<WorkshopQuota>();
+        q.presents_delivered = 0;
+        q.tier = 1;
+    }
+
+    // Load from file
+    let loaded_data = load_workshop_from_file(app.world_mut(), &test_file).expect("File load should succeed");
+    assert_eq!(loaded_data.milestones.presents_delivered, 15);
+    assert_eq!(loaded_data.milestones.tier, 3);
+
+    let quota = app.world().resource::<WorkshopQuota>();
+    assert_eq!(quota.presents_delivered, 15);
+    assert_eq!(quota.tier, 3);
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(test_file);
+}
+
+#[test]
+fn test_player_statistics_tracking_and_bhop_streak() {
+    use rust_tests::elf_game::{
+        core::WorkshopQuota,
+        persistence::{track_player_statistics_system, PlayerStatistics},
+        player::{controller::ElfPlayer, ElfMovement},
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.init_resource::<PlayerStatistics>();
+    app.insert_resource(WorkshopQuota {
+        presents_delivered: 4,
+        target_quota: 5,
+        tier: 1,
+    });
+
+    let player_e = app.world_mut().spawn((
+        ElfPlayer,
+        ElfMovement {
+            consecutive_bhops: 6,
+            ..default()
+        },
+    )).id();
+
+    app.add_systems(Update, track_player_statistics_system);
+    app.update();
+
+    let stats = app.world().resource::<PlayerStatistics>();
+    assert_eq!(stats.presents_delivered, 4);
+    assert_eq!(stats.quota_score, 400);
+    assert_eq!(stats.best_bhop_streak, 6);
+
+    // Further hop streak
+    {
+        let mut movement = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+        movement.consecutive_bhops = 9;
+    }
+    app.update();
+
+    let stats = app.world().resource::<PlayerStatistics>();
+    assert_eq!(stats.best_bhop_streak, 9);
+}
+

@@ -140,7 +140,7 @@ This document tracks the short-form task breakdown for each section of [`PLAN.md
 ### 2.8 Game State Persistence & Progression Saving
 | Task Description | Status | Reference Files |
 |---|:---:|---|
-| **Selective RON Save/Load System**: Lightweight serialization (`workshop_save.ron`) saving major progression milestones (presents submitted count, unlocked doors/wings, Moose awakened flag, unlocked easter-egg elves), player statistics (quota, BHOP record, elapsed time), and key item coordinates/contents (active Moose Treat jars, spawned hats, tool dispensers), omitting transient physics clutter, with quick-save/load support | TODO | Planned |
+| **Selective RON Save/Load System**: Lightweight serialization (`workshop_save.ron`) saving major progression milestones (presents submitted count, unlocked doors/wings, Moose awakened flag, unlocked easter-egg elves), player statistics (quota, BHOP record, elapsed time), and key item coordinates/contents (active Moose Treat jars, spawned hats, tool dispensers), omitting transient physics clutter, with quick-save (<kbd>F5</kbd>) and quick-load (<kbd>F9</kbd>) support | **DONE** | [`persistence.rs`](file:///home/stef/repo/rust-tests/src/elf_game/persistence.rs), [`tests/elf_game_tests.rs`](file:///home/stef/repo/rust-tests/tests/elf_game_tests.rs) |
 
 ---
 
@@ -169,7 +169,7 @@ This document tracks the short-form task breakdown for each section of [`PLAN.md
 - [x] **M6.1: Pantry Storage Wing, Physics Door Restock & Initial Moose Dormancy**: Dedicated $4\,\text{m} \times 4\,\text{m}$ Pantry Storage Wing, deep perimeter timber shelving (North 3-tier treat shelves, West supply shelves, South cookie baking staging counter), interactive swinging physics door on Rapier `RevoluteJoint` / spring hinge, automatic restock cycle on door `Closed -> Opened` transition, Mr. Moose initial dormancy behind shutters with 1st present vacuum dispatch wakeup, and semantic navigation role `ElfNodePurpose::PantryShelves` (Node 15).
 - [x] **M6.2: Autonomous Moose Feeder Routine & Panic Fallback**: Autonomous Moose Feeder routine (`ElfNpcState::FetchingMooseTreat` and `DeliveringMooseTreat`), treat retrieval from `MainTableTreatJar` (Node 1) with jar count decrement, pathfinding and delivery to `MooseFeedingStation` (Node 4) reducing hunger by 60, carried treat physics and forward-reach arm poses, and `ElfNpcState::Panicking` fallback when jars are empty/missing with automatic panic recovery when fresh pantry jars arrive.
 - [ ] **M7: Visual & Audio Polish**: AI-generated festive wrapping textures, particle effects (glass shards, wrapping paper confetti), sound effects.
-- [ ] **M8: Game State Persistence & Progression Saving**: Lightweight RON save/load system for major milestones, player stats, and persistent props.
+- [x] **M8: Game State Persistence & Progression Saving**: Lightweight RON save/load system for major milestones, player stats, and persistent props.
 
 ---
 

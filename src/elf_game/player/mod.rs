@@ -2,6 +2,12 @@ use bevy::prelude::*;
 
 pub mod controller;
 pub mod hands;
+pub mod bunny_ears;
+
+pub use bunny_ears::{
+    BunnyEarsEquipped, BunnyEarsItem, FloppyEar, ViewmodelBunnyEars,
+    spawn_bunny_ears_item, spawn_viewmodel_bunny_ears,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BhopWindow {
@@ -61,6 +67,7 @@ pub struct ElfMovement {
     pub consecutive_bhops: u32,
     pub ground_accel: f32,
     pub air_strain_accel: f32,
+    pub has_bunny_ears: bool,
 }
 
 impl Default for ElfMovement {
@@ -74,6 +81,7 @@ impl Default for ElfMovement {
             consecutive_bhops: 0,
             ground_accel: 40.0,
             air_strain_accel: 5.0, // ~12.5% of ground accel
+            has_bunny_ears: false,
         }
     }
 }
@@ -149,12 +157,30 @@ pub fn update_elf_physics(
     config: &BhopConfig,
     movement: &mut ElfMovement,
 ) {
+    let effective_window_secs = if movement.has_bunny_ears {
+        1.0 / 10.0 // 1/10s grace period when equipped
+    } else {
+        config.window.duration_secs()
+    };
+
+    let effective_jump_impulse = if movement.has_bunny_ears {
+        7.0 * 1.10 // 10% higher jump
+    } else {
+        7.0
+    };
+
+    let effective_air_strain = if movement.has_bunny_ears {
+        movement.air_strain_accel * 2.0 // 2x the in air straining vs normal limits
+    } else {
+        movement.air_strain_accel
+    };
+
     if movement.is_grounded {
         movement.time_since_landing += dt;
 
         // Holding space never allows a bunny-hop
         if jump_just_pressed {
-            if movement.time_since_landing <= config.window.duration_secs() {
+            if movement.time_since_landing <= effective_window_secs {
                 // Perfect bunny hop!
                 movement.consecutive_bhops += 1;
                 if movement.consecutive_bhops >= 3 {
@@ -169,20 +195,20 @@ pub fn update_elf_physics(
                 movement.current_max_speed = movement.base_speed;
             }
             movement.is_grounded = false;
-            movement.velocity.y = 7.0; // Jump impulse
+            movement.velocity.y = effective_jump_impulse;
         } else {
             // Reset vertical velocity to 0.0 upon landing on ground after jumping
             movement.velocity.y = 0.0;
 
             if jump_held {
                 // Held space on ground: does not trigger hop
-                if movement.time_since_landing > config.window.duration_secs() {
+                if movement.time_since_landing > effective_window_secs {
                     movement.consecutive_bhops = 0;
                     movement.current_max_speed = movement.base_speed;
                 }
             } else {
                 // Player lingered on ground without jumping, decay bhop combo
-                if movement.time_since_landing > config.window.duration_secs() {
+                if movement.time_since_landing > effective_window_secs {
                     movement.consecutive_bhops = 0;
                     movement.current_max_speed = movement.base_speed;
                 }
@@ -204,7 +230,7 @@ pub fn update_elf_physics(
 
         // Realistic air physics: cannot set velocity directly, only strain with low acceleration
         if wish_dir.length_squared() > 0.001 {
-            let strain = wish_dir * movement.air_strain_accel * dt;
+            let strain = wish_dir * effective_air_strain * dt;
             movement.velocity.x += strain.x;
             movement.velocity.z += strain.z;
             
@@ -240,6 +266,8 @@ impl Plugin for PlayerPlugin {
                         controller::viewmodel_bob,
                         controller::floaty_hands_system,
                         hands::dual_hand_interaction_system,
+                        bunny_ears::player_bunny_ears_equip_system,
+                        bunny_ears::floppy_ears_physics_bob_system,
                     ).chain(),
                 ),
             );

@@ -138,6 +138,15 @@ pub fn spawn_workshop_tools_and_materials(
     if let Some(def) = deformable {
         entity_cmds.insert(def);
     }
+
+    // 6. Bunny Ears Item placed on workbench (X = 1.8, Y = 0.95, Z = -4.2)
+    crate::elf_game::player::bunny_ears::spawn_bunny_ears_item(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        workshop_mats.as_deref(),
+        Vec3::new(1.8, 0.95, -4.2),
+    );
 }
 
 /// Finds the best grabbable object in direct raycasted line of sight with the player's reticle.

@@ -3,8 +3,6 @@ Bug descriptions will be added to the ACTIVE section. Fix the bug and move them 
 
 ACTIVE:
 
-Item Idea: Bunny ears. On equip, player viewmodel should show floppy bunny ears with physics bob on the top of the view screen. This should also make bunnyhopping mechanic easier by setting the grace period to 1/10sec when equipped. Players with the bunny ears equipped jump 10% higher and have 2x the in air straining vs. normal limits.
-
 If an elf is unable to navigate to its target node in 10 seconds, randomly choose a different node to navigate to, in order to prevent getting stuck. If the elf fails to navigate to a node 3 times, respawn the elf from the present vaccuum and play the vaccuum animation in reverse.
 
 The Pantry Door should be able to be pushed by the player and elves if they run into it. If an elf navigates to the Pantry, it should check if the door is in the way and try to open the door by grabbing the door and pulling it open, then going to the node before the pantry door, then entering the Pantry. 
@@ -21,6 +19,8 @@ The lighting from the candles is flickering. This may be just due to debug fastb
 
 
 DONE:
+
+Item Idea: Bunny ears. On equip, player viewmodel should show floppy bunny ears with physics bob on the top of the view screen. This should also make bunnyhopping mechanic easier by setting the grace period to 1/10sec when equipped. Players with the bunny ears equipped jump 10% higher and have 2x the in air straining vs. normal limits.
 
 Feature: Dynamic waypoint targeting: Elves and NPCs should be able to target other NPCs and the Player location as an option. When the moose is rampaging, if the player gets within 5m of the moose, set the target location to the player. As long as the player is within 6m of the moose once triggered, or 5 seconds have passed since the moose targeted the player, keep updating the target location of the moose to the Player. Once the moose contacts the player, the moose cannot target the player again for 3 seconds. Also, make the wander radius around waypoints slightly larger.
 

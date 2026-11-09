@@ -10315,3 +10315,172 @@ fn test_elf_navigation_stuck_timer_and_vacuum_respawn() {
         assert!((tf.translation.y - 0.45).abs() < 0.1, "Elf should land on the platform at Y ≈ 0.45");
     }
 }
+
+#[test]
+fn test_klepto_stash_corner_leaf_nodes_placement_and_loop_prevention() {
+    use rust_tests::elf_game::physics_sandbox::{
+        ElfAssistant, ElfMischiefTrait, ElfNavGraph, ElfNpcState, ElfNodePurpose,
+        elf_assistant_ai_system,
+    };
+    use rust_tests::elf_game::wrapping::Present;
+    use bevy_rapier3d::prelude::*;
+
+    // 1. Verify NavGraph has corner leaf nodes with degree 1 in all 4 corners of main room
+    let graph = ElfNavGraph::default_workshop_graph();
+    let stash_nodes = graph.find_nodes_by_purpose(ElfNodePurpose::KleptoStash);
+    assert_eq!(stash_nodes.len(), 4, "Must have exactly 4 corner KleptoStash nodes");
+
+    // All 4 stash nodes must be true leaf nodes (degree 1)
+    for &node_id in &stash_nodes {
+        let node = &graph.nodes[node_id];
+        assert_eq!(
+            node.neighbors.len(),
+            1,
+            "Stash node {} ({}) must be a leaf node with exactly 1 edge back to the main graph",
+            node.id,
+            node.name
+        );
+        let parent_id = node.neighbors[0];
+        assert!(
+            graph.nodes[parent_id].neighbors.contains(&node_id),
+            "Parent node {} must connect back to leaf stash node {}",
+            parent_id,
+            node_id
+        );
+    }
+
+    // Verify locations cover all four corners of the main room
+    let sw = stash_nodes.iter().find(|&&id| graph.nodes[id].position.x < -8.0 && graph.nodes[id].position.z > 8.0);
+    let nw = stash_nodes.iter().find(|&&id| graph.nodes[id].position.x < -8.0 && graph.nodes[id].position.z < -8.0);
+    let ne = stash_nodes.iter().find(|&&id| graph.nodes[id].position.x > 8.0 && graph.nodes[id].position.z < -8.0);
+    let se = stash_nodes.iter().find(|&&id| graph.nodes[id].position.x > 8.0 && graph.nodes[id].position.z > 8.0);
+
+    assert!(sw.is_some(), "Must have SW corner stash node");
+    assert!(nw.is_some(), "Must have NW corner stash node");
+    assert!(ne.is_some(), "Must have NE corner stash node");
+    assert!(se.is_some(), "Must have SE corner stash node");
+
+    // 2. Set up ECS test for Klepto Stashing present in front of elf & cooldown
+    let mut app = App::new();
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+    }
+    app.insert_resource(graph);
+    app.add_systems(Update, elf_assistant_ai_system);
+
+    let klepto_elf = ElfAssistant::new(2, "KleptoElf", vec![Vec3::ZERO]);
+    assert_eq!(klepto_elf.mischief_trait, ElfMischiefTrait::Klepto);
+
+    // Spawn elf at corridor position (-9.0, 0.45, 9.0) with present nearby
+    let elf_pos = Vec3::new(-9.0, 0.45, 9.0);
+    let elf_e = app.world_mut().spawn((
+        klepto_elf,
+        Transform::from_translation(elf_pos).looking_at(Vec3::new(-10.5, 0.45, 10.5), Vec3::Y),
+        Velocity::default(),
+        ExternalImpulse::default(),
+        LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
+    )).id();
+
+    // Spawn a present near the elf to be stolen
+    let present_pos = elf_pos + Vec3::new(0.3, 0.0, 0.2);
+    let pres_e1 = app.world_mut().spawn((
+        Present::default(),
+        Transform::from_translation(present_pos),
+        Velocity::default(),
+    )).id();
+
+    // First frame: elf picks up present and targets stash node (13)
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert_eq!(elf.state, ElfNpcState::StashingPresent);
+        assert_eq!(elf.carried_present, Some(pres_e1));
+        assert_eq!(elf.target_node, 13);
+    }
+
+    // Move elf close to SW stash node (Node 13 at -10.5, 0.45, 10.5) facing South-West
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(elf_e).unwrap();
+        tf.translation = Vec3::new(-10.4, 0.45, 10.4);
+        *tf = tf.looking_at(Vec3::new(-10.5, 0.45, 10.5), Vec3::Y);
+    }
+
+    // Advance frame where elf arrives at stash node (< 0.6m away)
+    // Run update so elf drops present in front of it
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        let elf_tf = app.world().get::<Transform>(elf_e).unwrap();
+        let pres_tf = app.world().get::<Transform>(pres_e1).unwrap();
+
+        assert_eq!(elf.state, ElfNpcState::Inspecting, "Elf should switch to Inspecting after stashing");
+        assert_eq!(elf.carried_present, None, "Present should no longer be carried");
+        assert_eq!(elf.last_stashed_present, Some(pres_e1), "Elf must remember last stashed present");
+        assert_eq!(elf.klepto_cooldown, 15.0, "Cooldown must be set to 15 seconds after stashing");
+
+        // Verify present was placed in front of the elf
+        let diff = pres_tf.translation - elf_tf.translation;
+        let flat_dist = Vec2::new(diff.x, diff.z).length();
+        assert!(flat_dist > 0.4 && flat_dist < 0.8, "Present should be placed in front of elf ~0.6m away, got {}", flat_dist);
+    }
+
+    // 3. Loop prevention: elf must NOT re-steal the same stashed present even if right next to it!
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+    }
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert_ne!(elf.state, ElfNpcState::StashingPresent, "Elf must not immediately re-stash the same present");
+        assert_eq!(elf.carried_present, None);
+    }
+
+    // 4. Cooldown prevention: Move elf back to corridor (-9.0, 0.45, 9.0) and spawn a second present
+    let corridor_pos = Vec3::new(-9.0, 0.45, 9.0);
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(elf_e).unwrap();
+        tf.translation = corridor_pos;
+    }
+    let pres_e2 = app.world_mut().spawn((
+        Present::default(),
+        Transform::from_translation(corridor_pos + Vec3::new(0.2, 0.0, 0.2)),
+        Velocity::default(),
+    )).id();
+
+    // Advance 5 seconds: cooldown is still ~10s > 0
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(5));
+        app.insert_resource(time);
+    }
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert!(elf.klepto_cooldown > 0.0, "Cooldown should still be active");
+        assert_ne!(elf.state, ElfNpcState::StashingPresent, "Elf must not steal second present during cooldown");
+        assert_eq!(elf.carried_present, None);
+    }
+
+    // Advance 11 more seconds: cooldown expires (5 + 11 = 16s > 15s)
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(11));
+        app.insert_resource(time);
+    }
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert_eq!(elf.klepto_cooldown, 0.0, "Cooldown should be expired");
+        assert_eq!(elf.state, ElfNpcState::StashingPresent, "Elf should now steal the new second present");
+        assert_eq!(elf.carried_present, Some(pres_e2));
+    }
+}

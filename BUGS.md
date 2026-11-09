@@ -9,14 +9,14 @@ Idea: Elf Mischief behavior: Philosopher. If an elf gains this Mischief trait, i
 
 Move the Pantry to be inside the main cabin room as a subroom, and keep the door. The back wall of the cabin should have different rooms for the Pantry, and at least 2 more unused rooms. There should be a staircase to get to a mezzanine area above these rooms. Make the staircase have a smooth collision ramp for the player so that they ascend smoothly, but keep the stairs as the collision for objects that are not the player or elves. The mezzanine should have a wood railing and wood plank floors. Move the Hat Closet to be up in the mezzanine and turn it into a Hat Rack, which should spawn one random hat on it. Add a Mirror by the Hat Stand. If the hat has been taken off the rack and the player is not looking and not holding a hat, spawn a new random hat on the rack.
 
-Update the KleptoStash behavior to add leaf nodes with one edge back to the main graph that are in the corners of the main room. The elf should put the stolen item in front of them when stashing it, and remember the last item stashed and not target that item again to prevent getting stuck in a loop. There should also be a longer cooldown between stashing items, like 15 seconds.
-
 Cleanup: Colors and materials should be defined in assets/materials instead of in the file where behavior is defined so that the files do not get too cluttered. This follows the limited color palette Principle under Artistic Direction. Move material definitions from stove.rs to the assets/materials.rs file, and audit other files for extra material definitions.
 
 The lighting from the candles is flickering. This may be just due to debug fastbuild in cargo rather than a full binary build.
 
 
 DONE:
+
+Update the KleptoStash behavior to add leaf nodes with one edge back to the main graph that are in the corners of the main room. The elf should put the stolen item in front of them when stashing it, and remember the last item stashed and not target that item again to prevent getting stuck in a loop. There should also be a longer cooldown between stashing items, like 15 seconds.
 
 If an elf is unable to navigate to its target node in 10 seconds, randomly choose a different node to navigate to, in order to prevent getting stuck. If the elf fails to navigate to a node 3 times, respawn the elf from the present vaccuum and play the vaccuum animation in reverse.
 

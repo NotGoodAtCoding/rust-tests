@@ -144,7 +144,7 @@ impl ElfNavGraph {
                 name: "WorkbenchEast".to_string(),
                 position: Vec3::new(3.8, 0.45, -4.0),
                 radius: 1.2,
-                neighbors: vec![0, 3, 6, 9],
+                neighbors: vec![0, 3, 6, 9, 17],
                 purpose: Some(ElfNodePurpose::Workbench),
             },
             // Node 3: Present Sending Platform
@@ -171,7 +171,7 @@ impl ElfNavGraph {
                 name: "NorthwestPass".to_string(),
                 position: Vec3::new(-6.5, 0.45, -5.5),
                 radius: 1.4,
-                neighbors: vec![1, 4, 7],
+                neighbors: vec![1, 4, 7, 16],
                 purpose: None,
             },
             // Node 6: Central Crossing
@@ -216,7 +216,7 @@ impl ElfNavGraph {
                 name: "EastSouthCorridor".to_string(),
                 position: Vec3::new(11.5, 0.45, 5.5),
                 radius: 1.1,
-                neighbors: vec![9, 11, 14],
+                neighbors: vec![9, 11, 14, 18],
                 purpose: None,
             },
             // Node 11: South Central Hallway
@@ -234,16 +234,16 @@ impl ElfNavGraph {
                 name: "HatCloset".to_string(),
                 position: Vec3::new(-4.5, 0.45, 10.5),
                 radius: 1.4,
-                neighbors: vec![8, 11, 13],
+                neighbors: vec![8, 11],
                 purpose: Some(ElfNodePurpose::HatCloset),
             },
-            // Node 13: Secluded Klepto Stash Node
+            // Node 13: Southwest Klepto Stash Leaf Node
             ElfNavNode {
                 id: 13,
                 name: "KleptoStash".to_string(),
                 position: Vec3::new(-10.5, 0.45, 10.5),
                 radius: 1.4,
-                neighbors: vec![8, 12],
+                neighbors: vec![8],
                 purpose: Some(ElfNodePurpose::KleptoStash),
             },
             // Node 14: Southeast Rest Area
@@ -264,6 +264,33 @@ impl ElfNavGraph {
                 neighbors: vec![8],
                 purpose: Some(ElfNodePurpose::PantryShelves),
             },
+            // Node 16: Northwest Klepto Stash Leaf Node
+            ElfNavNode {
+                id: 16,
+                name: "KleptoStashNW".to_string(),
+                position: Vec3::new(-10.5, 0.45, -10.5),
+                radius: 1.4,
+                neighbors: vec![5],
+                purpose: Some(ElfNodePurpose::KleptoStash),
+            },
+            // Node 17: Northeast Klepto Stash Leaf Node
+            ElfNavNode {
+                id: 17,
+                name: "KleptoStashNE".to_string(),
+                position: Vec3::new(11.0, 0.45, -10.5),
+                radius: 1.4,
+                neighbors: vec![2],
+                purpose: Some(ElfNodePurpose::KleptoStash),
+            },
+            // Node 18: Southeast Klepto Stash Leaf Node
+            ElfNavNode {
+                id: 18,
+                name: "KleptoStashSE".to_string(),
+                position: Vec3::new(11.0, 0.45, 10.5),
+                radius: 1.4,
+                neighbors: vec![10],
+                purpose: Some(ElfNodePurpose::KleptoStash),
+            },
         ];
 
         Self {
@@ -275,6 +302,15 @@ impl ElfNavGraph {
     /// Finds the node index associated with a given semantic purpose.
     pub fn find_node_by_purpose(&self, purpose: ElfNodePurpose) -> Option<usize> {
         self.nodes.iter().find(|n| n.purpose == Some(purpose)).map(|n| n.id)
+    }
+
+    /// Finds all node indices associated with a given semantic purpose.
+    pub fn find_nodes_by_purpose(&self, purpose: ElfNodePurpose) -> Vec<usize> {
+        self.nodes
+            .iter()
+            .filter(|n| n.purpose == Some(purpose))
+            .map(|n| n.id)
+            .collect()
     }
 
     /// Finds the shortest sequence of node indices from `start_idx` to `goal_idx` using breadth-first search.
@@ -372,6 +408,8 @@ pub struct ElfAssistant {
     // Mischief specific state
     pub slacking_cooldown: f32,
     pub carried_present: Option<Entity>,
+    pub last_stashed_present: Option<Entity>,
+    pub klepto_cooldown: f32,
 
     // Job specific state (Moose Feeder loop)
     pub carried_treat: Option<Entity>,
@@ -418,6 +456,8 @@ impl ElfAssistant {
             vacuum_respawn_progress: 0.0,
             slacking_cooldown: 8.0,
             carried_present: None,
+            last_stashed_present: None,
+            klepto_cooldown: 0.0,
             carried_treat: None,
             missing_treats_panic: false,
         }
@@ -1130,6 +1170,9 @@ pub fn elf_assistant_ai_system(
         .collect();
 
     for (_elf_entity, mut elf_tf, mut vel, mut impulse, mut locked_axes, mut elf, opt_comp_target) in &mut q_elves {
+        if elf.klepto_cooldown > 0.0 {
+            elf.klepto_cooldown = (elf.klepto_cooldown - dt).max(0.0);
+        }
         if let Some(comp_dyn) = opt_comp_target {
             elf.dynamic_target = Some(comp_dyn.clone());
         }
@@ -1249,18 +1292,33 @@ pub fn elf_assistant_ai_system(
                 }
 
                 // 2. Klepto Trait Present Finding & Stashing Logic
-                if elf.mischief_trait == ElfMischiefTrait::Klepto && elf.carried_present.is_none() && elf.assigned_job.is_none() {
+                if elf.mischief_trait == ElfMischiefTrait::Klepto && elf.carried_present.is_none() && elf.assigned_job.is_none() && elf.klepto_cooldown <= 0.0 {
                     // Check if there is an unheld present nearby to steal
                     for (pres_e, pres_tf, _) in &q_presents {
+                        if Some(pres_e) == elf.last_stashed_present {
+                            continue;
+                        }
                         let dist = pres_tf.translation.distance(elf_tf.translation);
-                        if dist < 1.2 && pres_tf.translation.z < 8.0 {
+                        if dist < 1.2 {
                             // Pick up present!
                             elf.carried_present = Some(pres_e);
                             elf.state = ElfNpcState::StashingPresent;
                             if let Some(ref graph) = nav_graph {
                                 elf.current_node = graph.closest_node(elf_tf.translation);
-                                elf.target_node = 13; // Klepto Stash node
-                                if let Some(path) = graph.find_path(elf.current_node, 13) {
+                                let stash_target = graph
+                                    .nodes
+                                    .iter()
+                                    .filter(|n| n.purpose == Some(ElfNodePurpose::KleptoStash))
+                                    .min_by(|a, b| {
+                                        let da = a.position.distance_squared(elf_tf.translation);
+                                        let db = b.position.distance_squared(elf_tf.translation);
+                                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                                    })
+                                    .map(|n| n.id)
+                                    .unwrap_or(13);
+
+                                elf.target_node = stash_target;
+                                if let Some(path) = graph.find_path(elf.current_node, stash_target) {
                                     elf.path = path;
                                     elf.path_step = 0;
                                 }
@@ -1525,8 +1583,17 @@ pub fn elf_assistant_ai_system(
                         }
                     }
                 } else if elf.state == ElfNpcState::StashingPresent {
-                    // Pathfind towards Klepto stash node (Node 13: -10.5, 0.45, 10.5)
-                    let stash_pos = Vec3::new(-10.5, 0.45, 10.5);
+                    // Pathfind towards target Klepto stash node
+                    let stash_pos = if let Some(ref graph) = nav_graph {
+                        if elf.target_node < graph.nodes.len() {
+                            graph.nodes[elf.target_node].position
+                        } else {
+                            Vec3::new(-10.5, 0.45, 10.5)
+                        }
+                    } else {
+                        Vec3::new(-10.5, 0.45, 10.5)
+                    };
+
                     let target_pos = if let Some(ref graph) = nav_graph {
                         if elf.path_step < elf.path.len() {
                             graph.nodes[elf.path[elf.path_step]].position
@@ -1545,19 +1612,32 @@ pub fn elf_assistant_ai_system(
                     let dist = flat_diff.length();
 
                     if dist < 0.6 {
-                        if let Some(ref _graph) = nav_graph {
+                        let reached_stash = if let Some(ref _graph) = nav_graph {
                             if elf.path_step + 1 < elf.path.len() {
                                 elf.path_step += 1;
+                                false
                             } else {
-                                // Arrived at stash! Drop present
-                                elf.carried_present = None;
-                                elf.state = ElfNpcState::Inspecting;
-                                elf.state_timer = 0.0;
-                                vel.linear.x = 0.0;
-                                vel.linear.z = 0.0;
+                                true
                             }
                         } else {
+                            true
+                        };
+
+                        if reached_stash {
+                            // Arrived at stash! Place present in front of elf
+                            let forward = elf_tf.forward();
+                            let drop_offset = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero() * 0.6;
+                            let drop_pos = elf_tf.translation + drop_offset + Vec3::Y * 0.15;
+                            if let Some(pres_e) = elf.carried_present {
+                                if let Ok((_, mut pres_tf, mut pres_vel)) = q_presents.get_mut(pres_e) {
+                                    pres_tf.translation = drop_pos;
+                                    pres_vel.linear = Vec3::ZERO;
+                                    pres_vel.angular = Vec3::ZERO;
+                                }
+                                elf.last_stashed_present = Some(pres_e);
+                            }
                             elf.carried_present = None;
+                            elf.klepto_cooldown = 15.0;
                             elf.state = ElfNpcState::Inspecting;
                             elf.state_timer = 0.0;
                             vel.linear.x = 0.0;

@@ -4,7 +4,7 @@ use crate::elf_game::{
     assets::{palette::*, WorkshopMaterials},
     player::{ElfHands, ElfMovement, controller::{LeftHandVisual, RightHandVisual}},
     physics_sandbox::{SoftBodyLattice, SoftBodyDeformableMesh},
-    wrapping::{Present, WrappingSpecification, WrappingTool, UseToolOnPresentMessage},
+    wrapping::{Present, WrappingSpecification, WrappingTool, UseToolOnPresentMessage, PaperPatternRoll, GiftTagPenTool},
 };
 
 pub const GROUP_PLAYER: Group = Group::GROUP_1;
@@ -85,6 +85,27 @@ pub fn spawn_workshop_tools_and_materials(
         Name::new("WorkbenchTapeDispenser"),
     ));
 
+    // 2b. Gift Tag Pen on Workbench Table (X = -0.85, Y = 0.95, Z = -4.0)
+    let pen_mat = workshop_mats.as_ref().map(|wm| wm.polished_brass.clone()).unwrap_or_else(|| {
+        materials.add(StandardMaterial {
+            base_color: Color::srgb(0.85, 0.65, 0.15),
+            perceptual_roughness: 0.3,
+            ..default()
+        })
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(Cylinder::new(0.025, 0.28))),
+        MeshMaterial3d(pen_mat),
+        Transform::from_xyz(-0.85, 0.95, -4.0),
+        Collider::cylinder(0.14, 0.025),
+        RigidBody::Dynamic,
+        Velocity::default(),
+        Grabbable,
+        ToolItem { tool: WrappingTool::GiftTagPen },
+        GiftTagPenTool::default(),
+        Name::new("WorkbenchGiftTagPen"),
+    ));
+
     // 3. Wrapping Paper Roll on Workbench Table (X = 0.5, Y = 0.95, Z = -4.0)
     commands.spawn((
         Mesh3d(meshes.add(Cylinder::new(0.12, 1.2))),
@@ -95,6 +116,7 @@ pub fn spawn_workshop_tools_and_materials(
         Velocity::default(),
         Grabbable,
         ToolItem { tool: WrappingTool::WrappingPaperRoll },
+        PaperPatternRoll::default(),
         Name::new("WrappingPaperRoll"),
     ));
 
@@ -242,11 +264,12 @@ fn find_grabbable_in_reticle_los(
 
 /// Handles Left Hand (Q) and Right Hand (E) toggle grabbing, setting down, and Mouse 1 throwing
 pub fn dual_hand_interaction_system(
-    keys: Option<Res<ButtonInput<KeyCode>>>,
-    mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
-    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
-    dialogue_state: Option<Res<crate::elf_game::dialogue::ActiveDialogue>>,
-    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
+    inputs: (Option<Res<ButtonInput<KeyCode>>>, Option<Res<ButtonInput<MouseButton>>>),
+    states: (
+        Option<Res<crate::elf_game::ui::MenuState>>,
+        Option<Res<crate::elf_game::dialogue::ActiveDialogue>>,
+        Option<Res<State<crate::elf_game::core::GameState>>>,
+    ),
     mut q_player: Query<(&Transform, &mut ElfHands, Option<&ElfMovement>), Without<Grabbable>>,
     q_camera: Query<&GlobalTransform, With<crate::elf_game::player::controller::FirstPersonCamera>>,
     q_left_visual: Query<&GlobalTransform, With<LeftHandVisual>>,
@@ -255,9 +278,13 @@ pub fn dual_hand_interaction_system(
     q_obstacles: Query<(&Transform, &Collider), (Without<Grabbable>, Without<ElfHands>, Without<ElfMovement>, Without<Sensor>)>,
     mut q_velocities: Query<&mut Velocity, With<Grabbable>>,
     q_presents: Query<Entity, With<Present>>,
+    mut q_rolls: Query<&mut PaperPatternRoll>,
+    q_pens: Query<&GiftTagPenTool>,
     mut tool_messages: MessageWriter<UseToolOnPresentMessage>,
     mut commands: Commands,
 ) {
+    let (keys, mouse_buttons) = inputs;
+    let (menu_state, dialogue_state, game_state) = states;
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
         return;
     }
@@ -399,6 +426,19 @@ pub fn dual_hand_interaction_system(
         }
     }
 
+    // Cycle paper roll pattern if holding roll and pressing KeyR or KeyF
+    if let Some(ref k) = keys {
+        if k.just_pressed(KeyCode::KeyR) || k.just_pressed(KeyCode::KeyF) {
+            for held_opt in [hands.left_grabbed, hands.right_grabbed] {
+                if let Some(held_e) = held_opt {
+                    if let Ok(mut roll) = q_rolls.get_mut(held_e) {
+                        roll.cycle();
+                    }
+                }
+            }
+        }
+    }
+
     // 4. Hold grabbed items in position with kinematic follow, pushed out forward in front of hands
     let camera_fwd = q_camera.single().map(|gt| gt.forward().into()).unwrap_or(Vec3::NEG_Z);
     let camera_rot = q_camera.single().map(|gt| gt.to_scale_rotation_translation().1).unwrap_or(Quat::IDENTITY);
@@ -422,12 +462,16 @@ pub fn dual_hand_interaction_system(
         }
 
         if let Some(tool) = left_tool {
+            let pattern = q_rolls.get(left_e).ok().map(|r| r.pattern);
+            let inscription = q_pens.get(left_e).ok().map(|p| p.inscription.clone());
             for present_e in &q_presents {
                 if let Ok((_, p_tf, _, _)) = q_grabbables.get(present_e) {
                     if p_tf.translation.distance(left_hold_pos) < 1.0 {
                         tool_messages.write(UseToolOnPresentMessage {
                             tool,
                             present_entity: present_e,
+                            pattern,
+                            inscription: inscription.clone(),
                         });
                     }
                 }
@@ -450,12 +494,16 @@ pub fn dual_hand_interaction_system(
         }
 
         if let Some(tool) = right_tool {
+            let pattern = q_rolls.get(right_e).ok().map(|r| r.pattern);
+            let inscription = q_pens.get(right_e).ok().map(|p| p.inscription.clone());
             for present_e in &q_presents {
                 if let Ok((_, p_tf, _, _)) = q_grabbables.get(present_e) {
                     if p_tf.translation.distance(right_hold_pos) < 1.0 {
                         tool_messages.write(UseToolOnPresentMessage {
                             tool,
                             present_entity: present_e,
+                            pattern,
+                            inscription: inscription.clone(),
                         });
                     }
                 }

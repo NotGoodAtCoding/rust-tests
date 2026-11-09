@@ -17,6 +17,66 @@ pub enum WrappingFeature {
     PlasmaShrinkSealed,
 }
 
+/// Paper pattern design variants available on wrapping paper rolls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum PaperPattern {
+    #[default]
+    Plain,
+    PolkaDots,
+    Stripes,
+}
+
+/// Component attached to wrapping paper rolls specifying their pattern variant.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaperPatternRoll {
+    pub pattern: PaperPattern,
+}
+
+impl Default for PaperPatternRoll {
+    fn default() -> Self {
+        Self {
+            pattern: PaperPattern::Plain,
+        }
+    }
+}
+
+impl PaperPatternRoll {
+    pub fn new(pattern: PaperPattern) -> Self {
+        Self { pattern }
+    }
+
+    pub fn cycle(&mut self) -> PaperPattern {
+        self.pattern = match self.pattern {
+            PaperPattern::Plain => PaperPattern::PolkaDots,
+            PaperPattern::PolkaDots => PaperPattern::Stripes,
+            PaperPattern::Stripes => PaperPattern::Plain,
+        };
+        self.pattern
+    }
+}
+
+/// Component attached to gift tag pen tools with an inscription.
+#[derive(Component, Debug, Clone)]
+pub struct GiftTagPenTool {
+    pub inscription: String,
+}
+
+impl Default for GiftTagPenTool {
+    fn default() -> Self {
+        Self {
+            inscription: "To: Santa's Favorite".to_string(),
+        }
+    }
+}
+
+impl GiftTagPenTool {
+    pub fn new(inscription: impl Into<String>) -> Self {
+        Self {
+            inscription: inscription.into(),
+        }
+    }
+}
+
 /// Instructions / requirements specifying the required set of features.
 #[derive(Component, Debug, Clone)]
 pub struct WrappingSpecification {
@@ -45,6 +105,7 @@ pub struct Present {
     pub features: HashSet<WrappingFeature>,
     pub quality_score: f32,
     pub is_completed: bool,
+    pub recipient_tag: Option<String>,
 }
 
 impl Default for Present {
@@ -54,6 +115,7 @@ impl Default for Present {
             features: HashSet::new(),
             quality_score: 1.0,
             is_completed: false,
+            recipient_tag: None,
         }
     }
 }
@@ -92,6 +154,40 @@ pub enum WrappingTool {
 pub struct UseToolOnPresentMessage {
     pub tool: WrappingTool,
     pub present_entity: Entity,
+    pub pattern: Option<PaperPattern>,
+    pub inscription: Option<String>,
+}
+
+impl Default for UseToolOnPresentMessage {
+    fn default() -> Self {
+        Self {
+            tool: WrappingTool::Scissors,
+            present_entity: Entity::PLACEHOLDER,
+            pattern: None,
+            inscription: None,
+        }
+    }
+}
+
+impl UseToolOnPresentMessage {
+    pub fn new(tool: WrappingTool, present_entity: Entity) -> Self {
+        Self {
+            tool,
+            present_entity,
+            pattern: None,
+            inscription: None,
+        }
+    }
+
+    pub fn with_pattern(mut self, pattern: PaperPattern) -> Self {
+        self.pattern = Some(pattern);
+        self
+    }
+
+    pub fn with_inscription(mut self, inscription: impl Into<String>) -> Self {
+        self.inscription = Some(inscription.into());
+        self
+    }
 }
 
 #[derive(Message, Debug, Clone)]
@@ -112,6 +208,17 @@ pub fn handle_present_wrapping(
                 }
                 WrappingTool::WrappingPaperRoll => {
                     present.features.insert(WrappingFeature::PaperWrapped);
+                    match msg.pattern {
+                        Some(PaperPattern::PolkaDots) => {
+                            present.features.insert(WrappingFeature::PolkaDotPattern);
+                            present.features.remove(&WrappingFeature::StripedPattern);
+                        }
+                        Some(PaperPattern::Stripes) => {
+                            present.features.insert(WrappingFeature::StripedPattern);
+                            present.features.remove(&WrappingFeature::PolkaDotPattern);
+                        }
+                        _ => {}
+                    }
                 }
                 WrappingTool::TapeDispenser => {
                     if !present.features.contains(&WrappingFeature::TapedCorners) {
@@ -128,6 +235,11 @@ pub fn handle_present_wrapping(
                 }
                 WrappingTool::GiftTagPen => {
                     present.features.insert(WrappingFeature::GiftTagAttached);
+                    if let Some(ref text) = msg.inscription {
+                        present.recipient_tag = Some(text.clone());
+                    } else if present.recipient_tag.is_none() {
+                        present.recipient_tag = Some("To: Good Child".to_string());
+                    }
                 }
                 WrappingTool::ForbiddenPlasmaShrink => {
                     // Instant high-tech application of all fundamental features

@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 use rust_tests::elf_game::wrapping::{
     WrappingPlugin, Present, WrappingFeature, WrappingSpecification, WrappingTool, UseToolOnPresentMessage,
+    PaperPatternRoll, PaperPattern,
 };
 use rust_tests::elf_game::moose::{
     MoosePlugin, MooseHunger, MooseHungerStage, MooseSnack, FeedMooseMessage,
@@ -48,40 +49,40 @@ fn test_wrapping_attribute_specification_fulfillment() {
     )).id();
 
     // 1. Cut Paper (PaperSized)
-    app.world_mut().write_message(UseToolOnPresentMessage {
-        tool: WrappingTool::Scissors,
+    app.world_mut().write_message(UseToolOnPresentMessage::new(
+        WrappingTool::Scissors,
         present_entity,
-    });
+    ));
     app.update();
     let p = app.world().get::<Present>(present_entity).unwrap();
     assert!(p.features.contains(&WrappingFeature::PaperSized));
     assert!(!p.is_completed);
 
     // 2. Wrap Paper (PaperWrapped)
-    app.world_mut().write_message(UseToolOnPresentMessage {
-        tool: WrappingTool::WrappingPaperRoll,
+    app.world_mut().write_message(UseToolOnPresentMessage::new(
+        WrappingTool::WrappingPaperRoll,
         present_entity,
-    });
+    ));
     app.update();
     let p = app.world().get::<Present>(present_entity).unwrap();
     assert!(p.features.contains(&WrappingFeature::PaperWrapped));
     assert!(!p.is_completed);
 
     // 3. Tape Corners (TapedCorners)
-    app.world_mut().write_message(UseToolOnPresentMessage {
-        tool: WrappingTool::TapeDispenser,
+    app.world_mut().write_message(UseToolOnPresentMessage::new(
+        WrappingTool::TapeDispenser,
         present_entity,
-    });
+    ));
     app.update();
     let p = app.world().get::<Present>(present_entity).unwrap();
     assert!(p.features.contains(&WrappingFeature::TapedCorners));
     assert!(!p.is_completed);
 
     // 4. Attach Decorative Bow (DecorativeBow) -> All required attributes present!
-    app.world_mut().write_message(UseToolOnPresentMessage {
-        tool: WrappingTool::DecorativeBowBox,
+    app.world_mut().write_message(UseToolOnPresentMessage::new(
+        WrappingTool::DecorativeBowBox,
         present_entity,
-    });
+    ));
     app.update();
     let p = app.world().get::<Present>(present_entity).unwrap();
     assert!(p.features.contains(&WrappingFeature::DecorativeBow));
@@ -103,16 +104,89 @@ fn test_forbidden_plasma_instant_wrap() {
     )).id();
 
     // Instantly seal with Forbidden Plasma Shrink
-    app.world_mut().write_message(UseToolOnPresentMessage {
-        tool: WrappingTool::ForbiddenPlasmaShrink,
+    app.world_mut().write_message(UseToolOnPresentMessage::new(
+        WrappingTool::ForbiddenPlasmaShrink,
         present_entity,
-    });
+    ));
     app.update();
 
     let p = app.world().get::<Present>(present_entity).unwrap();
     assert!(p.is_completed, "Forbidden plasma wrap fulfills required specifications");
     assert!(p.features.contains(&WrappingFeature::PlasmaShrinkSealed));
     assert_eq!(p.quality_score, 1.5, "Forbidden tool gives instant high quality boost");
+}
+
+#[test]
+fn test_gift_tag_pen_writing_and_paper_pattern_variants() {
+    let mut app = App::new();
+    app.add_plugins(WrappingPlugin);
+
+    // 1. Verify PaperPatternRoll cycling
+    let mut roll = PaperPatternRoll::default();
+    assert_eq!(roll.pattern, PaperPattern::Plain);
+    assert_eq!(roll.cycle(), PaperPattern::PolkaDots);
+    assert_eq!(roll.cycle(), PaperPattern::Stripes);
+    assert_eq!(roll.cycle(), PaperPattern::Plain);
+
+    // 2. Present requiring PolkaDotPattern and GiftTagAttached
+    let mut req = HashSet::new();
+    req.insert(WrappingFeature::PaperWrapped);
+    req.insert(WrappingFeature::PolkaDotPattern);
+    req.insert(WrappingFeature::GiftTagAttached);
+
+    let mut forb = HashSet::new();
+    forb.insert(WrappingFeature::StripedPattern);
+
+    let spec = WrappingSpecification {
+        required_features: req,
+        forbidden_features: forb,
+    };
+
+    let present_e = app.world_mut().spawn((
+        Present {
+            toy_name: "Rocket Ship".to_string(),
+            ..default()
+        },
+        spec.clone(),
+    )).id();
+
+    // Wrap with stripes first - should have stripes and not satisfy spec (forbidden feature)
+    app.world_mut().write_message(
+        UseToolOnPresentMessage::new(WrappingTool::WrappingPaperRoll, present_e)
+            .with_pattern(PaperPattern::Stripes),
+    );
+    app.update();
+
+    let p = app.world().get::<Present>(present_e).unwrap();
+    assert!(p.features.contains(&WrappingFeature::PaperWrapped));
+    assert!(p.features.contains(&WrappingFeature::StripedPattern));
+    assert!(!p.meets_specification(&spec));
+    assert!(!p.is_completed);
+
+    // Now re-wrap with polka dots - should replace stripes with polka dots
+    app.world_mut().write_message(
+        UseToolOnPresentMessage::new(WrappingTool::WrappingPaperRoll, present_e)
+            .with_pattern(PaperPattern::PolkaDots),
+    );
+    app.update();
+
+    let p = app.world().get::<Present>(present_e).unwrap();
+    assert!(p.features.contains(&WrappingFeature::PolkaDotPattern));
+    assert!(!p.features.contains(&WrappingFeature::StripedPattern));
+    assert!(!p.is_completed, "Still missing GiftTagAttached");
+
+    // Write with GiftTagPen
+    app.world_mut().write_message(
+        UseToolOnPresentMessage::new(WrappingTool::GiftTagPen, present_e)
+            .with_inscription("For: Clara - Merry Christmas!"),
+    );
+    app.update();
+
+    let p = app.world().get::<Present>(present_e).unwrap();
+    assert!(p.features.contains(&WrappingFeature::GiftTagAttached));
+    assert_eq!(p.recipient_tag.as_deref(), Some("For: Clara - Merry Christmas!"));
+    assert!(p.meets_specification(&spec));
+    assert!(p.is_completed, "Present should be completed once all requirements including tag and pattern are met");
 }
 
 #[test]

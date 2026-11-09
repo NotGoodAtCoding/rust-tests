@@ -33,7 +33,7 @@ This document tracks the short-form task breakdown for each section of [`PLAN.md
 | Dynamic quality scoring & order satisfaction check (`meets_specification`) | **DONE** | [`wrapping/mod.rs`](file:///home/stef/repo/rust-tests/src/elf_game/wrapping/mod.rs) |
 | In-world wrapping tools on workbench: Scissors, Tape Dispenser, Paper Roll, Bow Box | **DONE** | [`hands.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/hands.rs) |
 | Forbidden tool logic: `ForbiddenPlasmaShrink` instant-wrap and high quality | **DONE** | [`wrapping/mod.rs`](file:///home/stef/repo/rust-tests/src/elf_game/wrapping/mod.rs) |
-| Gift tag pen writing and customizable paper pattern variants (polka dots, stripes) | TODO | Planned |
+| Gift tag pen writing and customizable paper pattern variants (polka dots, stripes) | **DONE** | [`wrapping/mod.rs`](file:///home/stef/repo/rust-tests/src/elf_game/wrapping/mod.rs), [`hands.rs`](file:///home/stef/repo/rust-tests/src/elf_game/player/hands.rs) |
 
 ### 2.2 Main Room Layout, Cabin Architecture & Pneumatics
 | Task Description | Status | Reference Files |

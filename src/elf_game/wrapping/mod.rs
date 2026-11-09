@@ -90,6 +90,80 @@ impl GiftTagPenTool {
     }
 }
 
+/// Assorted raw toy types that arrive via the conveyor belt.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ToyType {
+    #[default]
+    WoodenTrain,
+    TeddyBear,
+    TinRobot,
+}
+
+impl ToyType {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ToyType::WoodenTrain => "Wooden Train",
+            ToyType::TeddyBear => "Teddy Bear",
+            ToyType::TinRobot => "Tin Robot",
+        }
+    }
+
+    pub fn dimensions(&self) -> Vec3 {
+        match self {
+            ToyType::WoodenTrain => Vec3::new(0.65, 0.45, 0.45),
+            ToyType::TeddyBear => Vec3::new(0.50, 0.55, 0.50),
+            ToyType::TinRobot => Vec3::new(0.45, 0.65, 0.40),
+        }
+    }
+
+    pub fn mass(&self) -> f32 {
+        match self {
+            ToyType::WoodenTrain => 1.2,
+            ToyType::TeddyBear => 0.6,
+            ToyType::TinRobot => 2.0,
+        }
+    }
+
+    pub fn lattice_params(&self) -> (f32, f32) {
+        match self {
+            ToyType::WoodenTrain => (60.0, 6.0),
+            ToyType::TeddyBear => (30.0, 3.5),
+            ToyType::TinRobot => (120.0, 10.0),
+        }
+    }
+
+    pub fn default_specification(&self) -> WrappingSpecification {
+        let mut required = HashSet::new();
+        let mut forbidden = HashSet::new();
+        match self {
+            ToyType::WoodenTrain => {
+                required.insert(WrappingFeature::PaperSized);
+                required.insert(WrappingFeature::PaperWrapped);
+                required.insert(WrappingFeature::TapedCorners);
+                required.insert(WrappingFeature::DecorativeBow);
+                required.insert(WrappingFeature::GiftTagAttached);
+            }
+            ToyType::TeddyBear => {
+                required.insert(WrappingFeature::PaperWrapped);
+                required.insert(WrappingFeature::SnowflakePattern);
+                required.insert(WrappingFeature::RibbonTied);
+                forbidden.insert(WrappingFeature::PlasmaShrinkSealed);
+            }
+            ToyType::TinRobot => {
+                required.insert(WrappingFeature::PaperWrapped);
+                required.insert(WrappingFeature::StripedPattern);
+                required.insert(WrappingFeature::TapedCorners);
+                required.insert(WrappingFeature::TapedCenter);
+                forbidden.insert(WrappingFeature::RibbonTied);
+            }
+        }
+        WrappingSpecification {
+            required_features: required,
+            forbidden_features: forbidden,
+        }
+    }
+}
+
 /// Instructions / requirements specifying the required set of features.
 #[derive(Component, Debug, Clone)]
 pub struct WrappingSpecification {
@@ -111,9 +185,16 @@ impl Default for WrappingSpecification {
     }
 }
 
+impl WrappingSpecification {
+    pub fn for_toy(toy_type: ToyType) -> Self {
+        toy_type.default_specification()
+    }
+}
+
 /// A present entity in the workshop, holding its current set of applied features and attributes.
 #[derive(Component, Debug, Clone)]
 pub struct Present {
+    pub toy_type: ToyType,
     pub toy_name: String,
     pub features: HashSet<WrappingFeature>,
     pub quality_score: f32,
@@ -123,17 +204,21 @@ pub struct Present {
 
 impl Default for Present {
     fn default() -> Self {
+        Self::new(ToyType::WoodenTrain)
+    }
+}
+
+impl Present {
+    pub fn new(toy_type: ToyType) -> Self {
         Self {
-            toy_name: "Wooden Train".to_string(),
+            toy_type,
+            toy_name: toy_type.name().to_string(),
             features: HashSet::new(),
             quality_score: 1.0,
             is_completed: false,
             recipient_tag: None,
         }
     }
-}
-
-impl Present {
     /// Returns true if all required features are met and no forbidden features are present.
     pub fn meets_specification(&self, spec: &WrappingSpecification) -> bool {
         let has_all_required = spec.required_features.iter().all(|req| self.features.contains(req));

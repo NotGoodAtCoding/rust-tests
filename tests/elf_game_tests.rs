@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 use rust_tests::elf_game::wrapping::{
     WrappingPlugin, Present, WrappingFeature, WrappingSpecification, WrappingTool, UseToolOnPresentMessage,
-    PaperPatternRoll, PaperPattern,
+    PaperPatternRoll, PaperPattern, ToyType,
 };
 use rust_tests::elf_game::moose::{
     MoosePlugin, MooseHunger, MooseHungerStage, MooseSnack, FeedMooseMessage,
@@ -5816,6 +5816,7 @@ fn test_pause_freezes_workshop_timers_vacuum_and_spawner() {
     app.init_state::<GameState>();
     app.insert_resource(ConveyorSpawnerTimer {
         timer: Timer::from_seconds(2.0, TimerMode::Repeating),
+        ..default()
     });
 
     app.world_mut().spawn((
@@ -13858,4 +13859,145 @@ fn test_visual_polish_confetti_glass_shards_and_snowflakes() {
             tf.translation.y
         );
     }
+}
+
+#[test]
+fn test_toy_types_dimensions_mass_and_specifications() {
+    let train = ToyType::WoodenTrain;
+    assert_eq!(train.name(), "Wooden Train");
+    assert_eq!(train.dimensions(), Vec3::new(0.65, 0.45, 0.45));
+    assert_eq!(train.mass(), 1.2);
+    let train_spec = train.default_specification();
+    assert!(train_spec.required_features.contains(&WrappingFeature::PaperSized));
+    assert!(train_spec.required_features.contains(&WrappingFeature::PaperWrapped));
+    assert!(train_spec.required_features.contains(&WrappingFeature::TapedCorners));
+    assert!(train_spec.required_features.contains(&WrappingFeature::DecorativeBow));
+    assert!(train_spec.required_features.contains(&WrappingFeature::GiftTagAttached));
+    assert!(train_spec.forbidden_features.is_empty());
+
+    let bear = ToyType::TeddyBear;
+    assert_eq!(bear.name(), "Teddy Bear");
+    assert_eq!(bear.dimensions(), Vec3::new(0.50, 0.55, 0.50));
+    assert_eq!(bear.mass(), 0.6);
+    let bear_spec = bear.default_specification();
+    assert!(bear_spec.required_features.contains(&WrappingFeature::PaperWrapped));
+    assert!(bear_spec.required_features.contains(&WrappingFeature::SnowflakePattern));
+    assert!(bear_spec.required_features.contains(&WrappingFeature::RibbonTied));
+    assert!(bear_spec.forbidden_features.contains(&WrappingFeature::PlasmaShrinkSealed));
+
+    let robot = ToyType::TinRobot;
+    assert_eq!(robot.name(), "Tin Robot");
+    assert_eq!(robot.dimensions(), Vec3::new(0.45, 0.65, 0.40));
+    assert_eq!(robot.mass(), 2.0);
+    let robot_spec = robot.default_specification();
+    assert!(robot_spec.required_features.contains(&WrappingFeature::PaperWrapped));
+    assert!(robot_spec.required_features.contains(&WrappingFeature::StripedPattern));
+    assert!(robot_spec.required_features.contains(&WrappingFeature::TapedCorners));
+    assert!(robot_spec.required_features.contains(&WrappingFeature::TapedCenter));
+    assert!(robot_spec.forbidden_features.contains(&WrappingFeature::RibbonTied));
+}
+
+#[test]
+fn test_conveyor_cube_spawner_cycles_toy_types() {
+    let mut app = App::new();
+    app.add_plugins(bevy::state::app::StatesPlugin);
+    app.init_state::<rust_tests::elf_game::core::GameState>();
+    app.insert_resource(rust_tests::elf_game::ui::MenuState::default());
+
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(16));
+    app.insert_resource(time);
+
+    let spawner = rust_tests::elf_game::workshop::room::ConveyorSpawnerTimer {
+        timer: Timer::from_seconds(1.0, TimerMode::Repeating),
+        spawn_count: 0,
+    };
+    app.insert_resource(spawner);
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_systems(Update, rust_tests::elf_game::workshop::room::conveyor_cube_spawner_system);
+
+    // Initial update - no ticks finished
+    app.update();
+    let count_init = app.world_mut().query::<&ToyType>().iter(app.world()).count();
+    assert_eq!(count_init, 0);
+
+    // Advance 1s -> Spawn 1 (WoodenTrain)
+    {
+        let mut t = app.world_mut().resource_mut::<Time<()>>();
+        t.advance_by(std::time::Duration::from_millis(1050));
+    }
+    app.update();
+    let toys1: Vec<ToyType> = app.world_mut().query::<&ToyType>().iter(app.world()).copied().collect();
+    assert_eq!(toys1.len(), 1);
+    assert_eq!(toys1[0], ToyType::WoodenTrain);
+
+    // Advance 1s -> Spawn 2 (TeddyBear)
+    {
+        let mut t = app.world_mut().resource_mut::<Time<()>>();
+        t.advance_by(std::time::Duration::from_millis(1050));
+    }
+    app.update();
+    let toys2: Vec<ToyType> = app.world_mut().query::<&ToyType>().iter(app.world()).copied().collect();
+    assert_eq!(toys2.len(), 2);
+    assert_eq!(toys2[1], ToyType::TeddyBear);
+
+    // Advance 1s -> Spawn 3 (TinRobot)
+    {
+        let mut t = app.world_mut().resource_mut::<Time<()>>();
+        t.advance_by(std::time::Duration::from_millis(1050));
+    }
+    app.update();
+    let toys3: Vec<ToyType> = app.world_mut().query::<&ToyType>().iter(app.world()).copied().collect();
+    assert_eq!(toys3.len(), 3);
+    assert_eq!(toys3[2], ToyType::TinRobot);
+
+    // Verify presents have corresponding toy_names
+    let presents: Vec<Present> = app.world_mut().query::<&Present>().iter(app.world()).cloned().collect();
+    assert_eq!(presents[0].toy_name, "Wooden Train");
+    assert_eq!(presents[1].toy_name, "Teddy Bear");
+    assert_eq!(presents[2].toy_name, "Tin Robot");
+}
+
+#[test]
+fn test_toy_wrapping_specification_fulfillment_and_forbidden_violations() {
+    let mut app = App::new();
+    app.add_plugins(WrappingPlugin);
+
+    // 1. Teddy Bear order: requires PaperWrapped, SnowflakePattern, RibbonTied; forbids PlasmaShrinkSealed
+    let bear_spec = WrappingSpecification::for_toy(ToyType::TeddyBear);
+    let bear_entity = app.world_mut().spawn((
+        Present::new(ToyType::TeddyBear),
+        bear_spec.clone(),
+    )).id();
+
+    // Wrap paper with Snowflake pattern
+    app.world_mut().write_message(
+        UseToolOnPresentMessage::new(WrappingTool::WrappingPaperRoll, bear_entity)
+            .with_pattern(PaperPattern::Snowflakes),
+    );
+    app.update();
+
+    let p = app.world().get::<Present>(bear_entity).unwrap();
+    assert!(!p.is_completed, "Needs ribbon tied");
+
+    // Tie ribbon
+    app.world_mut().write_message(
+        UseToolOnPresentMessage::new(WrappingTool::RibbonSpool, bear_entity),
+    );
+    app.update();
+
+    let p = app.world().get::<Present>(bear_entity).unwrap();
+    assert!(p.is_completed, "Teddy bear completed with snowflake paper and ribbon!");
+    assert_eq!(p.specification_satisfaction(&bear_spec), 1.0);
+
+    // Violate with forbidden plasma shrink wrap
+    app.world_mut().write_message(
+        UseToolOnPresentMessage::new(WrappingTool::ForbiddenPlasmaShrink, bear_entity),
+    );
+    app.update();
+
+    let p = app.world().get::<Present>(bear_entity).unwrap();
+    assert!(!p.meets_specification(&bear_spec), "Plasma wrap violates teddy bear forbidden specification!");
+    assert!(p.specification_satisfaction(&bear_spec) < 1.0);
 }

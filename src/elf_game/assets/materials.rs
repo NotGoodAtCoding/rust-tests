@@ -69,6 +69,8 @@ pub struct WorkshopMaterials {
 
     // --- Toys, Props & Snacks ---
     pub toy_blue: Handle<StandardMaterial>,
+    pub toy_teddy: Handle<StandardMaterial>,
+    pub toy_robot: Handle<StandardMaterial>,
     pub terracotta_pot: Handle<StandardMaterial>,
     pub cocoa_red: Handle<StandardMaterial>,
     pub hot_cocoa_liquid: Handle<StandardMaterial>,
@@ -384,6 +386,17 @@ impl WorkshopMaterials {
             toy_blue: materials.add(StandardMaterial {
                 base_color: UNWRAPPED_TOY_BLUE,
                 perceptual_roughness: 0.40,
+                ..default()
+            }),
+            toy_teddy: materials.add(StandardMaterial {
+                base_color: BIRCH_WOOD,
+                perceptual_roughness: 0.80,
+                ..default()
+            }),
+            toy_robot: materials.add(StandardMaterial {
+                base_color: SHEET_METAL,
+                metallic: 0.85,
+                perceptual_roughness: 0.25,
                 ..default()
             }),
             terracotta_pot: materials.add(StandardMaterial {

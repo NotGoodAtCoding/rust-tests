@@ -7,7 +7,7 @@ use crate::elf_game::{
     player::ElfMovement,
     player::hands::Grabbable,
     physics_sandbox::{SoftBodyLattice, SoftBodyDeformableMesh},
-    wrapping::{Present, WrappingSpecification, PresentDeliveredMessage},
+    wrapping::{Present, WrappingSpecification, PresentDeliveredMessage, ToyType},
 };
 
 #[derive(Component)]
@@ -215,12 +215,14 @@ pub struct TubeTravellingLump {
 #[derive(Resource)]
 pub struct ConveyorSpawnerTimer {
     pub timer: Timer,
+    pub spawn_count: usize,
 }
 
 impl Default for ConveyorSpawnerTimer {
     fn default() -> Self {
         Self {
             timer: Timer::from_seconds(3.5, TimerMode::Repeating),
+            spawn_count: 0,
         }
     }
 }
@@ -1277,24 +1279,53 @@ pub fn conveyor_cube_spawner_system(
         return;
     };
 
-    let cube_mat = workshop_mats.as_ref().map(|wm| wm.toy_blue.clone()).unwrap_or_else(|| {
-        materials.add(StandardMaterial {
-            base_color: UNWRAPPED_TOY_BLUE,
-            perceptual_roughness: 0.4,
-            ..default()
-        })
-    });
+    let toy_type = match spawner.spawn_count % 3 {
+        0 => ToyType::WoodenTrain,
+        1 => ToyType::TeddyBear,
+        _ => ToyType::TinRobot,
+    };
+    spawner.spawn_count += 1;
 
-    let raw_mesh = Mesh::from(Cuboid::new(0.6, 0.6, 0.6));
-    let deformable = SoftBodyDeformableMesh::from_mesh(&raw_mesh, Vec3::splat(0.3));
+    let dims = toy_type.dimensions();
+    let half_extents = dims * 0.5;
+    let (stiffness, damping_val) = toy_type.lattice_params();
+
+    let toy_mat = match toy_type {
+        ToyType::WoodenTrain => workshop_mats.as_ref().map(|wm| wm.toy_blue.clone()).unwrap_or_else(|| {
+            materials.add(StandardMaterial {
+                base_color: UNWRAPPED_TOY_BLUE,
+                perceptual_roughness: 0.4,
+                ..default()
+            })
+        }),
+        ToyType::TeddyBear => workshop_mats.as_ref().map(|wm| wm.toy_teddy.clone()).unwrap_or_else(|| {
+            materials.add(StandardMaterial {
+                base_color: BIRCH_WOOD,
+                perceptual_roughness: 0.8,
+                ..default()
+            })
+        }),
+        ToyType::TinRobot => workshop_mats.as_ref().map(|wm| wm.toy_robot.clone()).unwrap_or_else(|| {
+            materials.add(StandardMaterial {
+                base_color: SHEET_METAL,
+                metallic: 0.85,
+                perceptual_roughness: 0.25,
+                ..default()
+            })
+        }),
+    };
+
+    let raw_mesh = Mesh::from(Cuboid::from_size(dims));
+    let deformable = SoftBodyDeformableMesh::from_mesh(&raw_mesh, half_extents);
     let mesh_handle = meshes.add(raw_mesh);
 
     let mut entity_cmds = commands.spawn((
         Mesh3d(mesh_handle),
-        MeshMaterial3d(cube_mat),
+        MeshMaterial3d(toy_mat),
         Transform::from_xyz(-8.5, 1.15, 3.0),
-        Collider::cuboid(0.3, 0.3, 0.3),
+        Collider::cuboid(half_extents.x, half_extents.y, half_extents.z),
         RigidBody::Dynamic,
+        ColliderMassProperties::Mass(toy_type.mass()),
         Velocity {
             linear: Vec3::new(2.0, 0.0, 0.0),
             angular: Vec3::ZERO,
@@ -1304,11 +1335,12 @@ pub fn conveyor_cube_spawner_system(
             linear_damping: 0.8,
             angular_damping: 1.5,
         },
-        SoftBodyLattice::new_cube(Vec3::splat(0.3), 60.0, 6.0),
+        SoftBodyLattice::new_cube(half_extents, stiffness, damping_val),
         Grabbable,
-        Present::default(),
-        WrappingSpecification::default(),
-        Name::new("ConveyorToyCube"),
+        toy_type,
+        Present::new(toy_type),
+        WrappingSpecification::for_toy(toy_type),
+        Name::new(format!("Conveyor_{}", toy_type.name().replace(' ', ""))),
     ));
     if let Some(def) = deformable {
         entity_cmds.insert(def);

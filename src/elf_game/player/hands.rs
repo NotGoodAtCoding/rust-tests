@@ -4,7 +4,7 @@ use crate::elf_game::{
     assets::{palette::*, WorkshopMaterials},
     player::{ElfHands, ElfMovement, controller::{LeftHandVisual, RightHandVisual}},
     physics_sandbox::{SoftBodyLattice, SoftBodyDeformableMesh},
-    wrapping::{Present, WrappingSpecification, WrappingTool, UseToolOnPresentMessage, PaperPatternRoll, GiftTagPenTool},
+    wrapping::{Present, WrappingSpecification, WrappingTool, UseToolOnPresentMessage, PaperPatternRoll, GiftTagPenTool, ToyType},
 };
 
 pub const GROUP_PLAYER: Group = Group::GROUP_1;
@@ -198,8 +198,9 @@ pub fn spawn_workshop_tools_and_materials(
         ExternalImpulse::default(),
         SoftBodyLattice::new_cube(Vec3::new(0.3, 0.2, 0.4), 60.0, 6.0),
         Grabbable,
-        Present::default(),
-        WrappingSpecification::default(),
+        ToyType::WoodenTrain,
+        Present::new(ToyType::WoodenTrain),
+        WrappingSpecification::for_toy(ToyType::WoodenTrain),
         Name::new("WorkbenchToyPresent"),
     ));
     if let Some(def) = deformable {

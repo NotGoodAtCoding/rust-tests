@@ -41,6 +41,26 @@ pub enum ElfNpcState {
     OpeningPantryDoor,
     /// Contemplating reality at the mirror in thinking pose, or recruited elf listening in contemplation.
     Philosophizing,
+    /// Perched fast asleep atop the dynamic candle chandelier until knocked loose by an impulse.
+    PerchedAsleep,
+}
+
+/// Easter egg state for an elf perched asleep atop a dynamic candle chandelier.
+#[derive(Component, Debug, Clone)]
+pub struct ChandelierPerchedElf {
+    pub is_awakened: bool,
+    pub wake_impulse_threshold: f32,
+    pub chandelier_offset: Vec3,
+}
+
+impl Default for ChandelierPerchedElf {
+    fn default() -> Self {
+        Self {
+            is_awakened: false,
+            wake_impulse_threshold: 4.5,
+            chandelier_offset: Vec3::new(0.0, 0.25, 0.0),
+        }
+    }
 }
 
 /// Mischievous behavioral traits assigned to workshop elves.
@@ -607,12 +627,12 @@ pub fn setup_elf_assistants(
     let belt_boot_mat = wm.walnut_leather;
     let buckle_mat = wm.brass_buckle;
 
-    // Grounded spawn positions: Y = 0.45 touches the floor directly
+    // Grounded spawn positions for roaming elves, and chandelier mount for perched easter egg elf Sparky
     let elf_configs = [
         (
             1,
             "Elf Sparky",
-            Vec3::new(-1.5, 0.45, -2.5),
+            Vec3::new(0.0, 4.65, -4.5), // Perched fast asleep atop the North Dynamic Candle Chandelier
             vec![
                 Vec3::new(-1.5, 0.45, -2.5),
                 Vec3::new(1.5, 0.45, -2.5),
@@ -666,10 +686,16 @@ pub fn setup_elf_assistants(
             waypoints,
         );
         commands.entity(elf_e).insert(mischief);
+        if name == "Elf Sparky" {
+            commands.entity(elf_e).insert(ChandelierPerchedElf::default());
+        }
         commands.entity(elf_e).entry::<ElfAssistant>().and_modify(move |mut elf| {
             elf.mischief_trait = mischief;
             elf.current_node = start_node;
             elf.target_node = start_node;
+            if name == "Elf Sparky" {
+                elf.state = ElfNpcState::PerchedAsleep;
+            }
         });
     }
 }
@@ -2633,6 +2659,10 @@ pub fn elf_assistant_ai_system(
                     };
                 }
             }
+
+            ElfNpcState::PerchedAsleep => {
+                // Perched asleep atop chandelier: inert physics, no wandering
+            }
         }
     }
 
@@ -2933,6 +2963,36 @@ pub fn elf_ragdoll_limb_animation_system(
                 }
             }
 
+            ElfNpcState::PerchedAsleep => {
+                let breathe = (total_time * 1.5).sin() * 0.01;
+                match limb.limb_type {
+                    ElfLimbType::Torso => {
+                        limb_tf.translation = limb.rest_local_translation + Vec3::Y * breathe;
+                        limb_tf.rotation = Quat::from_rotation_x(0.25);
+                    }
+                    ElfLimbType::Head => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::from_rotation_x(0.38 + breathe * 2.0);
+                    }
+                    ElfLimbType::LeftArm => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::from_euler(EulerRot::XYZ, 0.4, 0.0, 0.2);
+                    }
+                    ElfLimbType::RightArm => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::from_euler(EulerRot::XYZ, 0.4, 0.0, -0.2);
+                    }
+                    ElfLimbType::LeftLeg | ElfLimbType::RightLeg => {
+                        limb_tf.translation = limb.rest_local_translation + Vec3::new(0.0, 0.08, 0.12);
+                        limb_tf.rotation = Quat::from_rotation_x(-1.4);
+                    }
+                    _ => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = limb.rest_local_rotation;
+                    }
+                }
+            }
+
             ElfNpcState::Recovering => {
                 let progress = (elf.recovery_timer / elf.recovery_duration).clamp(0.0, 1.0);
                 limb_tf.translation = limb.rest_local_translation;
@@ -2980,6 +3040,83 @@ pub fn debug_render_elf_nav_graph(
                     Color::srgb(0.9, 0.8, 0.2),
                 );
             }
+        }
+    }
+}
+
+/// Manages Elf Sparky perched asleep atop the dynamic candle chandelier until knocked loose by an impulse.
+pub fn chandelier_sparky_easter_egg_system(
+    mut q_sparky: Query<(
+        Entity,
+        &mut Transform,
+        &mut Velocity,
+        &mut ExternalImpulse,
+        &mut LockedAxes,
+        &mut ElfAssistant,
+        &mut ChandelierPerchedElf,
+    )>,
+    q_chandeliers: Query<(&Transform, &Velocity, Option<&ExternalImpulse>, Option<&crate::elf_game::workshop::room::CandleChandelier>), Without<ElfAssistant>>,
+) {
+    for (
+        _sparky_e,
+        mut sparky_tf,
+        mut sparky_vel,
+        mut sparky_impulse,
+        mut locked_axes,
+        mut elf,
+        mut perched,
+    ) in &mut q_sparky {
+        if perched.is_awakened {
+            continue;
+        }
+
+        // Find North Chandelier around Z = -4.5
+        let north_chandelier = q_chandeliers.iter().find(|(c_tf, _, _, c_opt)| {
+            c_opt.is_some() && (c_tf.translation.z - -4.5).abs() < 1.5 && (c_tf.translation.x).abs() < 1.5
+        }).or_else(|| {
+            q_chandeliers.iter().find(|(c_tf, _, _, _)| {
+                (c_tf.translation.z - -4.5).abs() < 1.5 && (c_tf.translation.x).abs() < 1.5
+            })
+        });
+
+        let mut trigger_awakening = false;
+
+        if let Some((c_tf, c_vel, c_impulse_opt, _)) = north_chandelier {
+            let chandelier_motion = c_vel.linear.length() + c_vel.angular.length() * 0.5;
+            let chandelier_impulse = c_impulse_opt.map(|i| i.impulse.length() + i.torque_impulse.length()).unwrap_or(0.0);
+            let sparky_motion = sparky_vel.linear.length();
+            let sparky_impulse_mag = sparky_impulse.impulse.length() + sparky_impulse.torque_impulse.length();
+
+            if chandelier_motion > 0.40
+                || chandelier_impulse > perched.wake_impulse_threshold
+                || sparky_motion > 0.6
+                || sparky_impulse_mag > perched.wake_impulse_threshold
+            {
+                trigger_awakening = true;
+            } else {
+                // Stay locked to the chandelier as it gently sways
+                let target_pos = c_tf.translation + perched.chandelier_offset;
+                sparky_tf.translation = target_pos;
+                sparky_tf.rotation = c_tf.rotation;
+                sparky_vel.linear = c_vel.linear;
+                sparky_vel.angular = c_vel.angular;
+            }
+        } else {
+            // Chandelier entity not present (e.g. standalone test)
+            let sparky_motion = sparky_vel.linear.length();
+            let sparky_impulse_mag = sparky_impulse.impulse.length() + sparky_impulse.torque_impulse.length();
+            if sparky_motion > 0.6 || sparky_impulse_mag > perched.wake_impulse_threshold {
+                trigger_awakening = true;
+            }
+        }
+
+        if trigger_awakening {
+            perched.is_awakened = true;
+            elf.state = ElfNpcState::RagdollTumble;
+            *locked_axes = LockedAxes::empty(); // Full 6-DOF dynamic ragdoll fall
+            sparky_impulse.impulse += Vec3::new(1.2, 1.8, -1.0) * 3.5;
+            sparky_impulse.torque_impulse += Vec3::new(2.5, 1.2, -2.0);
+            elf.tumble_timer = 0.0;
         }
     }
 }

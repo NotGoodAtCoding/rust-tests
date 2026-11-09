@@ -5103,12 +5103,20 @@ fn test_elf_grounded_floor_translation() {
 
     let mut elf_q = app.world_mut().query::<(&ElfAssistant, &Transform, &Collider)>();
     for (elf, tf, _collider) in elf_q.iter(app.world()) {
-        assert!(
-            (tf.translation.y - 0.45).abs() < 0.001,
-            "Elf {} root Y must be 0.45m, was {}",
-            elf.name,
-            tf.translation.y
-        );
+        if elf.name == "Elf Sparky" {
+            assert!(
+                (tf.translation.y - 4.65).abs() < 0.001,
+                "Elf Sparky perched on chandelier Y must be 4.65m, was {}",
+                tf.translation.y
+            );
+        } else {
+            assert!(
+                (tf.translation.y - 0.45).abs() < 0.001,
+                "Elf {} root Y must be 0.45m, was {}",
+                elf.name,
+                tf.translation.y
+            );
+        }
     }
 
     let mut limb_q = app.world_mut().query::<&ElfRagdollLimb>();
@@ -5121,6 +5129,95 @@ fn test_elf_grounded_floor_translation() {
             );
         }
     }
+}
+
+#[test]
+fn test_chandelier_sparky_easter_egg_unlock() {
+    use rust_tests::elf_game::physics_sandbox::{
+        ElfAssistant, ElfNpcState, ChandelierPerchedElf, setup_elf_assistants,
+        chandelier_sparky_easter_egg_system, elf_assistant_ai_system,
+    };
+    use rust_tests::elf_game::workshop::room::CandleChandelier;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.insert_resource(Assets::<Mesh>::default());
+    app.insert_resource(Assets::<StandardMaterial>::default());
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(16));
+    app.insert_resource(time);
+
+    // Spawn North Chandelier
+    let chandelier_e = app.world_mut().spawn((
+        CandleChandelier {
+            base_intensity: 480_000.0,
+            flicker_seed: 0.0,
+        },
+        Transform::from_xyz(0.0, 4.4, -4.5),
+        Velocity::zero(),
+        ExternalImpulse::default(),
+    )).id();
+
+    // Spawn elves including Sparky
+    app.add_systems(Startup, setup_elf_assistants);
+    app.add_systems(Update, (chandelier_sparky_easter_egg_system, elf_assistant_ai_system).chain());
+    app.update();
+
+    // Find Elf Sparky
+    let mut sparky_q = app.world_mut().query::<(Entity, &ElfAssistant, &Transform, &LockedAxes, &ChandelierPerchedElf)>();
+    let (sparky_e, sparky_elf, sparky_tf, sparky_locked, sparky_perched) = sparky_q
+        .iter(app.world())
+        .find(|(_, elf, _, _, _)| elf.name == "Elf Sparky")
+        .expect("Elf Sparky must be spawned");
+
+    assert_eq!(sparky_elf.state, ElfNpcState::PerchedAsleep);
+    assert!(!sparky_perched.is_awakened);
+    assert!((sparky_tf.translation.y - 4.65).abs() < 0.01);
+    assert_eq!(*sparky_locked, LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z);
+
+    // 1. While chandelier is undisturbed, Sparky remains perched asleep
+    app.update();
+    let sparky_elf = app.world().get::<ElfAssistant>(sparky_e).unwrap();
+    assert_eq!(sparky_elf.state, ElfNpcState::PerchedAsleep);
+
+    // 2. Strike chandelier with an impulse exceeding threshold (e.g. thrown present, tool, or BHOP tackle)
+    {
+        let mut c_impulse = app.world_mut().get_mut::<ExternalImpulse>(chandelier_e).unwrap();
+        c_impulse.impulse = Vec3::new(8.0, 4.0, 0.0);
+    }
+    app.update();
+
+    // 3. Verify Sparky awakens into 6-DOF dynamic ragdoll fall
+    let sparky_elf = app.world().get::<ElfAssistant>(sparky_e).unwrap();
+    let sparky_perched = app.world().get::<ChandelierPerchedElf>(sparky_e).unwrap();
+    let sparky_locked = app.world().get::<LockedAxes>(sparky_e).unwrap();
+    assert!(sparky_perched.is_awakened, "Sparky must be marked as awakened");
+    assert_eq!(sparky_elf.state, ElfNpcState::RagdollTumble, "Sparky must tumble in dynamic ragdoll");
+    assert_eq!(*sparky_locked, LockedAxes::empty(), "All rotation axes unlocked for 6-DOF tumble");
+
+    // 4. Simulate tumble completion and recovery to the roaming pool
+    {
+        let mut sparky_mut = app.world_mut().get_mut::<ElfAssistant>(sparky_e).unwrap();
+        sparky_mut.tumble_timer = sparky_mut.tumble_duration + 0.1;
+        let mut vel = app.world_mut().get_mut::<Velocity>(sparky_e).unwrap();
+        vel.linear = Vec3::new(0.1, 0.0, 0.1);
+    }
+    app.update();
+
+    let sparky_elf = app.world().get::<ElfAssistant>(sparky_e).unwrap();
+    assert_eq!(sparky_elf.state, ElfNpcState::Recovering, "Sparky transitions to Recovering");
+
+    // Advance recovery to completion
+    {
+        let mut sparky_mut = app.world_mut().get_mut::<ElfAssistant>(sparky_e).unwrap();
+        sparky_mut.recovery_timer = sparky_mut.recovery_duration + 0.1;
+    }
+    app.update();
+
+    let sparky_elf = app.world().get::<ElfAssistant>(sparky_e).unwrap();
+    let sparky_locked = app.world().get::<LockedAxes>(sparky_e).unwrap();
+    assert_eq!(sparky_elf.state, ElfNpcState::Wandering, "Sparky recovers into active roaming elf pool");
+    assert_eq!(*sparky_locked, LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z);
 }
 
 #[test]

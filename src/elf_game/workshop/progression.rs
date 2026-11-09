@@ -509,12 +509,14 @@ pub fn spawn_storage_wing_and_forbidden_workshop(
         })
     });
 
-    let plasma_chamber_mat = materials.as_mut().map(|m| {
-        m.add(StandardMaterial {
-            base_color: Color::srgba(0.65, 0.15, 0.95, 0.75),
-            emissive: LinearRgba::rgb(0.5, 0.1, 0.8),
-            alpha_mode: AlphaMode::Blend,
-            ..default()
+    let plasma_chamber_mat = workshop_mats.map(|wm| wm.plasma_chamber.clone()).or_else(|| {
+        materials.as_mut().map(|m| {
+            m.add(StandardMaterial {
+                base_color: PLASMA_CHAMBER_PURPLE,
+                emissive: LinearRgba::rgb(0.5, 0.1, 0.8),
+                alpha_mode: AlphaMode::Blend,
+                ..default()
+            })
         })
     });
 

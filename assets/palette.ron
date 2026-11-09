@@ -67,5 +67,18 @@
         cocoa_red: (r: 0.85, g: 0.15, b: 0.15, a: 1.0, hex: "#D92626", desc: "Festive cocoa mug ceramic"),
         hot_cocoa_liquid: (r: 0.22, g: 0.12, b: 0.08, a: 1.0, hex: "#381F14", desc: "Dark hot chocolate liquid"),
         moose_snack_oat: (r: 0.85, g: 0.55, b: 0.15, a: 1.0, hex: "#D98C26", desc: "Golden honey oat snack can food"),
+
+        // --- Stove, Oven & Propane System ---
+        gas_hose_yellow: (r: 0.95, g: 0.78, b: 0.12, a: 1.0, hex: "#F2C71F", desc: "Flexible rubber gas hose safety yellow"),
+        safety_red: (r: 0.85, g: 0.15, b: 0.12, a: 1.0, hex: "#D9261F", desc: "Gas anchor point quick-disconnect collar red"),
+        propane_cylinder_blue: (r: 0.20, g: 0.45, b: 0.85, a: 1.0, hex: "#3373D9", desc: "Portable propane cylinder steel blue"),
+        bulk_tank_white: (r: 0.88, g: 0.90, b: 0.92, a: 1.0, hex: "#E0E6EB", desc: "Industrial outdoor bulk propane tank coating"),
+        stove_glowing_ember: (r: 1.00, g: 0.35, b: 0.05, a: 1.0, hex: "#FF590D", desc: "Furnace firebox glowing coals"),
+        stove_cool_gray: (r: 0.12, g: 0.13, b: 0.14, a: 1.0, hex: "#1F2124", desc: "Furnace cold firebox viewport dark iron"),
+        stove_blue_flame: (r: 0.20, g: 0.50, b: 1.00, a: 0.85, hex: "#3380FFD9", desc: "Stove burner gas combustion flame"),
+
+        // --- Wearables & Tech Props ---
+        bunny_ear_pink: (r: 0.98, g: 0.65, b: 0.75, a: 1.0, hex: "#FAA6BF", desc: "Floppy bunny ear inner fabric pink"),
+        plasma_chamber_purple: (r: 0.65, g: 0.15, b: 0.95, a: 0.75, hex: "#A626F3BF", desc: "Progression tech plasma chamber glow"),
     ),
 )

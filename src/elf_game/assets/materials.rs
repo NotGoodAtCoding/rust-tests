@@ -75,6 +75,19 @@ pub struct WorkshopMaterials {
     pub moose_snack_oat: Handle<StandardMaterial>,
     pub snack_jar_glass: Handle<StandardMaterial>,
     pub send_button_red: Handle<StandardMaterial>,
+
+    // --- Stove, Oven & Propane System ---
+    pub gas_hose: Handle<StandardMaterial>,
+    pub gas_anchor_red: Handle<StandardMaterial>,
+    pub propane_tank_blue: Handle<StandardMaterial>,
+    pub propane_bulk_tank: Handle<StandardMaterial>,
+    pub stove_glowing_ember: Handle<StandardMaterial>,
+    pub stove_cool_dark_gray: Handle<StandardMaterial>,
+    pub stove_blue_flame: Handle<StandardMaterial>,
+
+    // --- Wearables & Tech Props ---
+    pub bunny_ear_pink: Handle<StandardMaterial>,
+    pub plasma_chamber: Handle<StandardMaterial>,
 }
 
 impl WorkshopMaterials {
@@ -404,6 +417,61 @@ impl WorkshopMaterials {
                 base_color: FESTIVE_RED,
                 emissive: LinearRgba::new(0.60, 0.05, 0.05, 1.0),
                 perceptual_roughness: 0.20,
+                ..default()
+            }),
+
+            // Stove, Oven & Propane System
+            gas_hose: materials.add(StandardMaterial {
+                base_color: GAS_HOSE_YELLOW,
+                perceptual_roughness: 0.50,
+                ..default()
+            }),
+            gas_anchor_red: materials.add(StandardMaterial {
+                base_color: SAFETY_RED,
+                perceptual_roughness: 0.40,
+                ..default()
+            }),
+            propane_tank_blue: materials.add(StandardMaterial {
+                base_color: PROPANE_CYLINDER_BLUE,
+                perceptual_roughness: 0.35,
+                metallic: 0.60,
+                ..default()
+            }),
+            propane_bulk_tank: materials.add(StandardMaterial {
+                base_color: BULK_TANK_WHITE,
+                perceptual_roughness: 0.40,
+                metallic: 0.50,
+                ..default()
+            }),
+            stove_glowing_ember: materials.add(StandardMaterial {
+                base_color: STOVE_GLOWING_EMBER,
+                emissive: LinearRgba::new(2.5, 0.65, 0.05, 1.0),
+                unlit: true,
+                ..default()
+            }),
+            stove_cool_dark_gray: materials.add(StandardMaterial {
+                base_color: STOVE_COOL_GRAY,
+                perceptual_roughness: 0.85,
+                ..default()
+            }),
+            stove_blue_flame: materials.add(StandardMaterial {
+                base_color: STOVE_BLUE_FLAME,
+                emissive: LinearRgba::new(0.4, 1.2, 3.0, 1.0),
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                ..default()
+            }),
+
+            // Wearables & Tech Props
+            bunny_ear_pink: materials.add(StandardMaterial {
+                base_color: BUNNY_EAR_PINK,
+                perceptual_roughness: 0.60,
+                ..default()
+            }),
+            plasma_chamber: materials.add(StandardMaterial {
+                base_color: PLASMA_CHAMBER_PURPLE,
+                emissive: LinearRgba::rgb(0.5, 0.1, 0.8),
+                alpha_mode: AlphaMode::Blend,
                 ..default()
             }),
         }

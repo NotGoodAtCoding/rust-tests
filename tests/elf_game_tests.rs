@@ -3528,6 +3528,8 @@ fn test_workshop_palette_constants_and_material_assets() {
     assert!(ron_contents.contains("festive_red"), "palette.ron must contain festive_red");
     assert!(ron_contents.contains("cabin_log"), "palette.ron must contain cabin_log");
     assert!(ron_contents.contains("moose_fur"), "palette.ron must contain moose_fur");
+    assert!(ron_contents.contains("gas_hose_yellow"), "palette.ron must contain gas_hose_yellow");
+    assert!(ron_contents.contains("propane_cylinder_blue"), "palette.ron must contain propane_cylinder_blue");
 
     // 3. Test App with AssetsPlugin and WorkshopMaterials initialization
     let mut app = App::new();
@@ -3542,6 +3544,7 @@ fn test_workshop_palette_constants_and_material_assets() {
         spawn_workshop_tools_and_materials,
         spawn_gas_pressure_gauge,
         spawn_diegetic_screens_and_signs,
+        rust_tests::elf_game::workshop::stove::spawn_oven_stove_and_propane_scene,
     ));
 
     // Run PreStartup (which runs init_workshop_materials) and Startup
@@ -3562,6 +3565,15 @@ fn test_workshop_palette_constants_and_material_assets() {
     assert!(materials.get(&wm.toy_blue).is_some(), "Toy blue material must exist");
     assert!(materials.get(&wm.vacuum_tube_glass).is_some(), "Vacuum tube glass material must exist");
     assert!(materials.get(&wm.tractor_beam).is_some(), "Tractor beam material must exist");
+    assert!(materials.get(&wm.gas_hose).is_some(), "Gas hose material must exist");
+    assert!(materials.get(&wm.gas_anchor_red).is_some(), "Gas anchor red material must exist");
+    assert!(materials.get(&wm.propane_tank_blue).is_some(), "Propane tank blue material must exist");
+    assert!(materials.get(&wm.propane_bulk_tank).is_some(), "Propane bulk tank material must exist");
+    assert!(materials.get(&wm.stove_glowing_ember).is_some(), "Stove glowing ember material must exist");
+    assert!(materials.get(&wm.stove_cool_dark_gray).is_some(), "Stove cool dark gray material must exist");
+    assert!(materials.get(&wm.stove_blue_flame).is_some(), "Stove blue flame material must exist");
+    assert!(materials.get(&wm.bunny_ear_pink).is_some(), "Bunny ear pink material must exist");
+    assert!(materials.get(&wm.plasma_chamber).is_some(), "Plasma chamber material must exist");
 
     // Verify entities were successfully spawned using WorkshopMaterials
     let mut entity_count = 0;
@@ -3569,6 +3581,79 @@ fn test_workshop_palette_constants_and_material_assets() {
         entity_count += 1;
     }
     assert!(entity_count > 20, "Spawning systems with WorkshopMaterials must instantiate world entities (got {})", entity_count);
+}
+
+#[test]
+fn test_stove_and_appliance_materials_defined_in_assets_materials_decoupled() {
+    use rust_tests::elf_game::{
+        assets::{palette::*, AssetsPlugin, WorkshopMaterials},
+        player::bunny_ears::spawn_bunny_ears_item,
+        workshop::stove::{
+            spawn_oven_stove_and_propane_scene, appliance_visual_indicators_system,
+            ApplianceVisualMaterials,
+        },
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_plugins(AssetsPlugin);
+
+    // Run PreStartup to populate WorkshopMaterials
+    app.update();
+
+    let wm = app.world().resource::<WorkshopMaterials>().clone();
+
+    // Verify palette constants
+    assert_eq!(GAS_HOSE_YELLOW, Color::srgb(0.95, 0.78, 0.12));
+    assert_eq!(SAFETY_RED, Color::srgb(0.85, 0.15, 0.12));
+    assert_eq!(PROPANE_CYLINDER_BLUE, Color::srgb(0.20, 0.45, 0.85));
+    assert_eq!(BULK_TANK_WHITE, Color::srgb(0.88, 0.90, 0.92));
+    assert_eq!(STOVE_GLOWING_EMBER, Color::srgb(1.0, 0.35, 0.05));
+    assert_eq!(STOVE_COOL_GRAY, Color::srgb(0.12, 0.13, 0.14));
+    assert_eq!(STOVE_BLUE_FLAME, Color::srgba(0.2, 0.5, 1.0, 0.85));
+    assert_eq!(BUNNY_EAR_PINK, Color::srgb(0.98, 0.65, 0.75));
+    assert_eq!(PLASMA_CHAMBER_PURPLE, Color::srgba(0.65, 0.15, 0.95, 0.75));
+
+    // Run stove scene spawn system
+    let mut schedule = Schedule::default();
+    schedule.add_systems(spawn_oven_stove_and_propane_scene);
+    schedule.run(app.world_mut());
+
+    // Verify ApplianceVisualMaterials resource was registered with handles from WorkshopMaterials
+    let appliance_mats = app.world().get_resource::<ApplianceVisualMaterials>();
+    assert!(appliance_mats.is_some(), "ApplianceVisualMaterials must be inserted");
+    let appliance_mats = appliance_mats.unwrap();
+    assert_eq!(appliance_mats.glowing_ember, wm.stove_glowing_ember);
+    assert_eq!(appliance_mats.cool_dark_gray, wm.stove_cool_dark_gray);
+    assert_eq!(appliance_mats.blue_flame, wm.stove_blue_flame);
+
+    // Verify bunny ears item spawning also uses centralized bunny_ear_pink
+    let mut ear_app = App::new();
+    ear_app.init_resource::<Assets<Mesh>>();
+    ear_app.init_resource::<Assets<StandardMaterial>>();
+    ear_app.insert_resource(wm.clone());
+    ear_app.add_systems(
+        Startup,
+        |mut commands: Commands,
+         mut meshes: ResMut<Assets<Mesh>>,
+         mut materials: ResMut<Assets<StandardMaterial>>,
+         wm: Res<WorkshopMaterials>| {
+            spawn_bunny_ears_item(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                Some(&wm),
+                Vec3::ZERO,
+            );
+        },
+    );
+    ear_app.update();
+
+    // Verify appliance visual indicators system can run using WorkshopMaterials directly without panic
+    let mut visual_schedule = Schedule::default();
+    visual_schedule.add_systems(appliance_visual_indicators_system);
+    visual_schedule.run(app.world_mut());
 }
 
 #[test]

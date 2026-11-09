@@ -4,7 +4,7 @@ use bevy::{
 };
 use bevy_rapier3d::prelude::*;
 use crate::elf_game::{
-    assets::WorkshopMaterials,
+    assets::{palette::*, WorkshopMaterials},
     player::{
         controller::{ElfPlayer, ViewModelRoot},
         hands::Grabbable,
@@ -67,21 +67,23 @@ pub fn spawn_bunny_ears_item(
 ) -> Entity {
     let white_mat = wm.map(|w| w.fluffy_white.clone()).unwrap_or_else(|| {
         materials.add(StandardMaterial {
-            base_color: Color::srgb(0.96, 0.96, 0.98),
+            base_color: SNOW_WHITE,
             perceptual_roughness: 0.85,
             ..default()
         })
     });
 
-    let pink_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.98, 0.65, 0.75),
-        perceptual_roughness: 0.60,
-        ..default()
+    let pink_mat = wm.map(|w| w.bunny_ear_pink.clone()).unwrap_or_else(|| {
+        materials.add(StandardMaterial {
+            base_color: BUNNY_EAR_PINK,
+            perceptual_roughness: 0.60,
+            ..default()
+        })
     });
 
     let headband_mat = wm.map(|w| w.pine_green.clone()).unwrap_or_else(|| {
         materials.add(StandardMaterial {
-            base_color: Color::srgb(0.12, 0.42, 0.22),
+            base_color: PINE_GREEN,
             perceptual_roughness: 0.70,
             ..default()
         })
@@ -157,21 +159,23 @@ pub fn spawn_viewmodel_bunny_ears(
 ) -> Entity {
     let white_mat = wm.map(|w| w.fluffy_white.clone()).unwrap_or_else(|| {
         materials.add(StandardMaterial {
-            base_color: Color::srgb(0.96, 0.96, 0.98),
+            base_color: SNOW_WHITE,
             perceptual_roughness: 0.85,
             ..default()
         })
     });
 
-    let pink_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.98, 0.65, 0.75),
-        perceptual_roughness: 0.60,
-        ..default()
+    let pink_mat = wm.map(|w| w.bunny_ear_pink.clone()).unwrap_or_else(|| {
+        materials.add(StandardMaterial {
+            base_color: BUNNY_EAR_PINK,
+            perceptual_roughness: 0.60,
+            ..default()
+        })
     });
 
     let headband_mat = wm.map(|w| w.pine_green.clone()).unwrap_or_else(|| {
         materials.add(StandardMaterial {
-            base_color: Color::srgb(0.12, 0.42, 0.22),
+            base_color: PINE_GREEN,
             perceptual_roughness: 0.70,
             ..default()
         })

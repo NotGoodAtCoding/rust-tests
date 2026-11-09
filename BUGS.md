@@ -5,14 +5,14 @@ ACTIVE:
 
 Move the Pantry to be inside the main cabin room as a subroom, and keep the door. The back wall of the cabin should have different rooms for the Pantry, and at least 2 more unused rooms. There should be a staircase to get to a mezzanine area above these rooms. Make the staircase have a smooth collision ramp for the player so that they ascend smoothly, but keep the stairs as the collision for objects that are not the player or elves. The mezzanine should have a wood railing and wood plank floors. Move the Hat Closet to be up in the mezzanine and turn it into a Hat Rack, which should spawn one random hat on it. Add a Mirror by the Hat Stand. If the hat has been taken off the rack and the player is not looking and not holding a hat, spawn a new random hat on the rack.
 
-Cleanup: Colors and materials should be defined in assets/materials instead of in the file where behavior is defined so that the files do not get too cluttered. This follows the limited color palette Principle under Artistic Direction. Move material definitions from stove.rs to the assets/materials.rs file, and audit other files for extra material definitions.
-
 The lighting from the candles is flickering. This may be just due to debug fastbuild in cargo rather than a full binary build.
 
 Feature: Propane tank fixes: Make the outside propane receptacles a platform with the AnchorPoint function with an activation area that locks the propane tank in a specific fixed place until the player interacts with it. The platform near the house supplies the stove. The platform near the outside larger propane main tank refills the smaller propane tanks. The Stove inside should be able to be turned off and on separately from the gas supply. While off AND connected, propane is not consumed. If disconnected, then propane is consumed since it's leaking. 
 
 
 DONE:
+
+Cleanup: Colors and materials should be defined in assets/materials instead of in the file where behavior is defined so that the files do not get too cluttered. This follows the limited color palette Principle under Artistic Direction. Move material definitions from stove.rs to the assets/materials.rs file, and audit other files for extra material definitions.
 
 Idea: Elf Mischief behavior: Philosopher. If an elf gains this Mischief trait, it will go to the Mirror Node and stay there. In order to get the elf back to work, the player needs to navigate through a deep dialogue tree. If left alone, eventually it will start recruiting other elves which will make them navigate to the Philosopher elf and then stay there with a "thinking" pose. This can be granted by putting on the Philosopher Pipe, which is a hat that makes it look like the elf has a tobacco pipe, with smoke particle effects and a soft ember glow that slowly fluctuates from the pipe.
 

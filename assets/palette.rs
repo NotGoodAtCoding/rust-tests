@@ -74,3 +74,17 @@ pub const COCOA_CERAMIC_RED: Color = Color::srgb(0.85, 0.15, 0.15);
 pub const HOT_COCOA_LIQUID: Color = Color::srgb(0.22, 0.12, 0.08);
 pub const MOOSE_SNACK_GOLDEN_OAT: Color = Color::srgb(0.85, 0.55, 0.15);
 pub const SNACK_JAR_GLASS: Color = Color::srgba(0.85, 0.94, 1.00, 0.45);
+
+// --- Stove, Oven & Propane System ---
+pub const GAS_HOSE_YELLOW: Color = Color::srgb(0.95, 0.78, 0.12);
+pub const SAFETY_RED: Color = Color::srgb(0.85, 0.15, 0.12);
+pub const PROPANE_CYLINDER_BLUE: Color = Color::srgb(0.20, 0.45, 0.85);
+pub const BULK_TANK_WHITE: Color = Color::srgb(0.88, 0.90, 0.92);
+pub const STOVE_GLOWING_EMBER: Color = Color::srgb(1.0, 0.35, 0.05);
+pub const STOVE_COOL_GRAY: Color = Color::srgb(0.12, 0.13, 0.14);
+pub const STOVE_BLUE_FLAME: Color = Color::srgba(0.2, 0.5, 1.0, 0.85);
+
+// --- Wearables & Progression Tech ---
+pub const BUNNY_EAR_PINK: Color = Color::srgb(0.98, 0.65, 0.75);
+pub const PLASMA_CHAMBER_PURPLE: Color = Color::srgba(0.65, 0.15, 0.95, 0.75);
+

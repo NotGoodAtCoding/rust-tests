@@ -240,58 +240,14 @@ pub fn spawn_oven_stove_and_propane_scene(
     let dark_mat = wm.industrial_dark;
     let warning_mat = wm.warning_lantern;
 
-    // Safety yellow material for flexible gas hose
-    let yellow_hose_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.96, 0.82, 0.10),
-        perceptual_roughness: 0.5,
-        metallic: 0.1,
-        ..default()
-    });
-
-    // Stove gas anchor fitting red material
-    let red_anchor_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.88, 0.12, 0.14),
-        metallic: 0.35,
-        perceptual_roughness: 0.4,
-        ..default()
-    });
-
-    // Propane tank blue/steel material
-    let propane_blue_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.18, 0.42, 0.75),
-        metallic: 0.65,
-        perceptual_roughness: 0.35,
-        ..default()
-    });
-
-    // Bulk propane tank white industrial coating
-    let bulk_tank_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.92, 0.94, 0.95),
-        metallic: 0.4,
-        perceptual_roughness: 0.3,
-        ..default()
-    });
-
-    // Appliance visual indicator materials: glowing ember vs cool dark gray vs blue flame
-    let glowing_ember_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.65, 0.20),
-        emissive: LinearRgba::new(4.5, 2.2, 0.4, 1.0),
-        perceptual_roughness: 0.2,
-        ..default()
-    });
-    let cool_dark_gray_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.18, 0.20, 0.22),
-        emissive: LinearRgba::BLACK,
-        perceptual_roughness: 0.8,
-        ..default()
-    });
-    let blue_flame_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.20, 0.65, 1.0, 0.85),
-        emissive: LinearRgba::new(0.5, 2.5, 7.0, 1.0),
-        alpha_mode: AlphaMode::Blend,
-        perceptual_roughness: 0.1,
-        ..default()
-    });
+    // Centralized workshop materials for gas apparatus & indicators from WorkshopMaterials
+    let yellow_hose_mat = wm.gas_hose.clone();
+    let red_anchor_mat = wm.gas_anchor_red.clone();
+    let propane_blue_mat = wm.propane_tank_blue.clone();
+    let bulk_tank_mat = wm.propane_bulk_tank.clone();
+    let glowing_ember_mat = wm.stove_glowing_ember.clone();
+    let cool_dark_gray_mat = wm.stove_cool_dark_gray.clone();
+    let blue_flame_mat = wm.stove_blue_flame.clone();
 
     commands.insert_resource(ApplianceVisualMaterials {
         glowing_ember: glowing_ember_mat.clone(),
@@ -1073,6 +1029,7 @@ pub fn appliance_visual_indicators_system(
     gas_line: Option<Res<WorkshopGasLine>>,
     q_hose: Query<&GasHose>,
     appliance_mats: Option<Res<ApplianceVisualMaterials>>,
+    workshop_mats: Option<Res<WorkshopMaterials>>,
     mut q_burner_flames: Query<&mut Visibility, With<StoveBurnerFlame>>,
     mut q_furnace_window: Query<&mut MeshMaterial3d<StandardMaterial>, With<FurnaceFireboxWindow>>,
     mut q_furnace_light: Query<&mut PointLight, With<FurnaceFireGlowLight>>,
@@ -1084,7 +1041,11 @@ pub fn appliance_visual_indicators_system(
     let has_gas = gas_line.as_ref().map(|g| g.pressure_psi > 0.0).unwrap_or(true);
     let stove_active = hose.attached_to == HoseAttachment::Stove && has_gas;
 
-    let Some(mats) = appliance_mats else {
+    let (glowing_ember_mat, cool_dark_gray_mat) = if let Some(ref mats) = appliance_mats {
+        (mats.glowing_ember.clone(), mats.cool_dark_gray.clone())
+    } else if let Some(ref wm) = workshop_mats {
+        (wm.stove_glowing_ember.clone(), wm.stove_cool_dark_gray.clone())
+    } else {
         return;
     };
 
@@ -1100,9 +1061,9 @@ pub fn appliance_visual_indicators_system(
     // 2. Furnace Firebox Window: Glows if attached, cool dark gray if not
     for mut mat in &mut q_furnace_window {
         *mat = if stove_active {
-            MeshMaterial3d(mats.glowing_ember.clone())
+            MeshMaterial3d(glowing_ember_mat.clone())
         } else {
-            MeshMaterial3d(mats.cool_dark_gray.clone())
+            MeshMaterial3d(cool_dark_gray_mat.clone())
         };
     }
 

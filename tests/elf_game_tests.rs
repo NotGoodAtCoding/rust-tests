@@ -8198,6 +8198,268 @@ fn test_propane_tank_flow_consumption_and_refill() {
 }
 
 #[test]
+fn test_propane_receptacle_platforms_anchor_activation_and_refill() {
+    use rust_tests::elf_game::workshop::stove::{
+        PropanePlatformKind, PropaneReceptaclePlatform, PropaneTank,
+        propane_platform_activation_area_system, propane_tank_refill_and_holder_system,
+    };
+    use rust_tests::elf_game::assets::objects::{AnchorPoint, LockedInAnchor};
+    use rust_tests::elf_game::player::controller::FirstPersonCamera;
+    use rust_tests::elf_game::player::hands::HeldByPlayer;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.add_systems(
+        Update,
+        (
+            propane_platform_activation_area_system,
+            propane_tank_refill_and_holder_system,
+        ),
+    );
+
+    // 1. House platform
+    let house_pos = Vec3::new(-8.3, 0.45, -13.55);
+    let house_platform_e = app.world_mut().spawn((
+        PropaneReceptaclePlatform::new(PropanePlatformKind::HouseSupply).with_activation_radius(1.2),
+        AnchorPoint::new("propane_tank").with_offset(Vec3::new(0.0, 0.45, 0.0)),
+        Transform::from_translation(house_pos),
+        GlobalTransform::from_translation(house_pos),
+    )).id();
+
+    // 2. Refill platform near outdoor main tank
+    let refill_pos = Vec3::new(-16.0, 0.15, -23.5);
+    let refill_platform_e = app.world_mut().spawn((
+        PropaneReceptaclePlatform::new(PropanePlatformKind::MainTankRefill).with_activation_radius(1.4),
+        AnchorPoint::new("propane_tank").with_offset(Vec3::new(0.0, 0.45, 0.0)),
+        Transform::from_translation(refill_pos),
+        GlobalTransform::from_translation(refill_pos),
+    )).id();
+
+    // Spawn a tank near the house platform activation area (0.5m away)
+    let tank1_e = app.world_mut().spawn((
+        PropaneTank {
+            fuel_amount: 100.0,
+            capacity: 100.0,
+            is_connected: false,
+        },
+        Transform::from_xyz(house_pos.x + 0.5, house_pos.y, house_pos.z),
+        RigidBody::Dynamic,
+        Velocity::zero(),
+    )).id();
+
+    // Spawn a depleted tank near the refill platform activation area (0.6m away)
+    let tank2_e = app.world_mut().spawn((
+        PropaneTank {
+            fuel_amount: 15.0,
+            capacity: 100.0,
+            is_connected: false,
+        },
+        Transform::from_xyz(refill_pos.x + 0.6, refill_pos.y, refill_pos.z),
+        RigidBody::Dynamic,
+        Velocity::zero(),
+    )).id();
+
+    app.update();
+
+    // Tank 1 should be auto-locked into the house platform
+    {
+        let platform = app.world().get::<PropaneReceptaclePlatform>(house_platform_e).unwrap();
+        assert_eq!(platform.locked_tank, Some(tank1_e), "Tank 1 must be locked into house platform");
+        let tank = app.world().get::<PropaneTank>(tank1_e).unwrap();
+        assert!(tank.is_connected, "Tank in house platform must be connected");
+        let locked = app.world().get::<LockedInAnchor>(tank1_e);
+        assert!(locked.is_some(), "Tank must have LockedInAnchor component");
+        assert_eq!(locked.unwrap().anchor, house_platform_e);
+        let rb = app.world().get::<RigidBody>(tank1_e).unwrap();
+        assert_eq!(*rb, RigidBody::Fixed, "Locked tank must be RigidBody::Fixed");
+        let tf = app.world().get::<Transform>(tank1_e).unwrap();
+        assert_eq!(tf.translation, house_pos + Vec3::new(0.0, 0.45, 0.0));
+    }
+
+    // Tank 2 should be auto-locked into refill platform and REFILLED to capacity
+    {
+        let platform = app.world().get::<PropaneReceptaclePlatform>(refill_platform_e).unwrap();
+        assert_eq!(platform.locked_tank, Some(tank2_e), "Tank 2 must be locked into refill platform");
+        let tank = app.world().get::<PropaneTank>(tank2_e).unwrap();
+        assert_eq!(tank.fuel_amount, 100.0, "Refill platform must refill smaller propane tank to capacity");
+        let locked = app.world().get::<LockedInAnchor>(tank2_e);
+        assert!(locked.is_some());
+        assert_eq!(locked.unwrap().anchor, refill_platform_e);
+    }
+
+    // 3. Player picks up tank 1 -> HeldByPlayer releases it from anchor
+    app.world_mut().entity_mut(tank1_e).insert(HeldByPlayer);
+    app.update();
+
+    {
+        let platform = app.world().get::<PropaneReceptaclePlatform>(house_platform_e).unwrap();
+        assert_eq!(platform.locked_tank, None, "Picking up tank must release platform lock");
+        let tank = app.world().get::<PropaneTank>(tank1_e).unwrap();
+        assert!(!tank.is_connected, "Held tank is no longer connected to house supply");
+        let locked = app.world().get::<LockedInAnchor>(tank1_e);
+        assert!(locked.is_none(), "LockedInAnchor must be removed when held by player");
+    }
+
+    // 4. Test player interaction unlocking tank 2 via KeyE
+    app.world_mut().spawn((
+        FirstPersonCamera,
+        GlobalTransform::from(Transform::from_translation(refill_pos + Vec3::new(0.0, 0.5, 1.5))
+            .looking_at(refill_pos, Vec3::Y)),
+    ));
+    let mut key_inputs = ButtonInput::<KeyCode>::default();
+    key_inputs.press(KeyCode::KeyE);
+    app.insert_resource(key_inputs);
+    app.insert_resource(ButtonInput::<MouseButton>::default());
+
+    app.update();
+
+    {
+        let platform = app.world().get::<PropaneReceptaclePlatform>(refill_platform_e).unwrap();
+        assert_eq!(platform.locked_tank, None, "Interacting with platform must release locked tank");
+        let locked = app.world().get::<LockedInAnchor>(tank2_e);
+        assert!(locked.is_none());
+        let rb = app.world().get::<RigidBody>(tank2_e).unwrap();
+        assert_eq!(*rb, RigidBody::Dynamic, "Released tank must revert to Dynamic");
+    }
+}
+
+#[test]
+fn test_stove_on_off_independent_and_propane_consumption_rules() {
+    use rust_tests::elf_game::workshop::stove::{
+        GasFurnaceStove, GasHose, HoseAttachment, PropanePlatformKind,
+        PropaneReceptaclePlatform, PropaneTank, WorkshopGasLine, WorkshopTemperature,
+        propane_gas_flow_system, stove_interaction_system, workshop_temperature_system,
+    };
+    use rust_tests::elf_game::assets::objects::AnchorPoint;
+    use rust_tests::elf_game::player::controller::FirstPersonCamera;
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.insert_resource(WorkshopGasLine {
+        pressure_psi: 100.0,
+        burn_rate: 10.0,
+        leak_vent_rate: 30.0,
+    });
+    app.insert_resource(WorkshopTemperature {
+        current: 10.0,
+        target: 20.0,
+        heating_rate: 5.0,
+        cooling_rate: 2.0,
+        is_frozen: false,
+    });
+
+    app.add_systems(
+        Update,
+        (
+            stove_interaction_system,
+            propane_gas_flow_system,
+            workshop_temperature_system,
+        ),
+    );
+
+    // Setup connected tank on house platform
+    let house_pos = Vec3::new(-8.3, 0.45, -13.55);
+    let tank_e = app.world_mut().spawn(PropaneTank {
+        fuel_amount: 100.0,
+        capacity: 100.0,
+        is_connected: true,
+    }).id();
+
+    app.world_mut().spawn((
+        PropaneReceptaclePlatform {
+            kind: PropanePlatformKind::HouseSupply,
+            activation_radius: 1.2,
+            locked_tank: Some(tank_e),
+        },
+        AnchorPoint::new("propane_tank"),
+        Transform::from_translation(house_pos),
+        GlobalTransform::from_translation(house_pos),
+    ));
+
+    // Gas hose connected to stove
+    let hose_e = app.world_mut().spawn(GasHose {
+        attached_to: HoseAttachment::Stove,
+        ..default()
+    }).id();
+
+    // Stove inside starts OFF
+    let stove_pos = Vec3::new(-6.5, 0.0, -11.4);
+    let stove_e = app.world_mut().spawn((
+        GasFurnaceStove {
+            is_on: false, // Stove is OFF
+            is_lit: false,
+            heat_output: 1.5,
+            is_heated: false,
+            internal_temp: 20.0,
+        },
+        Transform::from_translation(stove_pos),
+        GlobalTransform::from_translation(stove_pos),
+    )).id();
+
+    // RULE 1: While off AND connected, propane is not consumed!
+    app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(2));
+    app.update();
+
+    let tank_fuel = app.world().get::<PropaneTank>(tank_e).unwrap().fuel_amount;
+    assert_eq!(
+        tank_fuel, 100.0,
+        "Propane must NOT be consumed while stove is OFF and connected"
+    );
+    let stove = app.world().get::<GasFurnaceStove>(stove_e).unwrap();
+    assert!(!stove.is_lit, "Stove must not be lit while is_on is false");
+
+    // RULE 2: Turn stove ON -> propane is consumed and stove heats workshop!
+    {
+        let mut s = app.world_mut().get_mut::<GasFurnaceStove>(stove_e).unwrap();
+        s.is_on = true;
+    }
+    app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(1));
+    app.update();
+
+    let fuel_after_on = app.world().get::<PropaneTank>(tank_e).unwrap().fuel_amount;
+    assert!(
+        (fuel_after_on - 90.0).abs() < 0.1,
+        "Propane must be consumed at burn_rate when stove is ON (expected 90.0, got {})",
+        fuel_after_on
+    );
+    let stove = app.world().get::<GasFurnaceStove>(stove_e).unwrap();
+    assert!(stove.is_lit, "Stove must be lit when ON with active gas supply");
+    let temp = app.world().resource::<WorkshopTemperature>().current;
+    assert!(temp > 10.0, "Active burning stove must warm the workshop");
+
+    // RULE 3: If disconnected (hose detached to Neither), propane is consumed since it's leaking!
+    app.world_mut().get_mut::<GasHose>(hose_e).unwrap().attached_to = HoseAttachment::Neither;
+    app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(1));
+    app.update();
+
+    let fuel_after_leak = app.world().get::<PropaneTank>(tank_e).unwrap().fuel_amount;
+    assert!(
+        fuel_after_leak < fuel_after_on - 25.0,
+        "Propane must be consumed rapidly when disconnected because it's leaking (got {})",
+        fuel_after_leak
+    );
+    let hose = app.world().get::<GasHose>(hose_e).unwrap();
+    assert!(hose.is_venting_gas, "Hose must vent gas when disconnected");
+
+    // RULE 4: Test toggling stove on/off with player interaction
+    app.world_mut().spawn((
+        FirstPersonCamera,
+        GlobalTransform::from(Transform::from_translation(stove_pos + Vec3::new(0.0, 0.5, 1.5))
+            .looking_at(stove_pos, Vec3::Y)),
+    ));
+    let mut key_inputs = ButtonInput::<KeyCode>::default();
+    key_inputs.press(KeyCode::KeyE);
+    app.insert_resource(key_inputs);
+    app.insert_resource(ButtonInput::<MouseButton>::default());
+
+    app.update();
+
+    let stove = app.world().get::<GasFurnaceStove>(stove_e).unwrap();
+    assert!(!stove.is_on, "Player interaction must toggle stove is_on from true to false");
+}
+
+#[test]
 fn test_climbable_windows_geometry() {
     use rust_tests::elf_game::workshop::room::setup_workshop_scene;
     use rust_tests::elf_game::assets::AssetsPlugin;

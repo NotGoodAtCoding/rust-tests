@@ -2,8 +2,10 @@ use bevy::prelude::*;
 use bevy::ecs::message::Message;
 use bevy_rapier3d::prelude::*;
 use crate::elf_game::{
-    assets::WorkshopMaterials, physics_sandbox::{ElfAssistant, ElfNpcState}, player::{
-        ElfMovement, controller::{ElfPlayer, FirstPersonCamera}, hands::Grabbable,
+    assets::{WorkshopMaterials, objects::{AnchorPoint, AnchorTrait, LockedInAnchor}},
+    physics_sandbox::{ElfAssistant, ElfNpcState},
+    player::{
+        ElfMovement, controller::{ElfPlayer, FirstPersonCamera}, hands::{Grabbable, HeldByPlayer},
     },
 };
 
@@ -151,8 +153,10 @@ pub struct ApplianceVisualMaterials {
 
 /// Gas-burning furnace stove heating the workshop, keeping temperatures above freezing,
 /// and providing baking/cooking capabilities.
+/// Can be turned on and off independently of the gas supply.
 #[derive(Component, Debug, Clone)]
 pub struct GasFurnaceStove {
+    pub is_on: bool,
     pub is_lit: bool,
     pub heat_output: f32,
     pub is_heated: bool,
@@ -162,11 +166,45 @@ pub struct GasFurnaceStove {
 impl Default for GasFurnaceStove {
     fn default() -> Self {
         Self {
+            is_on: true,
             is_lit: true,
             heat_output: 1.5,
             is_heated: true,
             internal_temp: 20.0,
         }
+    }
+}
+
+/// Identifies the functional purpose of a propane receptacle platform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropanePlatformKind {
+    /// Platform mounted near the exterior house wall that connects into and supplies the workshop gas line.
+    HouseSupply,
+    /// Platform located in the snow yard near the large bulk propane tank that refills tanks.
+    MainTankRefill,
+}
+
+/// Outdoor propane receptacle platform equipped with an AnchorPoint and an activation area.
+/// Locks a propane tank in a specific fixed place until the player interacts with it.
+#[derive(Component, Debug, Clone)]
+pub struct PropaneReceptaclePlatform {
+    pub kind: PropanePlatformKind,
+    pub activation_radius: f32,
+    pub locked_tank: Option<Entity>,
+}
+
+impl PropaneReceptaclePlatform {
+    pub fn new(kind: PropanePlatformKind) -> Self {
+        Self {
+            kind,
+            activation_radius: 1.2,
+            locked_tank: None,
+        }
+    }
+
+    pub fn with_activation_radius(mut self, radius: f32) -> Self {
+        self.activation_radius = radius;
+        self
     }
 }
 
@@ -264,6 +302,7 @@ pub fn spawn_oven_stove_and_propane_scene(
     commands
         .spawn((
             GasFurnaceStove {
+                is_on: true,
                 is_lit: true,
                 heat_output: 1.5,
                 is_heated: true,
@@ -453,11 +492,11 @@ pub fn spawn_oven_stove_and_propane_scene(
     ));
 
     // -------------------------------------------------------------------------
-    // 4. Outside Propane Tank Holder (Exterior wall outside window: X = -8.3, Z = -13.55)
+    // 4. Outside Propane Tank Platforms (House Supply Platform & Main Tank Refill Platform)
     // -------------------------------------------------------------------------
     let holder_pos = Vec3::new(-8.3, 0.45, -13.55);
 
-    // Active Connected Propane Tank seated inside the holder
+    // Active Connected Propane Tank seated inside the house supply platform
     let connected_tank_e = commands
         .spawn((
             PropaneTank {
@@ -465,28 +504,42 @@ pub fn spawn_oven_stove_and_propane_scene(
                 capacity: 100.0,
                 is_connected: true,
             },
-            Transform::from_xyz(holder_pos.x, holder_pos.y + 0.15, holder_pos.z + 0.05),
+            AnchorTrait::new("propane_tank"),
+            Transform::from_xyz(holder_pos.x, holder_pos.y + 0.45, holder_pos.z),
             Mesh3d(meshes.add(Cylinder::new(0.20, 0.65))),
             MeshMaterial3d(propane_blue_mat.clone()),
             Collider::cylinder(0.325, 0.20),
-            RigidBody::Dynamic,
+            RigidBody::Fixed,
             Grabbable,
             Name::new("ActivePropaneTank"),
         ))
         .id();
 
-    // Holder cradle frame mounted to exterior wall with active tank connected
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.65, 0.85, 0.55))),
-        MeshMaterial3d(dark_mat.clone()),
-        Transform::from_translation(holder_pos),
-        Collider::cuboid(0.32, 0.42, 0.27),
-        RigidBody::Fixed,
-        PropaneTankHolder {
-            connected_tank: Some(connected_tank_e),
-        },
-        Name::new("PropaneTankHolderCradle"),
-    ));
+    // House platform cradle frame mounted to exterior wall with active tank connected
+    let house_platform_e = commands
+        .spawn((
+            PropaneReceptaclePlatform {
+                kind: PropanePlatformKind::HouseSupply,
+                activation_radius: 1.2,
+                locked_tank: Some(connected_tank_e),
+            },
+            AnchorPoint::new("propane_tank")
+                .with_offset(Vec3::new(0.0, 0.45, 0.0))
+                .with_radius(2.5),
+            Mesh3d(meshes.add(Cuboid::new(0.85, 0.25, 0.85))),
+            MeshMaterial3d(dark_mat.clone()),
+            Transform::from_translation(holder_pos),
+            GlobalTransform::from_translation(holder_pos),
+            Collider::cuboid(0.425, 0.125, 0.425),
+            RigidBody::Fixed,
+            PropaneTankHolder {
+                connected_tank: Some(connected_tank_e),
+            },
+            Name::new("HousePropaneReceptaclePlatform"),
+        ))
+        .id();
+
+    commands.entity(connected_tank_e).insert(LockedInAnchor { anchor: house_platform_e });
 
     // Spare portable propane tank resting in the snow outside
     commands.spawn((
@@ -495,6 +548,7 @@ pub fn spawn_oven_stove_and_propane_scene(
             capacity: 100.0,
             is_connected: false,
         },
+        AnchorTrait::new("propane_tank"),
         Transform::from_xyz(-10.2, 0.05, -15.2),
         Mesh3d(meshes.add(Cylinder::new(0.20, 0.65))),
         MeshMaterial3d(propane_blue_mat.clone()),
@@ -502,6 +556,26 @@ pub fn spawn_oven_stove_and_propane_scene(
         RigidBody::Dynamic,
         Grabbable,
         Name::new("SparePropaneTank"),
+    ));
+
+    // Refill receptacle platform near the outside larger propane main tank
+    let refill_platform_pos = Vec3::new(-16.0, 0.15, -23.5);
+    commands.spawn((
+        PropaneReceptaclePlatform {
+            kind: PropanePlatformKind::MainTankRefill,
+            activation_radius: 1.4,
+            locked_tank: None,
+        },
+        AnchorPoint::new("propane_tank")
+            .with_offset(Vec3::new(0.0, 0.45, 0.0))
+            .with_radius(2.5),
+        Transform::from_translation(refill_platform_pos),
+        GlobalTransform::from_translation(refill_platform_pos),
+        Mesh3d(meshes.add(Cuboid::new(1.0, 0.15, 1.0))),
+        MeshMaterial3d(dark_mat.clone()),
+        Collider::cuboid(0.50, 0.075, 0.50),
+        RigidBody::Fixed,
+        Name::new("MainTankRefillReceptaclePlatform"),
     ));
 
     // -------------------------------------------------------------------------
@@ -646,7 +720,7 @@ pub fn workshop_temperature_system(
 
     let gas_pressure = gas_line.as_ref().map(|g| g.pressure_psi).unwrap_or(0.0);
     let hose_attached_to_stove = q_hose.iter().any(|h| h.attached_to == HoseAttachment::Stove);
-    let stove_lit = q_stove.iter().any(|s| s.is_lit);
+    let stove_lit = q_stove.iter().any(|s| s.is_on && s.is_lit);
 
     let is_heating = hose_attached_to_stove && stove_lit && gas_pressure > 0.0;
 
@@ -664,13 +738,20 @@ pub fn workshop_temperature_system(
 }
 
 /// Manages propane fuel consumption, gas line pressure, and updates the connected tank.
+/// Supports both PropaneReceptaclePlatform and legacy PropaneTankHolder.
+/// - The platform near the house supplies the stove.
+/// - The stove inside can be turned off and on separately from the gas supply.
+/// - While off AND connected, propane is not consumed.
+/// - If disconnected, then propane is consumed since it's leaking.
 pub fn propane_gas_flow_system(
     time: Option<Res<Time>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     gas_line: Option<ResMut<WorkshopGasLine>>,
     mut q_tanks: Query<&mut PropaneTank>,
+    q_platforms: Query<&PropaneReceptaclePlatform>,
     q_holders: Query<&PropaneTankHolder>,
+    mut q_stove: Query<&mut GasFurnaceStove>,
     mut q_hose: Query<&mut GasHose>,
 ) {
     let (Some(time), Some(mut line)) = (time, gas_line) else {
@@ -682,17 +763,31 @@ pub fn propane_gas_flow_system(
 
     let dt = time.delta_secs();
 
-    // Find the currently active tank entity in the holder
+    // 1. Find active connected tank supplying the house.
+    // Check house platforms first, fallback to PropaneTankHolder for backward compatibility.
     let mut active_tank_e: Option<Entity> = None;
-    for holder in &q_holders {
-        if let Some(tank_e) = holder.connected_tank {
-            active_tank_e = Some(tank_e);
-            break;
+    for platform in &q_platforms {
+        if platform.kind == PropanePlatformKind::HouseSupply {
+            if let Some(tank_e) = platform.locked_tank {
+                active_tank_e = Some(tank_e);
+                break;
+            }
+        }
+    }
+    if active_tank_e.is_none() {
+        for holder in &q_holders {
+            if let Some(tank_e) = holder.connected_tank {
+                active_tank_e = Some(tank_e);
+                break;
+            }
         }
     }
 
     let Some(tank_e) = active_tank_e else {
         line.pressure_psi = 0.0;
+        for mut stove in &mut q_stove {
+            stove.is_lit = false;
+        }
         for mut hose in &mut q_hose {
             hose.is_venting_gas = false;
         }
@@ -701,29 +796,60 @@ pub fn propane_gas_flow_system(
 
     let Ok(mut tank) = q_tanks.get_mut(tank_e) else {
         line.pressure_psi = 0.0;
+        for mut stove in &mut q_stove {
+            stove.is_lit = false;
+        }
         for mut hose in &mut q_hose {
             hose.is_venting_gas = false;
         }
         return;
     };
 
+    // If tank has no fuel left
+    if tank.fuel_amount <= 0.0 {
+        line.pressure_psi = 0.0;
+        for mut stove in &mut q_stove {
+            stove.is_lit = false;
+        }
+        for mut hose in &mut q_hose {
+            hose.is_venting_gas = false;
+        }
+        return;
+    }
+
+    // Gas line pressure supplied by tank
+    line.pressure_psi = tank.fuel_amount;
+
+    // Check stove on/off state (default to true if no stove entity in mock test)
+    let stove_on = q_stove.iter().next().map(|s| s.is_on).unwrap_or(true);
+
     for mut hose in &mut q_hose {
         match hose.attached_to {
             HoseAttachment::Stove => {
                 hose.is_venting_gas = false;
-                if tank.fuel_amount > 0.0 && dt > 0.0 {
-                    tank.fuel_amount = (tank.fuel_amount - line.burn_rate * dt).max(0.0);
+                if stove_on {
+                    // Stove is ON and connected: burns propane, lit = true
+                    if dt > 0.0 {
+                        tank.fuel_amount = (tank.fuel_amount - line.burn_rate * dt).max(0.0);
+                    }
+                    for mut stove in &mut q_stove {
+                        stove.is_lit = true;
+                    }
+                } else {
+                    // Stove is OFF and connected: propane is NOT consumed!
+                    for mut stove in &mut q_stove {
+                        stove.is_lit = false;
+                    }
                 }
             }
             HoseAttachment::Neither => {
-                // Open nozzle! Gas is venting into the workshop room!
-                if tank.fuel_amount > 0.0 {
-                    hose.is_venting_gas = true;
-                    if dt > 0.0 {
-                        tank.fuel_amount = (tank.fuel_amount - line.leak_vent_rate * dt).max(0.0);
-                    }
-                } else {
-                    hose.is_venting_gas = false;
+                // Disconnected! Gas leaks into the room, propane is consumed!
+                hose.is_venting_gas = true;
+                if dt > 0.0 {
+                    tank.fuel_amount = (tank.fuel_amount - line.leak_vent_rate * dt).max(0.0);
+                }
+                for mut stove in &mut q_stove {
+                    stove.is_lit = false;
                 }
             }
         }
@@ -1028,6 +1154,7 @@ pub fn appliance_visual_indicators_system(
     time: Option<Res<Time>>,
     gas_line: Option<Res<WorkshopGasLine>>,
     q_hose: Query<&GasHose>,
+    q_stove: Query<&GasFurnaceStove>,
     appliance_mats: Option<Res<ApplianceVisualMaterials>>,
     workshop_mats: Option<Res<WorkshopMaterials>>,
     mut q_burner_flames: Query<&mut Visibility, With<StoveBurnerFlame>>,
@@ -1039,7 +1166,8 @@ pub fn appliance_visual_indicators_system(
     };
 
     let has_gas = gas_line.as_ref().map(|g| g.pressure_psi > 0.0).unwrap_or(true);
-    let stove_active = hose.attached_to == HoseAttachment::Stove && has_gas;
+    let stove_on = q_stove.iter().next().map(|s| s.is_on).unwrap_or(true);
+    let stove_active = hose.attached_to == HoseAttachment::Stove && has_gas && stove_on;
 
     let (glowing_ember_mat, cool_dark_gray_mat) = if let Some(ref mats) = appliance_mats {
         (mats.glowing_ember.clone(), mats.cool_dark_gray.clone())
@@ -1049,7 +1177,7 @@ pub fn appliance_visual_indicators_system(
         return;
     };
 
-    // 1. Stove Burners: Blue flame effects if connected, off if not
+    // 1. Stove Burners: Blue flame effects if connected and ON, off if not
     for mut vis in &mut q_burner_flames {
         *vis = if stove_active {
             Visibility::Inherited
@@ -1058,7 +1186,7 @@ pub fn appliance_visual_indicators_system(
         };
     }
 
-    // 2. Furnace Firebox Window: Glows if attached, cool dark gray if not
+    // 2. Furnace Firebox Window: Glows if attached and ON, cool dark gray if not
     for mut mat in &mut q_furnace_window {
         *mat = if stove_active {
             MeshMaterial3d(glowing_ember_mat.clone())
@@ -1078,16 +1206,191 @@ pub fn appliance_visual_indicators_system(
     }
 }
 
-/// Allows the player to replace propane tanks in the outside holder and refill them at the main bulk tank.
-pub fn propane_tank_refill_and_holder_system(
+/// Allows the player to toggle the indoor Gas Furnace Stove on and off separately from the gas supply.
+pub fn stove_interaction_system(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     mouse: Option<Res<ButtonInput<MouseButton>>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     dialogue_state: Option<Res<crate::elf_game::dialogue::ActiveDialogue>>,
     q_camera: Query<&GlobalTransform, With<FirstPersonCamera>>,
-    mut q_holders: Query<(Entity, &Transform, &mut PropaneTankHolder)>,
-    mut q_tanks: Query<(Entity, &mut Transform, &mut PropaneTank), (Without<FirstPersonCamera>, Without<PropaneTankHolder>, Without<MainPropaneRefillStation>)>,
+    mut q_stove: Query<(&GlobalTransform, &mut GasFurnaceStove)>,
+) {
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+    if dialogue_state.as_ref().map(|d| d.is_active).unwrap_or(false) {
+        return;
+    }
+    let Some(keys) = keys else { return; };
+    let Some(mouse) = mouse else { return; };
+
+    let interact_pressed = keys.just_pressed(KeyCode::KeyE)
+        || keys.just_pressed(KeyCode::KeyQ)
+        || keys.just_pressed(KeyCode::KeyF)
+        || mouse.just_pressed(MouseButton::Left);
+
+    if !interact_pressed {
+        return;
+    }
+
+    let Ok(cam_gt) = q_camera.single() else { return; };
+    let cam_pos = cam_gt.translation();
+    let cam_fwd = cam_gt.forward();
+
+    for (stove_gt, mut stove) in &mut q_stove {
+        let stove_pos = stove_gt.translation();
+        let dist = cam_pos.distance(stove_pos);
+        if dist < 3.2 && cam_fwd.dot((stove_pos - cam_pos).normalize()) > 0.35 {
+            stove.is_on = !stove.is_on;
+        }
+    }
+}
+
+/// Manages activation area detection and AnchorPoint locking for the outside propane receptacle platforms.
+/// - Locks a propane tank into a specific fixed place when entering the activation area (and not held by player)
+///   until the player interacts with it.
+/// - The platform near the house supplies the stove.
+/// - The platform near the outside larger propane main tank refills the smaller propane tanks.
+pub fn propane_platform_activation_area_system(
+    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
+    mut commands: Commands,
+    mut q_platforms: Query<(
+        Entity,
+        &GlobalTransform,
+        &mut PropaneReceptaclePlatform,
+        &mut AnchorPoint,
+        Option<&mut PropaneTankHolder>,
+    )>,
+    mut q_tanks: Query<
+        (
+            Entity,
+            &mut Transform,
+            &mut PropaneTank,
+            Option<&mut RigidBody>,
+            Option<&mut Velocity>,
+            Option<&LockedInAnchor>,
+            Option<&HeldByPlayer>,
+        ),
+        Without<PropaneReceptaclePlatform>,
+    >,
+) {
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+
+    for (platform_e, platform_gt, mut platform, mut anchor, mut holder_opt) in &mut q_platforms {
+        let platform_pos = platform_gt.translation();
+        let target_pos = platform_pos + anchor.lock_offset;
+
+        // 1. Maintain currently locked tank
+        if let Some(locked_e) = platform.locked_tank {
+            if let Ok((_, mut tank_tf, mut tank, mut rb_opt, mut vel_opt, locked_opt, held_opt)) = q_tanks.get_mut(locked_e) {
+                if held_opt.is_some() || locked_opt.is_none() || locked_opt.unwrap().anchor != platform_e {
+                    // Player grabbed it or detached it: unlock!
+                    platform.locked_tank = None;
+                    anchor.locked_object = None;
+                    if let Some(ref mut holder) = holder_opt {
+                        holder.connected_tank = None;
+                    }
+                    tank.is_connected = false;
+                    commands.entity(locked_e).remove::<LockedInAnchor>();
+                    if let Some(ref mut rb) = rb_opt {
+                        **rb = RigidBody::Dynamic;
+                    }
+                } else {
+                    // Maintain fixed anchor position
+                    tank_tf.translation = target_pos;
+                    if let Some(ref mut rb) = rb_opt {
+                        **rb = RigidBody::Fixed;
+                    }
+                    if let Some(ref mut vel) = vel_opt {
+                        **vel = Velocity::zero();
+                    }
+                    tank.is_connected = platform.kind == PropanePlatformKind::HouseSupply;
+                    if platform.kind == PropanePlatformKind::MainTankRefill {
+                        tank.fuel_amount = tank.capacity;
+                    }
+                }
+            } else {
+                platform.locked_tank = None;
+                anchor.locked_object = None;
+                if let Some(ref mut holder) = holder_opt {
+                    holder.connected_tank = None;
+                }
+            }
+        }
+
+        // 2. Detect free tanks entering the platform's activation area
+        if platform.locked_tank.is_none() {
+            let mut candidate_tank: Option<Entity> = None;
+            for (tank_e, tank_tf, _, _, _, locked_opt, held_opt) in &q_tanks {
+                if held_opt.is_some() || locked_opt.is_some() {
+                    continue;
+                }
+                let dist = tank_tf.translation.distance(platform_pos);
+                if dist <= platform.activation_radius {
+                    candidate_tank = Some(tank_e);
+                    break;
+                }
+            }
+
+            if let Some(tank_e) = candidate_tank {
+                platform.locked_tank = Some(tank_e);
+                anchor.locked_object = Some(tank_e);
+                if let Some(ref mut holder) = holder_opt {
+                    holder.connected_tank = Some(tank_e);
+                }
+                commands.entity(tank_e).insert(LockedInAnchor { anchor: platform_e });
+
+                if let Ok((_, mut tank_tf, mut tank, mut rb_opt, mut vel_opt, _, _)) = q_tanks.get_mut(tank_e) {
+                    tank_tf.translation = target_pos;
+                    if let Some(ref mut rb) = rb_opt {
+                        **rb = RigidBody::Fixed;
+                    }
+                    if let Some(ref mut vel) = vel_opt {
+                        **vel = Velocity::zero();
+                    }
+                    tank.is_connected = platform.kind == PropanePlatformKind::HouseSupply;
+                    if platform.kind == PropanePlatformKind::MainTankRefill {
+                        tank.fuel_amount = tank.capacity;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Allows the player to replace propane tanks in the outside platforms and refill them at the main bulk tank.
+pub fn propane_tank_refill_and_holder_system(
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    mouse: Option<Res<ButtonInput<MouseButton>>>,
+    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
+    dialogue_state: Option<Res<crate::elf_game::dialogue::ActiveDialogue>>,
+    mut commands: Commands,
+    q_camera: Query<&GlobalTransform, With<FirstPersonCamera>>,
+    mut q_platforms: Query<(
+        Entity,
+        &GlobalTransform,
+        &mut PropaneReceptaclePlatform,
+        &mut AnchorPoint,
+        Option<&mut PropaneTankHolder>,
+    )>,
+    mut q_holders: Query<(Entity, &Transform, &mut PropaneTankHolder), (Without<PropaneReceptaclePlatform>, Without<PropaneTank>)>,
+    mut q_tanks: Query<
+        (
+            Entity,
+            &mut Transform,
+            &mut PropaneTank,
+            Option<&mut RigidBody>,
+            Option<&mut Velocity>,
+            Option<&LockedInAnchor>,
+            Option<&HeldByPlayer>,
+        ),
+        (Without<FirstPersonCamera>, Without<PropaneReceptaclePlatform>, Without<MainPropaneRefillStation>, Without<PropaneTankHolder>),
+    >,
     q_refill_stations: Query<&Transform, (With<MainPropaneRefillStation>, Without<PropaneTank>)>,
 ) {
     if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
@@ -1114,9 +1417,8 @@ pub fn propane_tank_refill_and_holder_system(
     // 1. Refill at Main Bulk Propane Tank (Outside a distance away: X = -16.0, Z = -26.0)
     for station_tf in &q_refill_stations {
         let station_pos = station_tf.translation;
-        if cam_pos.distance(station_pos) < 4.0 && interact_pressed {
-            // Find any propane tank near the player/station and refill it!
-            for (_, _, mut tank) in &mut q_tanks {
+        if cam_pos.distance(station_pos) < 5.0 && interact_pressed {
+            for (_, _, mut tank, _, _, _, _) in &mut q_tanks {
                 if tank.fuel_amount < tank.capacity {
                     tank.fuel_amount = tank.capacity;
                 }
@@ -1124,22 +1426,83 @@ pub fn propane_tank_refill_and_holder_system(
         }
     }
 
-    // 2. Propane Tank Holder Replace / Insert / Remove
+    // 2. Propane Platform Insert / Remove / Replace
     if interact_pressed {
+        for (platform_e, platform_gt, mut platform, mut anchor, mut holder_opt) in &mut q_platforms {
+            let platform_pos = platform_gt.translation();
+            let dist = cam_pos.distance(platform_pos);
+            if dist < 3.2 && cam_fwd.dot((platform_pos - cam_pos).normalize()) > 0.40 {
+                if let Some(curr_tank_e) = platform.locked_tank.take() {
+                    // Unlock tank from platform
+                    anchor.locked_object = None;
+                    if let Some(ref mut holder) = holder_opt {
+                        holder.connected_tank = None;
+                    }
+                    commands.entity(curr_tank_e).remove::<LockedInAnchor>();
+                    if let Ok((_, _, mut tank, mut rb_opt, mut vel_opt, _, _)) = q_tanks.get_mut(curr_tank_e) {
+                        tank.is_connected = false;
+                        if let Some(ref mut rb) = rb_opt {
+                            **rb = RigidBody::Dynamic;
+                        }
+                        if let Some(ref mut vel) = vel_opt {
+                            **vel = Velocity::zero();
+                        }
+                    }
+                } else {
+                    // Find closest available tank to insert
+                    let mut closest_candidate: Option<(Entity, f32)> = None;
+                    for (tank_e, tank_tf, _, _, _, locked_opt, _) in &q_tanks {
+                        if locked_opt.is_some() {
+                            continue;
+                        }
+                        let d = tank_tf.translation.distance(platform_pos);
+                        if d < 2.5 && (closest_candidate.is_none() || d < closest_candidate.unwrap().1) {
+                            closest_candidate = Some((tank_e, d));
+                        }
+                    }
+
+                    if let Some((tank_e, _)) = closest_candidate {
+                        platform.locked_tank = Some(tank_e);
+                        anchor.locked_object = Some(tank_e);
+                        if let Some(ref mut holder) = holder_opt {
+                            holder.connected_tank = Some(tank_e);
+                        }
+                        commands.entity(tank_e).insert(LockedInAnchor { anchor: platform_e });
+
+                        if let Ok((_, mut tank_tf, mut tank, mut rb_opt, mut vel_opt, _, _)) = q_tanks.get_mut(tank_e) {
+                            let target_pos = platform_pos + anchor.lock_offset;
+                            tank_tf.translation = target_pos;
+                            tank.is_connected = platform.kind == PropanePlatformKind::HouseSupply;
+                            if platform.kind == PropanePlatformKind::MainTankRefill {
+                                tank.fuel_amount = tank.capacity;
+                            }
+                            if let Some(ref mut rb) = rb_opt {
+                                **rb = RigidBody::Fixed;
+                            }
+                            if let Some(ref mut vel) = vel_opt {
+                                **vel = Velocity::zero();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Backward compatibility for isolated PropaneTankHolder entities
         for (_, holder_tf, mut holder) in &mut q_holders {
             let holder_pos = holder_tf.translation;
             if cam_pos.distance(holder_pos) < 2.5 && cam_fwd.dot((holder_pos - cam_pos).normalize()) > 0.60 {
-                // Check if player is targeting a nearby tank to insert, or removing the current one
                 if let Some(curr_tank_e) = holder.connected_tank {
-                    // Remove tank from holder
                     holder.connected_tank = None;
-                    if let Ok((_, _, mut tank)) = q_tanks.get_mut(curr_tank_e) {
+                    if let Ok((_, _, mut tank, _, _, _, _)) = q_tanks.get_mut(curr_tank_e) {
                         tank.is_connected = false;
                     }
                 } else {
-                    // Find closest available tank near holder and mount it
                     let mut closest_tank: Option<(Entity, f32)> = None;
-                    for (tank_e, tank_tf, _) in &q_tanks {
+                    for (tank_e, tank_tf, _, _, _, locked_opt, _) in &q_tanks {
+                        if locked_opt.is_some() {
+                            continue;
+                        }
                         let d = tank_tf.translation.distance(holder_pos);
                         if d < 2.2 && (closest_tank.is_none() || d < closest_tank.unwrap().1) {
                             closest_tank = Some((tank_e, d));
@@ -1147,7 +1510,7 @@ pub fn propane_tank_refill_and_holder_system(
                     }
                     if let Some((tank_e, _)) = closest_tank {
                         holder.connected_tank = Some(tank_e);
-                        if let Ok((_, mut tank_tf, mut tank)) = q_tanks.get_mut(tank_e) {
+                        if let Ok((_, mut tank_tf, mut tank, _, _, _, _)) = q_tanks.get_mut(tank_e) {
                             tank.is_connected = true;
                             tank_tf.translation = Vec3::new(holder_pos.x, holder_pos.y + 0.15, holder_pos.z + 0.05);
                         }

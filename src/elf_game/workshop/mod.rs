@@ -73,16 +73,23 @@ impl Plugin for WorkshopPlugin {
                     pantry::pantry_door_spring_system,
                     pantry::pantry_door_restock_cycle_system,
                     pantry::pantry_door_interaction_system,
+                    stable_door::stable_door_system,
+                    stable_door::stable_door_interaction_system,
+                ),
+            )
+            .add_systems(
+                Update,
+                (
                     stove::workshop_temperature_system,
                     stove::propane_gas_flow_system,
+                    stove::propane_platform_activation_area_system,
+                    stove::stove_interaction_system,
                     stove::gas_hose_chain_physics_system,
                     stove::gas_hose_interaction_system,
                     stove::appliance_visual_indicators_system,
                     stove::propane_tank_refill_and_holder_system,
                     stove::gas_leak_flame_explosion_system,
                     stove::explosion_flash_fade_system,
-                    stable_door::stable_door_system,
-                    stable_door::stable_door_interaction_system,
                 ),
             )
             .add_systems(

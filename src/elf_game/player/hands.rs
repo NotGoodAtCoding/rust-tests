@@ -214,6 +214,15 @@ pub fn spawn_workshop_tools_and_materials(
         workshop_mats.as_deref(),
         Vec3::new(1.8, 0.95, -4.2),
     );
+
+    // 7. Auto Wrapper Tool placed on workbench (X = -1.8, Y = 0.95, Z = -4.2)
+    crate::elf_game::wrapping::spawn_auto_wrapper_tool(
+        &mut commands,
+        Some(&mut meshes),
+        Some(&mut materials),
+        workshop_mats.as_deref(),
+        Vec3::new(-1.8, 0.95, -4.2),
+    );
 }
 
 /// Finds the best grabbable object in direct raycasted line of sight with the player's reticle.

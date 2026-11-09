@@ -2,6 +2,12 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 use bevy::ecs::message::{Message, MessageReader};
 
+pub mod auto_wrapper;
+pub use auto_wrapper::{
+    AutoWrapperTool, WrappedElf, WrappedInPaper, calculate_wrap_duration,
+    spawn_auto_wrapper_tool, auto_wrapper_usage_system, wrapped_elf_system,
+};
+
 /// Individual visual and physical features a wrapped present can possess.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WrappingFeature {
@@ -148,6 +154,7 @@ pub enum WrappingTool {
     DecorativeBowBox,
     GiftTagPen,
     ForbiddenPlasmaShrink,
+    AutoWrapper,
 }
 
 #[derive(Message, Debug, Clone)]
@@ -251,6 +258,10 @@ pub fn handle_present_wrapping(
                     present.features.insert(WrappingFeature::PlasmaShrinkSealed);
                     present.quality_score *= 1.5;
                 }
+                WrappingTool::AutoWrapper => {
+                    present.features.insert(WrappingFeature::PaperWrapped);
+                    present.features.insert(WrappingFeature::StripedPattern);
+                }
             }
 
             // If a specification is present, check if all requirements are fulfilled
@@ -279,6 +290,14 @@ impl Plugin for WrappingPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<UseToolOnPresentMessage>()
             .add_message::<PresentDeliveredMessage>()
-            .add_systems(Update, (handle_present_wrapping, check_present_specifications).chain());
+            .add_systems(
+                Update,
+                (
+                    handle_present_wrapping,
+                    check_present_specifications,
+                    auto_wrapper_usage_system,
+                    wrapped_elf_system,
+                ).chain(),
+            );
     }
 }

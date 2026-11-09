@@ -12104,3 +12104,299 @@ fn test_hat_cannot_unequip_when_both_hands_full_with_non_hats() {
     assert_eq!(hands.left_grabbed, Some(non_hat1));
     assert_eq!(hands.right_grabbed, Some(non_hat2));
 }
+
+#[test]
+fn test_auto_wrapper_size_scaling_duration() {
+    use rust_tests::elf_game::wrapping::auto_wrapper::calculate_wrap_duration;
+    use bevy_rapier3d::prelude::Collider;
+    use rust_tests::elf_game::player::hands::HeavyItem;
+
+    let base = 1.5;
+
+    // Small 0.2m cuboid (half extents 0.1, 0.1, 0.1) -> volume 0.008 m^3
+    let small_col = Collider::cuboid(0.1, 0.1, 0.1);
+    let dur_small = calculate_wrap_duration(base, Some(&small_col), None, false);
+
+    // Standard 0.4m cuboid (half extents 0.2, 0.2, 0.2) -> volume 0.064 m^3
+    let std_col = Collider::cuboid(0.2, 0.2, 0.2);
+    let dur_std = calculate_wrap_duration(base, Some(&std_col), None, false);
+
+    // Large 0.8m crate (half extents 0.4, 0.4, 0.4) -> volume 0.512 m^3
+    let large_col = Collider::cuboid(0.4, 0.4, 0.4);
+    let dur_large = calculate_wrap_duration(base, Some(&large_col), None, false);
+
+    // Heavy item with 30kg mass
+    let heavy = HeavyItem::new(30.0, 0.35, 2.5);
+    let dur_heavy = calculate_wrap_duration(base, Some(&std_col), Some(&heavy), false);
+
+    // Elf duration
+    let dur_elf = calculate_wrap_duration(base, None, None, true);
+
+    assert!(dur_small < dur_std, "Small item must take less time than standard item: {} vs {}", dur_small, dur_std);
+    assert!(dur_large > dur_std, "Large item must take more time than standard item: {} vs {}", dur_large, dur_std);
+    assert!(dur_heavy >= dur_std, "Heavy item must scale duration up");
+    assert!(dur_elf > dur_std, "Elf must take substantial duration: {}", dur_elf);
+}
+
+#[test]
+fn test_auto_wrapper_tool_hold_mouse1_progress_and_completion() {
+    use rust_tests::elf_game::{
+        player::{
+            controller::{ElfPlayer, FirstPersonCamera},
+            ElfHands,
+        },
+        wrapping::{
+            auto_wrapper::{auto_wrapper_usage_system, AutoWrapperTool, WrappedInPaper},
+            Present, WrappingFeature,
+        },
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.insert_resource(Time::<()>::default());
+
+    // 1. Spawn player at origin facing +Z
+    let player_e = app
+        .world_mut()
+        .spawn((
+            ElfPlayer,
+            Transform::from_xyz(0.0, 1.2, 0.0),
+            ElfHands::default(),
+            Name::new("ElfPlayer"),
+        ))
+        .id();
+
+    let _cam_e = app
+        .world_mut()
+        .spawn((
+            FirstPersonCamera,
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.2, 0.0).looking_to(Vec3::Z, Vec3::Y)),
+        ))
+        .id();
+
+    // 2. Spawn AutoWrapperTool
+    let wrapper_e = app
+        .world_mut()
+        .spawn((
+            AutoWrapperTool {
+                base_duration: 1.0,
+                ..default()
+            },
+            Transform::from_xyz(0.0, 1.0, 0.0),
+            Name::new("AutoWrapperTool"),
+        ))
+        .id();
+
+    // Player holds AutoWrapperTool in right hand
+    {
+        let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+        hands.right_grabbed = Some(wrapper_e);
+    }
+
+    // 3. Spawn unwrapped Present 1.5m in front of player (at Z = 1.5)
+    let present_e = app
+        .world_mut()
+        .spawn((
+            Present::default(),
+            Transform::from_xyz(0.0, 1.2, 1.5),
+            Name::new("TargetPresent"),
+        ))
+        .id();
+
+    app.add_systems(Update, auto_wrapper_usage_system);
+
+    // Initial update without mouse button: progress should be 0.0
+    app.update();
+    {
+        let tool = app.world().get::<AutoWrapperTool>(wrapper_e).unwrap();
+        assert_eq!(tool.wrap_progress, 0.0);
+        assert!(!tool.is_wrapping);
+    }
+
+    // Press and hold Mouse1
+    {
+        let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        mouse.press(MouseButton::Left);
+    }
+
+    // Advance time by 0.5s: progress should advance
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(500));
+        app.insert_resource(time);
+    }
+    app.update();
+
+    {
+        let tool = app.world().get::<AutoWrapperTool>(wrapper_e).unwrap();
+        assert!(tool.is_wrapping, "Tool must be wrapping target");
+        assert!(tool.wrap_progress > 0.0, "Progress must accumulate: {}", tool.wrap_progress);
+        assert_eq!(tool.current_target, Some(present_e));
+    }
+
+    // Advance remaining time past 100% completion (e.g. 1.2s more)
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(1200));
+        app.insert_resource(time);
+    }
+    app.update();
+
+    // Verify present is wrapped!
+    {
+        let pres = app.world().get::<Present>(present_e).unwrap();
+        assert!(
+            pres.features.contains(&WrappingFeature::PaperWrapped),
+            "Present must have PaperWrapped feature"
+        );
+        assert!(
+            app.world().get::<WrappedInPaper>(present_e).is_some(),
+            "Present must have WrappedInPaper component"
+        );
+
+        let tool = app.world().get::<AutoWrapperTool>(wrapper_e).unwrap();
+        assert!(!tool.is_wrapping, "Tool should finish wrapping");
+        assert_eq!(tool.wrap_progress, 0.0, "Progress resets after complete");
+    }
+}
+
+#[test]
+fn test_auto_wrapper_on_elf_immobilizes_for_10_seconds_and_breaks_free() {
+    use rust_tests::elf_game::{
+        physics_sandbox::ragdoll::{ElfAssistant, ElfNpcState},
+        player::{
+            controller::{ElfPlayer, FirstPersonCamera},
+            ElfHands,
+        },
+        wrapping::auto_wrapper::{
+            auto_wrapper_usage_system, wrapped_elf_system, AutoWrapperTool, WrappedElf,
+            WrappedInPaper,
+        },
+    };
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.insert_resource(Time::<()>::default());
+
+    // 1. Spawn player at origin facing +Z
+    let player_e = app
+        .world_mut()
+        .spawn((
+            ElfPlayer,
+            Transform::from_xyz(0.0, 1.2, 0.0),
+            ElfHands::default(),
+            Name::new("ElfPlayer"),
+        ))
+        .id();
+
+    let _cam_e = app
+        .world_mut()
+        .spawn((
+            FirstPersonCamera,
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.2, 0.0).looking_to(Vec3::Z, Vec3::Y)),
+        ))
+        .id();
+
+    // 2. Spawn AutoWrapperTool
+    let wrapper_e = app
+        .world_mut()
+        .spawn((
+            AutoWrapperTool {
+                base_duration: 1.0,
+                ..default()
+            },
+            Transform::from_xyz(0.0, 1.0, 0.0),
+            Name::new("AutoWrapperTool"),
+        ))
+        .id();
+
+    {
+        let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+        hands.right_grabbed = Some(wrapper_e);
+    }
+
+    // 3. Spawn Elf 1.8m in front of player
+    let mut elf_assistant = ElfAssistant::new(1, "TestElf", vec![Vec3::ZERO]);
+    elf_assistant.state = ElfNpcState::Wandering;
+    let elf_e = app
+        .world_mut()
+        .spawn((
+            elf_assistant,
+            Transform::from_xyz(0.0, 0.45, 1.8),
+            bevy_rapier3d::prelude::Velocity::default(),
+            Name::new("TestElf"),
+        ))
+        .id();
+
+    app.add_systems(Update, (auto_wrapper_usage_system, wrapped_elf_system).chain());
+
+    // Press Mouse1 and advance time enough to fully wrap the elf (2.2s)
+    {
+        let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        mouse.press(MouseButton::Left);
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(2200));
+        app.insert_resource(time);
+    }
+    app.update();
+
+    // 4. Verify elf is wrapped and immobilized for 10 seconds!
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert_eq!(
+            elf.state,
+            ElfNpcState::RagdollTumble,
+            "Elf must enter RagdollTumble when wrapped"
+        );
+
+        let wrapped = app.world().get::<WrappedElf>(elf_e).expect("Elf must have WrappedElf component");
+        assert!(wrapped.remaining_time > 7.0 && wrapped.remaining_time <= 10.0, "Should have ~10 seconds of immobilization: {}", wrapped.remaining_time);
+        assert!(app.world().get::<WrappedInPaper>(elf_e).is_some());
+    }
+
+    // 5. Advance 5 seconds: elf must STILL be wrapped and in RagdollTumble
+    {
+        let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        mouse.release(MouseButton::Left); // player no longer holding mouse
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(5));
+        app.insert_resource(time);
+    }
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert_eq!(elf.state, ElfNpcState::RagdollTumble, "Elf must still be immobilized after 5 seconds");
+        let wrapped = app.world().get::<WrappedElf>(elf_e).expect("Elf must still be wrapped");
+        assert!(wrapped.remaining_time < 4.0 && wrapped.remaining_time > 1.5, "Remaining time: {}", wrapped.remaining_time);
+    }
+
+    // 6. Advance remaining 5.5 seconds (total > 10.5s): elf BREAKS FREE!
+    {
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(5500));
+        app.insert_resource(time);
+    }
+    app.update();
+
+    {
+        assert!(
+            app.world().get::<WrappedElf>(elf_e).is_none(),
+            "WrappedElf must be removed when 10 seconds expire"
+        );
+        assert!(
+            app.world().get::<WrappedInPaper>(elf_e).is_none(),
+            "WrappedInPaper must be removed when elf breaks free"
+        );
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert_eq!(
+            elf.state,
+            ElfNpcState::Recovering,
+            "Elf must transition to Recovering after breaking free"
+        );
+    }
+}

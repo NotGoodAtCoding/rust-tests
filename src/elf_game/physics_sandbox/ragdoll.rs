@@ -91,12 +91,23 @@ impl Default for PhilosopherPipe {
     }
 }
 
-/// Interactive wardrobe on the back wall dispensing job hats.
+/// Interactive wardrobe or stand on the back wall dispensing job hats.
 #[derive(Component, Debug, Clone)]
 pub struct ElfHatCloset {
     pub spawn_point: Vec3,
     pub cooldown: f32,
 }
+
+/// Hat Rack stand on the mezzanine spawning one random hat at a time.
+#[derive(Component, Debug, Clone)]
+pub struct HatRack {
+    pub spawn_point: Vec3,
+    pub current_hat: Option<Entity>,
+}
+
+/// Marker component for the mirror beside the hat stand on the mezzanine.
+#[derive(Component, Debug, Clone)]
+pub struct HatStandMirror;
 
 /// Semantic roles and purposes for workshop navigation waypoints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -255,11 +266,11 @@ impl ElfNavGraph {
                 neighbors: vec![8, 10, 12, 14, 19],
                 purpose: None,
             },
-            // Node 12: Back Wall Hat Closet
+            // Node 12: Back Wall Hat Rack on mezzanine
             ElfNavNode {
                 id: 12,
                 name: "HatCloset".to_string(),
-                position: Vec3::new(-4.5, 0.45, 10.5),
+                position: Vec3::new(-4.0, 0.45, 11.0),
                 radius: 1.4,
                 neighbors: vec![8, 11, 19],
                 purpose: Some(ElfNodePurpose::HatCloset),
@@ -282,11 +293,11 @@ impl ElfNavGraph {
                 neighbors: vec![10, 11],
                 purpose: None,
             },
-            // Node 15: Pantry Shelves (inside Pantry Storage Wing at X = -15.0, Z = 5.5)
+            // Node 15: Pantry Shelves (inside Pantry subroom on back wall at X = -10.0, Z = 11.0)
             ElfNavNode {
                 id: 15,
                 name: "PantryShelves".to_string(),
-                position: Vec3::new(-15.0, 0.45, 5.5),
+                position: Vec3::new(-10.0, 0.45, 11.0),
                 radius: 1.5,
                 neighbors: vec![8],
                 purpose: Some(ElfNodePurpose::PantryShelves),
@@ -318,11 +329,11 @@ impl ElfNavGraph {
                 neighbors: vec![10],
                 purpose: Some(ElfNodePurpose::KleptoStash),
             },
-            // Node 19: Mirror Node (at back wall near hat stand: X = -3.0, Z = 10.5)
+            // Node 19: Mirror Node (at back wall near hat stand: X = -2.6, Z = 11.0)
             ElfNavNode {
                 id: 19,
                 name: "MirrorNode".to_string(),
-                position: Vec3::new(-3.0, 0.45, 10.5),
+                position: Vec3::new(-2.6, 0.45, 11.0),
                 radius: 1.2,
                 neighbors: vec![11, 12],
                 purpose: Some(ElfNodePurpose::MirrorNode),
@@ -686,6 +697,7 @@ pub fn spawn_single_elf(
             Visibility::Inherited,
             RigidBody::Dynamic,
             Collider::capsule_y(0.25, 0.20),
+            CollisionGroups::new(crate::elf_game::player::hands::GROUP_ELF, Group::ALL),
             Velocity::default(),
             ExternalImpulse::default(),
             Damping {
@@ -863,7 +875,7 @@ pub fn spawn_single_elf(
     root_entity
 }
 
-/// Spawns the impressionist Hat Closet wardrobe on the workshop's back wall.
+/// Spawns the impressionist Hat Rack on the mezzanine and Mirror beside it.
 pub fn spawn_hat_closet(
     mut commands: Commands,
     meshes: Option<ResMut<Assets<Mesh>>>,
@@ -878,41 +890,215 @@ pub fn spawn_hat_closet(
         None => WorkshopMaterials::new(&mut materials),
     };
 
-    let closet_pos = Vec3::new(-4.5, 1.3, 12.3);
+    // Positioned up on the mezzanine: X = -4.0, Y = 3.0, Z = 11.0
+    let rack_pos = Vec3::new(-4.0, 3.0, 11.0);
+    let hat_spawn_pos = Vec3::new(-4.0, 4.60, 11.0);
 
-    // 1. Closet Wardrobe Frame (Cedar / Pine wood)
-    let closet_entity = commands
+    // 1. Hat Rack Base (Cedar / Pine wood)
+    let rack_entity = commands
         .spawn((
-            Mesh3d(meshes.add(Cuboid::new(1.8, 2.4, 0.8))),
+            Mesh3d(meshes.add(Cuboid::new(0.6, 0.08, 0.6))),
             MeshMaterial3d(wm.cabin_log.clone()),
-            Transform::from_translation(closet_pos),
-            Collider::cuboid(0.9, 1.2, 0.4),
+            Transform::from_translation(rack_pos + Vec3::new(0.0, 0.04, 0.0)),
+            Collider::cuboid(0.3, 0.04, 0.3),
             RigidBody::Fixed,
+            HatRack {
+                spawn_point: hat_spawn_pos,
+                current_hat: None,
+            },
             ElfHatCloset {
-                spawn_point: Vec3::new(-4.5, 0.95, 11.5),
+                spawn_point: hat_spawn_pos,
                 cooldown: 0.0,
             },
-            Name::new("ElfHatCloset"),
+            Name::new("HatRack"),
         ))
         .id();
 
-    // 2. Hat Shelf Countertop in front
+    // Central Pole
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.6, 0.1, 0.6))),
-        MeshMaterial3d(wm.birch_wood.clone()),
-        Transform::from_xyz(0.0, -0.45, -0.6),
-        ChildOf(closet_entity),
-        Name::new("Closet_HatShelf"),
+        Mesh3d(meshes.add(Cylinder::new(0.04, 1.6))),
+        MeshMaterial3d(wm.cabin_log.clone()),
+        Transform::from_xyz(0.0, 0.84, 0.0),
+        ChildOf(rack_entity),
+        Name::new("HatRack_Pole"),
     ));
 
-    // 3. Plaque / Sign above the closet
+    // Pegs at top
+    for angle in [0.0, std::f32::consts::FRAC_PI_2, std::f32::consts::PI, 3.0 * std::f32::consts::FRAC_PI_2] {
+        let peg_dir = Vec3::new(angle.cos(), 0.15, angle.sin());
+        commands.spawn((
+            Mesh3d(meshes.add(Cylinder::new(0.015, 0.25))),
+            MeshMaterial3d(wm.birch_wood.clone()),
+            Transform::from_xyz(peg_dir.x * 0.12, 1.55 + peg_dir.y * 0.08, peg_dir.z * 0.12)
+                .with_rotation(Quat::from_rotation_z(0.3) * Quat::from_rotation_y(angle)),
+            ChildOf(rack_entity),
+            Name::new("HatRack_Peg"),
+        ));
+    }
+
+    // Spawn 1 random hat on the rack
+    let initial_hat = spawn_random_hat(&mut commands, &mut meshes, &mut materials, &wm, hat_spawn_pos);
+    commands.entity(rack_entity).insert(HatRack {
+        spawn_point: hat_spawn_pos,
+        current_hat: Some(initial_hat),
+    });
+
+    // 2. Mirror by the Hat Stand (X = -2.6, Y = 3.0, Z = 11.0)
+    let mirror_pos = Vec3::new(-2.6, 3.0, 11.0);
+    let mirror_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.85, 0.90, 0.95),
+        metallic: 0.95,
+        perceptual_roughness: 0.05,
+        ..default()
+    });
+
+    // Frame
+    let mirror_frame = commands
+        .spawn((
+            Mesh3d(meshes.add(Cuboid::new(1.2, 1.8, 0.08))),
+            MeshMaterial3d(wm.cabin_log.clone()),
+            Transform::from_xyz(mirror_pos.x, 3.9, mirror_pos.z),
+            Collider::cuboid(0.6, 0.9, 0.04),
+            RigidBody::Fixed,
+            HatStandMirror,
+            Name::new("HatStandMirror"),
+        ))
+        .id();
+
+    // Reflective glass pane
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.4, 0.25, 0.05))),
-        MeshMaterial3d(wm.walnut_leather.clone()),
-        Transform::from_xyz(0.0, 1.15, -0.42),
-        ChildOf(closet_entity),
-        Name::new("Closet_SignBoard"),
+        Mesh3d(meshes.add(Cuboid::new(1.0, 1.6, 0.02))),
+        MeshMaterial3d(mirror_mat),
+        Transform::from_xyz(0.0, 0.0, -0.04),
+        ChildOf(mirror_frame),
+        Name::new("MirrorGlass"),
     ));
+}
+
+/// Helper spawning a single job hat.
+pub fn spawn_single_job_hat(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    job: ElfJob,
+    hat_name: &str,
+    pos: Vec3,
+    primary_mat: Handle<StandardMaterial>,
+    accent_mat: Handle<StandardMaterial>,
+) -> Entity {
+    let hat_entity = commands
+        .spawn((
+            Mesh3d(meshes.add(Cylinder::new(0.14, 0.20))),
+            MeshMaterial3d(primary_mat),
+            Transform::from_translation(pos),
+            Collider::cylinder(0.10, 0.14),
+            RigidBody::Dynamic,
+            Velocity::default(),
+            Grabbable,
+            ElfJobHat {
+                job,
+                worn_by: None,
+            },
+            Name::new(hat_name.to_string()),
+        ))
+        .id();
+
+    commands.spawn((
+        Mesh3d(meshes.add(Cylinder::new(0.16, 0.04))),
+        MeshMaterial3d(accent_mat),
+        Transform::from_xyz(0.0, -0.08, 0.0),
+        ChildOf(hat_entity),
+        Name::new(format!("{}_Brim", hat_name)),
+    ));
+
+    hat_entity
+}
+
+/// Spawns one random hat from available job hats and accessories.
+pub fn spawn_random_hat(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    wm: &WorkshopMaterials,
+    pos: Vec3,
+) -> Entity {
+    static HAT_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let idx = HAT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 4;
+
+    match idx {
+        0 => spawn_single_job_hat(commands, meshes, ElfJob::MooseFeeder, "MooseFeederHat", pos, wm.walnut_leather.clone(), wm.brass_buckle.clone()),
+        1 => spawn_single_job_hat(commands, meshes, ElfJob::PresentWrapper, "PresentWrapperHat", pos, wm.festive_red.clone(), wm.gold_ribbon.clone()),
+        2 => spawn_single_job_hat(commands, meshes, ElfJob::WorkshopMaintenance, "MaintenanceHat", pos, wm.toy_blue.clone(), wm.sheet_metal.clone()),
+        _ => spawn_philosopher_pipe(commands, Some(meshes), Some(materials), pos),
+    }
+}
+
+/// If the hat has been taken off the rack and the player is not looking and not holding a hat,
+/// spawn a new random hat on the rack.
+pub fn hat_rack_respawn_system(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    workshop_mats: Option<Res<WorkshopMaterials>>,
+    mut q_rack: Query<(&mut HatRack, &Transform)>,
+    q_held: Query<Entity, With<crate::elf_game::player::hands::HeldByPlayer>>,
+    q_all_hats: Query<Entity, Or<(With<ElfJobHat>, With<PhilosopherPipe>)>>,
+    q_hands: Query<&crate::elf_game::player::ElfHands>,
+    q_cam: Query<&GlobalTransform, With<crate::elf_game::player::controller::FirstPersonCamera>>,
+    q_transforms: Query<&Transform, Without<HatRack>>,
+) {
+    let wm = match workshop_mats {
+        Some(ref mats) => (**mats).clone(),
+        None => WorkshopMaterials::new(&mut materials),
+    };
+
+    for (mut rack, _rack_tf) in &mut q_rack {
+        // 1. Check if the currently registered hat was removed
+        if let Some(hat_e) = rack.current_hat {
+            if !q_all_hats.contains(hat_e) {
+                // Hat was despawned or consumed
+                rack.current_hat = None;
+            } else if q_held.contains(hat_e) {
+                // Hat was grabbed by player
+                rack.current_hat = None;
+            } else if let Ok(hat_tf) = q_transforms.get(hat_e) {
+                if hat_tf.translation.distance(rack.spawn_point) > 0.40 {
+                    // Hat moved away from rack
+                    rack.current_hat = None;
+                }
+            }
+        }
+
+        // 2. If rack has no hat, check respawn conditions
+        if rack.current_hat.is_none() {
+            // Player must NOT be holding a hat
+            let player_holding_hat = q_hands.iter().any(|h| {
+                h.left_grabbed.is_some_and(|e| q_all_hats.contains(e))
+                    || h.right_grabbed.is_some_and(|e| q_all_hats.contains(e))
+            });
+            if player_holding_hat {
+                continue;
+            }
+
+            // Player must NOT be looking at the hat rack
+            let player_looking = q_cam.iter().any(|cam_gtf| {
+                let cam_pos = cam_gtf.translation();
+                let cam_fwd = cam_gtf.forward();
+                let to_rack = rack.spawn_point - cam_pos;
+                if to_rack.length() > 0.1 {
+                    cam_fwd.dot(to_rack.normalize()) > 0.40
+                } else {
+                    true
+                }
+            });
+            if player_looking {
+                continue;
+            }
+
+            // Both conditions met: spawn a new random hat on the rack!
+            let new_hat = spawn_random_hat(&mut commands, &mut meshes, &mut materials, &wm, rack.spawn_point);
+            rack.current_hat = Some(new_hat);
+        }
+    }
 }
 
 /// Spawns 3 dynamic job hats (one for each elf) on the closet counter when interacted with.
@@ -947,31 +1133,7 @@ pub fn spawn_three_job_hats(
     ];
 
     for (job, hat_name, pos, primary_mat, accent_mat) in hat_configs {
-        let hat_entity = commands
-            .spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.14, 0.20))),
-                MeshMaterial3d(primary_mat),
-                Transform::from_translation(pos),
-                Collider::cylinder(0.10, 0.14),
-                RigidBody::Dynamic,
-                Velocity::default(),
-                Grabbable,
-                ElfJobHat {
-                    job,
-                    worn_by: None,
-                },
-                Name::new(hat_name.to_string()),
-            ))
-            .id();
-
-        // Decorative accent brim / band
-        commands.spawn((
-            Mesh3d(meshes.add(Cylinder::new(0.16, 0.04))),
-            MeshMaterial3d(accent_mat),
-            Transform::from_xyz(0.0, -0.08, 0.0),
-            ChildOf(hat_entity),
-            Name::new(format!("{}_Brim", hat_name)),
-        ));
+        spawn_single_job_hat(commands, meshes, job, hat_name, pos, primary_mat, accent_mat);
     }
 }
 

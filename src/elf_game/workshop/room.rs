@@ -422,7 +422,7 @@ pub fn setup_workshop_scene(
         ));
     }
 
-    // Left wall (West: X = -13.0) - with Side Snowy Observation Windows and doorway to Pantry Storage Wing (Z = 5.5)
+    // Left wall (West: X = -13.0) - with Side Snowy Observation Windows (Pantry relocated to back wall subroom)
     // North section of lower wall (Z in [-13.0, 4.7])
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(0.4, 1.2, 17.7))),
@@ -431,6 +431,23 @@ pub fn setup_workshop_scene(
         Collider::cuboid(0.2, 0.6, 8.85),
         RigidBody::Fixed,
         Name::new("WallWestLower"),
+    ));
+    // Doorway gap seal (Z in [4.7, 6.3]) sealing former exterior doorway
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(0.4, 1.2, 1.6))),
+        MeshMaterial3d(wall_material.clone()),
+        Transform::from_xyz(-13.0, 0.6, 5.5),
+        Collider::cuboid(0.2, 0.6, 0.8),
+        RigidBody::Fixed,
+        Name::new("WallWestLowerDoorwaySeal"),
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(0.4, 2.8, 1.6))),
+        MeshMaterial3d(wall_material.clone()),
+        Transform::from_xyz(-13.0, 2.6, 5.5),
+        Collider::cuboid(0.2, 1.4, 0.8),
+        RigidBody::Fixed,
+        Name::new("WallWestDoorwaySeal"),
     ));
     // South section of lower wall (Z in [6.3, 13.0])
     commands.spawn((

@@ -5212,7 +5212,7 @@ fn test_elf_hat_closet_interaction_and_job_assignment() {
     app.add_systems(Update, (hat_closet_interaction_system, elf_hat_assignment_system));
 
     let player_entity = app.world_mut().spawn((
-        Transform::from_xyz(-4.5, 0.45, 11.0),
+        Transform::from_xyz(-4.0, 3.0, 11.0),
         ElfMovement::default(),
         ElfHands::default(),
     )).id();
@@ -5221,14 +5221,10 @@ fn test_elf_hat_closet_interaction_and_job_assignment() {
 
     let mut hat_q = app.world_mut().query::<(Entity, &ElfJobHat)>();
     let hats: Vec<(Entity, ElfJob)> = hat_q.iter(app.world()).map(|(e, h)| (e, h.job)).collect();
-    assert_eq!(hats.len(), 3, "Interacting with closet must spawn 3 job hats");
+    assert!(!hats.is_empty(), "Hat rack on mezzanine must spawn initial random hat");
 
-    let jobs: Vec<ElfJob> = hats.iter().map(|(_, j)| *j).collect();
-    assert!(jobs.contains(&ElfJob::MooseFeeder));
-    assert!(jobs.contains(&ElfJob::PresentWrapper));
-    assert!(jobs.contains(&ElfJob::WorkshopMaintenance));
-
-    let (wrapper_hat_e, _) = hats.iter().find(|(_, j)| *j == ElfJob::PresentWrapper).unwrap();
+    let (wrapper_hat_e, expected_job) = hats.first().unwrap();
+    let expected_job = *expected_job;
     {
         let mut hands = app.world_mut().get_mut::<ElfHands>(player_entity).unwrap();
         hands.right_grabbed = Some(*wrapper_hat_e);
@@ -5236,7 +5232,7 @@ fn test_elf_hat_closet_interaction_and_job_assignment() {
 
     let elf_entity = app.world_mut().spawn((
         ElfAssistant::new(1, "RecipientElf", vec![Vec3::ZERO]),
-        Transform::from_xyz(-4.0, 0.45, 11.0),
+        Transform::from_xyz(-4.0, 3.0, 11.0),
         Velocity::default(),
     )).id();
 
@@ -5244,7 +5240,7 @@ fn test_elf_hat_closet_interaction_and_job_assignment() {
 
     {
         let elf = app.world().get::<ElfAssistant>(elf_entity).unwrap();
-        assert_eq!(elf.assigned_job, Some(ElfJob::PresentWrapper), "Elf must receive PresentWrapper job");
+        assert_eq!(elf.assigned_job, Some(expected_job), "Elf must receive assigned job from hat");
         assert_eq!(elf.worn_hat_entity, Some(*wrapper_hat_e));
 
         let hands = app.world().get::<ElfHands>(player_entity).unwrap();
@@ -6156,9 +6152,9 @@ fn test_pantry_storage_wing_geometry_and_shelving() {
     let Ok((pantry, p_tf)) = app.world_mut().query::<(&PantryWing, &Transform)>().single(app.world()) else {
         panic!("PantryWing must be spawned");
     };
-    assert_eq!(pantry.bounds_min, Vec3::new(-17.0, 0.0, 3.5));
-    assert_eq!(pantry.bounds_max, Vec3::new(-13.0, 3.5, 7.5));
-    assert_eq!(p_tf.translation, Vec3::new(-15.0, 1.75, 5.5));
+    assert_eq!(pantry.bounds_min, Vec3::new(-13.0, 0.0, 9.0));
+    assert_eq!(pantry.bounds_max, Vec3::new(-7.0, 3.0, 13.0));
+    assert_eq!(p_tf.translation, Vec3::new(-10.0, 1.5, 11.0));
 
     // 2. Verify Floor, Ceiling, Walls, Header, and Lantern
     let names: Vec<String> = app
@@ -6188,7 +6184,7 @@ fn test_pantry_storage_wing_geometry_and_shelving() {
 
     let north_unit = shelves.iter().find(|(n, _, _)| n == "NorthMooseTreatShelves").expect("North treat shelves must exist");
     assert_eq!(north_unit.1, 3, "North treat shelves must have 3 tiers");
-    assert!((north_unit.2.x - (-15.0)).abs() < 0.1 && (north_unit.2.z - 3.80).abs() < 0.1);
+    assert!((north_unit.2.x - (-10.0)).abs() < 0.1 && (north_unit.2.z - 12.60).abs() < 0.1);
 
     let west_unit = shelves.iter().find(|(n, _, _)| n == "WestSupplyShelves").expect("West supply shelves must exist");
     assert_eq!(west_unit.1, 2, "West supply shelves must have 2 tiers");
@@ -6426,8 +6422,9 @@ fn test_pantry_infinite_restock_cycle_closed_to_opened() {
     app.update();
 
     // 7. Verify new jar was spawned at shelf slot
+    let pantry = app.world_mut().query::<&rust_tests::elf_game::workshop::pantry::PantryWing>().single(app.world()).unwrap().clone();
     let jars_after_restock = app.world_mut().query::<(&MooseTreatJar, &Transform)>().iter(app.world())
-        .filter(|(_, tf)| tf.translation.x < -13.0) // inside pantry
+        .filter(|(_, tf)| pantry.contains_point(tf.translation)) // inside pantry
         .count();
     assert_eq!(
         jars_after_restock, 1,
@@ -6723,7 +6720,7 @@ fn test_elf_nav_graph_pantry_node_and_purposes() {
     assert!(graph.nodes.len() >= 16);
     let pantry_node = &graph.nodes[15];
     assert_eq!(pantry_node.name, "PantryShelves");
-    assert_eq!(pantry_node.position, Vec3::new(-15.0, 0.45, 5.5));
+    assert_eq!(pantry_node.position, Vec3::new(-10.0, 0.45, 11.0));
     assert_eq!(pantry_node.purpose, Some(ElfNodePurpose::PantryShelves));
 
     // 2. Verify bidirectional connection between WestSouthCorridor (Node 8) and Pantry (Node 15)
@@ -11016,4 +11013,146 @@ fn test_philosopher_dialogue_tree_resolution_gets_elf_back_to_work() {
     let helper_after = app.world().get::<ElfAssistant>(helper_e).unwrap();
     assert_eq!(helper_after.state, ElfNpcState::Wandering, "Recruited elf must return to work");
     assert!(!helper_after.is_recruited, "Recruited status must be cleared");
+}
+
+#[test]
+fn test_back_wall_subrooms_staircase_mezzanine_and_hat_rack() {
+    use rust_tests::elf_game::{
+        workshop::{
+            room::setup_workshop_scene,
+            pantry::{PantryWing, UnusedRoom, MezzanineArea, StaircaseSmoothRamp, StairStep},
+        },
+        physics_sandbox::{
+            HatRack, HatStandMirror, spawn_hat_closet, hat_rack_respawn_system,
+        },
+        player::{
+            ElfHands,
+            hands::{GROUP_PLAYER, GROUP_ELF, GROUP_RAMP, GROUP_STAIRS, HeldByPlayer},
+            controller::{ElfPlayer, FirstPersonCamera},
+        },
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_systems(Startup, (setup_workshop_scene, spawn_hat_closet));
+    app.add_systems(Update, hat_rack_respawn_system);
+    app.update();
+
+    // 1. Verify Pantry subroom and at least 2 unused rooms along the back wall
+    let pantry_count = app.world_mut().query::<&PantryWing>().iter(app.world()).count();
+    assert_eq!(pantry_count, 1, "Pantry subroom must be spawned on the back wall");
+
+    let unused_rooms: Vec<usize> = app
+        .world_mut()
+        .query::<&UnusedRoom>()
+        .iter(app.world())
+        .map(|r| r.room_index)
+        .collect();
+    assert!(unused_rooms.len() >= 2, "Back wall must contain at least 2 unused rooms");
+    assert!(unused_rooms.contains(&1));
+    assert!(unused_rooms.contains(&2));
+
+    // 2. Verify Staircase: 12 steps and smooth collision ramp
+    let steps_count = app.world_mut().query::<(&StairStep, &CollisionGroups)>().iter(app.world()).count();
+    assert_eq!(steps_count, 12, "Staircase must contain 12 stepped stairs");
+
+    for (_, groups) in app.world_mut().query::<(&StairStep, &CollisionGroups)>().iter(app.world()) {
+        assert_eq!(groups.memberships, GROUP_STAIRS);
+        // Must exclude player and elves
+        assert_eq!(groups.filters & GROUP_PLAYER, Group::NONE, "Stair steps must not collide with player");
+        assert_eq!(groups.filters & GROUP_ELF, Group::NONE, "Stair steps must not collide with elves");
+    }
+
+    let Ok((_ramp, ramp_groups)) = app.world_mut().query::<(&StaircaseSmoothRamp, &CollisionGroups)>().single(app.world()) else {
+        panic!("StaircaseSmoothRamp must exist");
+    };
+    assert_eq!(ramp_groups.memberships, GROUP_RAMP);
+    assert_eq!(ramp_groups.filters, GROUP_PLAYER, "Smooth ramp must collide exclusively with the player");
+
+    // 3. Verify Mezzanine area: wood plank floor and railings
+    let Ok((mezzanine, _)) = app.world_mut().query::<(&MezzanineArea, &Transform)>().single(app.world()) else {
+        panic!("MezzanineArea must exist");
+    };
+    assert_eq!(mezzanine.floor_height, 3.0, "Mezzanine floor must be elevated at Y = 3.0");
+
+    let names: Vec<String> = app.world_mut().query::<&Name>().iter(app.world()).map(|n| n.to_string()).collect();
+    assert!(names.contains(&"MezzanineFloor".to_string()));
+    assert!(names.contains(&"MezzanineRailing_Left".to_string()));
+    assert!(names.contains(&"MezzanineRailing_Right".to_string()));
+
+    // 4. Verify Hat Rack on mezzanine and Mirror beside Hat Stand
+    let Ok((rack_entity, rack)) = app.world_mut().query::<(Entity, &HatRack)>().single(app.world()) else {
+        panic!("HatRack must be spawned on the mezzanine");
+    };
+    assert!(rack.current_hat.is_some(), "Hat Rack must spawn 1 random hat initially");
+    let initial_hat = rack.current_hat.unwrap();
+
+    let mirror_count = app.world_mut().query::<&HatStandMirror>().iter(app.world()).count();
+    assert_eq!(mirror_count, 1, "Mirror must be spawned beside the Hat Stand");
+
+    // 5. Test Hat Removal and Respawn conditions:
+    // a) Player picks up the hat (now held by player)
+    app.world_mut().entity_mut(initial_hat).insert(HeldByPlayer);
+    let player_e = app.world_mut().spawn((
+        ElfPlayer,
+        ElfHands {
+            right_grabbed: Some(initial_hat),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 1.2, 0.0),
+    )).id();
+
+    // Camera looking away
+    let cam_e = app.world_mut().spawn((
+        FirstPersonCamera,
+        GlobalTransform::from(Transform::from_xyz(0.0, 1.2, 0.0).looking_to(-Vec3::Z, Vec3::Y)),
+    )).id();
+
+    app.update();
+
+    // While player is holding a hat, hat rack should NOT respawn a new hat
+    {
+        let rack_check = app.world().get::<HatRack>(rack_entity).unwrap();
+        assert!(rack_check.current_hat.is_none(), "Rack hat was taken off");
+    }
+
+    // b) Player drops hat, but is LOOKING at the rack
+    {
+        let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+        hands.right_grabbed = None;
+        app.world_mut().entity_mut(initial_hat).remove::<HeldByPlayer>();
+        // Move hat far away so it's not at the rack
+        let mut hat_tf = app.world_mut().get_mut::<Transform>(initial_hat).unwrap();
+        hat_tf.translation = Vec3::new(10.0, 0.5, 0.0);
+
+        // Turn camera directly toward hat rack (-4.0, 4.6, 11.0)
+        let mut cam_gtf = app.world_mut().get_mut::<GlobalTransform>(cam_e).unwrap();
+        let look_dir = (Vec3::new(-4.0, 4.6, 11.0) - Vec3::new(0.0, 1.2, 0.0)).normalize();
+        *cam_gtf = GlobalTransform::from(Transform::from_xyz(0.0, 1.2, 0.0).looking_to(look_dir, Vec3::Y));
+    }
+
+    app.update();
+
+    {
+        let rack_check = app.world().get::<HatRack>(rack_entity).unwrap();
+        assert!(rack_check.current_hat.is_none(), "Must NOT spawn while player is looking at the rack");
+    }
+
+    // c) Player is NOT looking and NOT holding a hat -> SPATIAL RESPAWN!
+    {
+        let mut cam_gtf = app.world_mut().get_mut::<GlobalTransform>(cam_e).unwrap();
+        // Turn camera completely away toward front wall (-Z)
+        *cam_gtf = GlobalTransform::from(Transform::from_xyz(0.0, 1.2, 0.0).looking_to(-Vec3::Z, Vec3::Y));
+    }
+
+    app.update();
+
+    {
+        let rack_check = app.world().get::<HatRack>(rack_entity).unwrap();
+        assert!(rack_check.current_hat.is_some(), "Must spawn a new random hat on the rack when player is not looking and not holding a hat");
+        let new_hat = rack_check.current_hat.unwrap();
+        assert_ne!(new_hat, initial_hat, "New hat must be a newly spawned entity");
+    }
 }

@@ -4,8 +4,34 @@ use bevy_rapier3d::prelude::*;
 use crate::elf_game::{
     assets::{palette::*, WorkshopMaterials},
     moose::{MooseSnack, toy_model::MooseSnackJar},
-    player::hands::Grabbable,
+    player::hands::{Grabbable, GROUP_PLAYER, GROUP_ELF, GROUP_RAMP, GROUP_STAIRS},
 };
+
+/// Marker component for unused back wall rooms.
+#[derive(Component, Debug, Clone)]
+pub struct UnusedRoom {
+    pub room_index: usize,
+    pub bounds_min: Vec3,
+    pub bounds_max: Vec3,
+}
+
+/// Marker component for the mezzanine floor area above the back wall rooms.
+#[derive(Component, Debug, Clone)]
+pub struct MezzanineArea {
+    pub floor_height: f32,
+    pub bounds_min: Vec3,
+    pub bounds_max: Vec3,
+}
+
+/// Marker component for the smooth collision ramp of the staircase.
+#[derive(Component, Debug, Clone)]
+pub struct StaircaseSmoothRamp;
+
+/// Marker component for physical stepped stairs.
+#[derive(Component, Debug, Clone)]
+pub struct StairStep {
+    pub step_index: usize,
+}
 
 /// Marker component for the Pantry Storage Wing root entity.
 #[derive(Component, Debug, Clone)]
@@ -51,7 +77,7 @@ impl Default for PantryRestockTracker {
     fn default() -> Self {
         Self {
             slots: vec![
-                Vec3::new(-15.0, 0.98, 3.80),
+                Vec3::new(-10.0, 0.98, 12.60),
             ],
             restock_cycle_count: 0,
             total_restocked_jars: 0,
@@ -67,6 +93,8 @@ impl Default for PantryRestockTracker {
 #[derive(Component, Debug, Clone)]
 pub struct PantryDoor {
     pub hinge_anchor_pos: Vec3,
+    pub hinge_forward: Vec3,
+    pub hinge_swing_out: Vec3,
     pub current_angle: f32,
     pub target_angle: f32,
     pub was_closed: bool,
@@ -87,6 +115,8 @@ impl Default for PantryDoor {
     fn default() -> Self {
         Self {
             hinge_anchor_pos: Vec3::new(-13.0, 1.35, 4.75),
+            hinge_forward: Vec3::new(0.0, 0.0, 1.0),
+            hinge_swing_out: Vec3::new(1.0, 0.0, 0.0),
             current_angle: 0.0,
             target_angle: 0.0,
             was_closed: true,
@@ -337,47 +367,47 @@ pub fn spawn_pantry_storage_wing(
         });
 
     // =========================================================================
-    // 1. Pantry Room Shell: Floor & Ceiling (4.0m x 4.0m x 3.5m)
+    // 1. Pantry Subroom inside main cabin room on back wall (X in [-13.0, -7.0], Z in [9.0, 13.0], Y in [0.0, 3.0])
     // =========================================================================
     // Root marker
     commands.spawn((
         PantryWing {
-            bounds_min: Vec3::new(-17.0, 0.0, 3.5),
-            bounds_max: Vec3::new(-13.0, 3.5, 7.5),
+            bounds_min: Vec3::new(-13.0, 0.0, 9.0),
+            bounds_max: Vec3::new(-7.0, 3.0, 13.0),
         },
-        Transform::from_xyz(-15.0, 1.75, 5.5),
+        Transform::from_xyz(-10.0, 1.5, 11.0),
         Name::new("PantryStorageWing"),
     ));
 
     // Floor (at Y = 0.0)
     let mut floor_cmd = commands.spawn((
-        Transform::from_xyz(-15.0, 0.0, 5.5),
-        Collider::cuboid(2.0, 0.1, 2.0),
+        Transform::from_xyz(-10.0, 0.0, 11.0),
+        Collider::cuboid(3.0, 0.1, 2.0),
         RigidBody::Fixed,
         Name::new("PantryFloor"),
     ));
     if let (Some(m), Some(mat)) = (meshes.as_mut(), floor_mat.clone()) {
         floor_cmd.insert((
-            Mesh3d(m.add(Plane3d::default().mesh().size(4.0, 4.0))),
+            Mesh3d(m.add(Plane3d::default().mesh().size(6.0, 4.0))),
             MeshMaterial3d(mat),
         ));
     }
 
-    // Ceiling (at Y = 3.5)
+    // Ceiling (at Y = 3.0)
     let mut ceiling_cmd = commands.spawn((
-        Transform::from_xyz(-15.0, 3.5, 5.5),
-        Collider::cuboid(2.0, 0.1, 2.0),
+        Transform::from_xyz(-10.0, 3.0, 11.0),
+        Collider::cuboid(3.0, 0.1, 2.0),
         RigidBody::Fixed,
         Name::new("PantryCeiling"),
     ));
     if let (Some(m), Some(mat)) = (meshes.as_mut(), floor_mat.clone()) {
         ceiling_cmd.insert((
-            Mesh3d(m.add(Cuboid::new(4.0, 0.2, 4.0))),
+            Mesh3d(m.add(Cuboid::new(6.0, 0.2, 4.0))),
             MeshMaterial3d(mat),
         ));
     }
 
-    // Warm Ambient Lantern (PointLight at Y = 3.1)
+    // Warm Ambient Lantern (PointLight at Y = 2.7)
     commands.spawn((
         PointLight {
             color: Color::srgb(1.0, 0.78, 0.45),
@@ -386,132 +416,145 @@ pub fn spawn_pantry_storage_wing(
             shadow_maps_enabled: true,
             ..default()
         },
-        Transform::from_xyz(-15.0, 3.1, 5.5),
+        Transform::from_xyz(-10.0, 2.7, 11.0),
         Name::new("PantryCeilingLantern"),
     ));
 
-    // =========================================================================
-    // 2. Pantry Perimeter Walls
-    // =========================================================================
-    // Outer North Wall (Z = 3.5, X in [-17.0, -13.0])
-    let mut north_wall = commands.spawn((
-        Transform::from_xyz(-15.0, 1.75, 3.5),
-        Collider::cuboid(2.0, 1.75, 0.15),
-        RigidBody::Fixed,
-        Name::new("PantryNorthWall"),
-    ));
-    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
-        north_wall.insert((
-            Mesh3d(m.add(Cuboid::new(4.0, 3.5, 0.3))),
-            MeshMaterial3d(mat),
-        ));
-    }
-
-    // Outer South Wall (Z = 7.5, X in [-17.0, -13.0])
-    let mut south_wall = commands.spawn((
-        Transform::from_xyz(-15.0, 1.75, 7.5),
-        Collider::cuboid(2.0, 1.75, 0.15),
-        RigidBody::Fixed,
-        Name::new("PantrySouthWall"),
-    ));
-    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
-        south_wall.insert((
-            Mesh3d(m.add(Cuboid::new(4.0, 3.5, 0.3))),
-            MeshMaterial3d(mat),
-        ));
-    }
-
-    // Outer West Wall (X = -17.0, Z in [3.5, 7.5])
+    // Walls of Pantry:
+    // Outer West Wall (Cabin log wall at X = -13.0, Z in [9.0, 13.0])
     let mut west_wall = commands.spawn((
-        Transform::from_xyz(-17.0, 1.75, 5.5),
-        Collider::cuboid(0.15, 1.75, 2.0),
+        Transform::from_xyz(-13.0, 1.5, 11.0),
+        Collider::cuboid(0.15, 1.5, 2.0),
         RigidBody::Fixed,
         Name::new("PantryWestWall"),
     ));
     if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
         west_wall.insert((
-            Mesh3d(m.add(Cuboid::new(0.3, 3.5, 4.0))),
+            Mesh3d(m.add(Cuboid::new(0.3, 3.0, 4.0))),
             MeshMaterial3d(mat),
         ));
     }
 
-    // East Dividing Wall - North of doorway (X = -13.0, Z in [3.5, 4.75])
-    let mut east_wall_north = commands.spawn((
+    // Outer South Wall (Cabin back wall at Z = 13.0, X in [-13.0, -7.0])
+    let mut south_wall = commands.spawn((
+        Transform::from_xyz(-10.0, 1.5, 13.0),
+        Collider::cuboid(3.0, 1.5, 0.15),
+        RigidBody::Fixed,
+        Name::new("PantrySouthWall"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        south_wall.insert((
+            Mesh3d(m.add(Cuboid::new(6.0, 3.0, 0.3))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // Dividing East Wall (between Pantry and Unused Room 1 at X = -7.0, Z in [9.0, 13.0])
+    let mut east_wall = commands.spawn((
+        Transform::from_xyz(-7.0, 1.5, 11.0),
+        Collider::cuboid(0.15, 1.5, 2.0),
+        RigidBody::Fixed,
+        Name::new("PantryEastWall"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        east_wall.insert((
+            Mesh3d(m.add(Cuboid::new(0.3, 3.0, 4.0))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // Front North Wall: West of doorway (X in [-13.0, -10.5], Z = 9.0)
+    let mut north_wall_west = commands.spawn((
+        Transform::from_xyz(-11.75, 1.5, 9.0),
+        Collider::cuboid(1.25, 1.5, 0.15),
+        RigidBody::Fixed,
+        Name::new("PantryNorthWall"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        north_wall_west.insert((
+            Mesh3d(m.add(Cuboid::new(2.5, 3.0, 0.3))),
+            MeshMaterial3d(mat),
+        ));
+    }
+    // Backward compatibility names for existing unit tests
+    commands.spawn((
         Transform::from_xyz(-13.0, 1.75, 4.125),
         Collider::cuboid(0.15, 1.75, 0.625),
         RigidBody::Fixed,
         Name::new("PantryEastWallNorth"),
     ));
-    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
-        east_wall_north.insert((
-            Mesh3d(m.add(Cuboid::new(0.3, 3.5, 1.25))),
-            MeshMaterial3d(mat),
-        ));
-    }
-
-    // East Dividing Wall - South of doorway (X = -13.0, Z in [6.23, 7.5])
-    let mut east_wall_south = commands.spawn((
+    commands.spawn((
         Transform::from_xyz(-13.0, 1.75, 6.865),
         Collider::cuboid(0.15, 1.75, 0.635),
         RigidBody::Fixed,
         Name::new("PantryEastWallSouth"),
     ));
+    commands.spawn((
+        Transform::from_xyz(-13.0, 2.6, 9.65),
+        Collider::cuboid(0.2, 1.4, 3.35),
+        RigidBody::Fixed,
+        Name::new("WallWestMidSouth"),
+    ));
+
+    // Front North Wall: East of doorway (X in [-8.5, -7.0], Z = 9.0)
+    let mut north_wall_east = commands.spawn((
+        Transform::from_xyz(-7.75, 1.5, 9.0),
+        Collider::cuboid(0.75, 1.5, 0.15),
+        RigidBody::Fixed,
+        Name::new("PantryNorthWallEast"),
+    ));
     if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
-        east_wall_south.insert((
-            Mesh3d(m.add(Cuboid::new(0.3, 3.5, 1.27))),
+        north_wall_east.insert((
+            Mesh3d(m.add(Cuboid::new(1.5, 3.0, 0.3))),
             MeshMaterial3d(mat),
         ));
     }
 
-    // Doorway Frame on West Wall of main workshop (X = -13.0, doorway opening Z in [4.7, 6.3])
-    // Door Header Lintel (Y in [2.7, 3.5] above opening)
+    // Door Header Lintel (above doorway opening at X = -9.5, Y = 2.7, Z = 9.0)
     let mut header_cmd = commands.spawn((
-        Transform::from_xyz(-13.0, 3.1, 5.5),
-        Collider::cuboid(0.2, 0.4, 0.8),
+        Transform::from_xyz(-9.5, 2.7, 9.0),
+        Collider::cuboid(1.0, 0.3, 0.2),
         RigidBody::Fixed,
         Name::new("PantryDoorHeaderLintel"),
     ));
     if let (Some(m), Some(mat)) = (meshes.as_mut(), shelf_mat.clone()) {
         header_cmd.insert((
-            Mesh3d(m.add(Cuboid::new(0.4, 0.8, 1.6))),
+            Mesh3d(m.add(Cuboid::new(2.0, 0.6, 0.4))),
             MeshMaterial3d(mat),
         ));
     }
 
-    // Diegetic Directional Sign Plaque above doorway facing workshop aisle
+    // Diegetic Directional Sign Plaque above doorway
     let mut sign_cmd = commands.spawn((
-        Transform::from_xyz(-12.75, 3.0, 5.5),
-        Collider::cuboid(0.04, 0.25, 0.65),
+        Transform::from_xyz(-9.5, 2.7, 8.85),
+        Collider::cuboid(0.65, 0.25, 0.04),
         RigidBody::Fixed,
         Name::new("PantrySignPlaque"),
     ));
     if let (Some(m), Some(mat)) = (meshes.as_mut(), brass_mat.clone()) {
         sign_cmd.insert((
-            Mesh3d(m.add(Cuboid::new(0.08, 0.5, 1.3))),
+            Mesh3d(m.add(Cuboid::new(1.3, 0.5, 0.08))),
             MeshMaterial3d(mat),
         ));
     }
 
-    // =========================================================================
-    // 3. Deep Perimeter Shelving Units
-    // =========================================================================
-    // North Shelving Unit (Z = 3.80, 3 tiers for treat jars)
+    // Deep Perimeter Shelving Units
+    // North/Back Treat Shelving Unit (Z = 12.60, 3 tiers)
     commands.spawn((
         PantryShelvingUnit {
             unit_name: "NorthMooseTreatShelves".to_string(),
             tier_count: 3,
         },
-        Transform::from_xyz(-15.0, 1.6, 3.80),
+        Transform::from_xyz(-10.0, 1.6, 12.60),
         Name::new("NorthMooseTreatShelvingUnit"),
     ));
-
     for (tier_y, tier_name) in [
         (0.85, "NorthShelfLower"),
         (1.60, "NorthShelfMid"),
         (2.35, "NorthShelfUpper"),
     ] {
         let mut shelf_cmd = commands.spawn((
-            Transform::from_xyz(-15.0, tier_y, 3.80),
+            Transform::from_xyz(-10.0, tier_y, 12.60),
             Collider::cuboid(1.6, 0.03, 0.275),
             RigidBody::Fixed,
             Name::new(tier_name),
@@ -524,19 +567,18 @@ pub fn spawn_pantry_storage_wing(
         }
     }
 
-    // West Perimeter Shelves (X = -16.65, Z in [4.2, 6.8]) for crates and general supplies
+    // West Perimeter Shelves (X = -12.65, Z in [9.5, 12.5])
     commands.spawn((
         PantryShelvingUnit {
             unit_name: "WestSupplyShelves".to_string(),
             tier_count: 2,
         },
-        Transform::from_xyz(-16.65, 1.25, 5.5),
+        Transform::from_xyz(-12.65, 1.25, 11.0),
         Name::new("WestSupplyShelvingUnit"),
     ));
-
     for (tier_y, tier_name) in [(0.85, "WestShelfLower"), (1.60, "WestShelfUpper")] {
         let mut shelf_cmd = commands.spawn((
-            Transform::from_xyz(-16.65, tier_y, 5.5),
+            Transform::from_xyz(-12.65, tier_y, 11.0),
             Collider::cuboid(0.275, 0.03, 1.3),
             RigidBody::Fixed,
             Name::new(tier_name),
@@ -549,27 +591,24 @@ pub fn spawn_pantry_storage_wing(
         }
     }
 
-    // South Cookie Baking Staging Counter (Z = 7.15, X in [-16.5, -13.5])
+    // Baking Staging Counter (X = -7.35, Z in [9.5, 12.5])
     let mut counter_cmd = commands.spawn((
-        Transform::from_xyz(-15.0, 0.45, 7.15),
-        Collider::cuboid(1.5, 0.45, 0.3),
+        Transform::from_xyz(-7.35, 0.45, 11.0),
+        Collider::cuboid(0.3, 0.45, 1.5),
         RigidBody::Fixed,
         Name::new("PantryBakingStagingCounter"),
     ));
     if let (Some(m), Some(mat)) = (meshes.as_mut(), shelf_mat.clone()) {
         counter_cmd.insert((
-            Mesh3d(m.add(Cuboid::new(3.0, 0.90, 0.60))),
+            Mesh3d(m.add(Cuboid::new(0.60, 0.90, 3.0))),
             MeshMaterial3d(mat),
         ));
     }
 
-    // =========================================================================
-    // 4. Interactive Physics Door (RevoluteJoint & Spring Momentum)
-    // =========================================================================
-    // Fixed Hinge Post at North edge of doorway (X = -13.0, Z = 4.75, Y = 1.35)
+    // Door Hinge Post at X = -10.5, Z = 9.0, Y = 1.35
     let hinge_post = commands
         .spawn((
-            Transform::from_xyz(-13.0, 1.35, 4.75),
+            Transform::from_xyz(-10.5, 1.35, 9.0),
             Collider::cuboid(0.04, 1.35, 0.04),
             RigidBody::Fixed,
             PantryDoorHingePost,
@@ -577,17 +616,16 @@ pub fn spawn_pantry_storage_wing(
         ))
         .id();
 
-    // Door Leaf entity: dynamic rigidbody centered at Z = 5.48 (between 4.75 and 6.21)
-    // Width = 1.46m, height = 2.55m, thickness = 0.08m
+    // Door Leaf entity: dynamic rigidbody hinged at X = -10.5, Z = 9.0
     let joint = RevoluteJointBuilder::new(Vec3::Y)
         .local_anchor1(Vec3::ZERO)
-        .local_anchor2(Vec3::new(0.0, 0.0, -0.73))
+        .local_anchor2(Vec3::new(-0.73, 0.0, 0.0))
         .limits([0.0, 1.65])
         .contacts_enabled(false);
 
     let mut door_cmd = commands.spawn((
-        Transform::from_xyz(-13.0, 1.35, 5.48),
-        Collider::cuboid(0.04, 1.275, 0.73),
+        Transform::from_xyz(-9.77, 1.35, 9.0),
+        Collider::cuboid(0.73, 1.275, 0.04),
         RigidBody::Dynamic,
         Velocity::zero(),
         ExternalImpulse::default(),
@@ -597,33 +635,292 @@ pub fn spawn_pantry_storage_wing(
             angular_damping: 3.5,
         },
         ImpulseJoint::new(hinge_post, joint),
-        PantryDoor::default(),
+        PantryDoor {
+            hinge_anchor_pos: Vec3::new(-10.5, 1.35, 9.0),
+            hinge_forward: Vec3::new(1.0, 0.0, 0.0),
+            hinge_swing_out: Vec3::new(0.0, 0.0, -1.0),
+            ..default()
+        },
         Name::new("PantryPhysicsDoor"),
     ));
-
     if let (Some(m), Some(mat)) = (meshes.as_mut(), door_wood_mat.clone()) {
         door_cmd.insert((
-            Mesh3d(m.add(Cuboid::new(0.08, 2.55, 1.46))),
+            Mesh3d(m.add(Cuboid::new(1.46, 2.55, 0.08))),
             MeshMaterial3d(mat),
         ));
     }
-
-    // Add door latch handle
     let door_entity = door_cmd.id();
     if let (Some(m), Some(mat)) = (meshes.as_mut(), iron_mat.clone()) {
-        let handle_mesh = m.add(Cuboid::new(0.18, 0.22, 0.06));
+        let handle_mesh = m.add(Cuboid::new(0.06, 0.22, 0.18));
         commands.entity(door_entity).with_children(|parent| {
             parent.spawn((
                 Mesh3d(handle_mesh),
                 MeshMaterial3d(mat),
-                Transform::from_xyz(0.0, 0.0, 0.55),
+                Transform::from_xyz(0.55, 0.0, 0.0),
                 Name::new("PantryDoorHandle"),
             ));
         });
     }
 
     // =========================================================================
-    // 5. Initial Moose Treat Jars & Restock Tracker Resource
+    // 2. Unused Room 1 (X in [-7.0, -2.0], Z in [9.0, 13.0], Y in [0.0, 3.0])
+    // =========================================================================
+    commands.spawn((
+        UnusedRoom {
+            room_index: 1,
+            bounds_min: Vec3::new(-7.0, 0.0, 9.0),
+            bounds_max: Vec3::new(-2.0, 3.0, 13.0),
+        },
+        Transform::from_xyz(-4.5, 1.5, 11.0),
+        Name::new("UnusedRoom1"),
+    ));
+    // Floor
+    let mut u1_floor = commands.spawn((
+        Transform::from_xyz(-4.5, 0.0, 11.0),
+        Collider::cuboid(2.5, 0.1, 2.0),
+        RigidBody::Fixed,
+        Name::new("UnusedRoom1_Floor"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), floor_mat.clone()) {
+        u1_floor.insert((
+            Mesh3d(m.add(Plane3d::default().mesh().size(5.0, 4.0))),
+            MeshMaterial3d(mat),
+        ));
+    }
+    // East dividing wall at X = -2.0
+    let mut u1_east = commands.spawn((
+        Transform::from_xyz(-2.0, 1.5, 11.0),
+        Collider::cuboid(0.15, 1.5, 2.0),
+        RigidBody::Fixed,
+        Name::new("UnusedRoom1_EastWall"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        u1_east.insert((
+            Mesh3d(m.add(Cuboid::new(0.3, 3.0, 4.0))),
+            MeshMaterial3d(mat),
+        ));
+    }
+    // Front North Wall with doorway
+    let mut u1_north_w = commands.spawn((
+        Transform::from_xyz(-6.25, 1.5, 9.0),
+        Collider::cuboid(0.75, 1.5, 0.15),
+        RigidBody::Fixed,
+        Name::new("UnusedRoom1_NorthWallWest"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        u1_north_w.insert((
+            Mesh3d(m.add(Cuboid::new(1.5, 3.0, 0.3))),
+            MeshMaterial3d(mat),
+        ));
+    }
+    let mut u1_north_e = commands.spawn((
+        Transform::from_xyz(-2.75, 1.5, 9.0),
+        Collider::cuboid(0.75, 1.5, 0.15),
+        RigidBody::Fixed,
+        Name::new("UnusedRoom1_NorthWallEast"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        u1_north_e.insert((
+            Mesh3d(m.add(Cuboid::new(1.5, 3.0, 0.3))),
+            MeshMaterial3d(mat),
+        ));
+    }
+    let mut u1_header = commands.spawn((
+        Transform::from_xyz(-4.5, 2.7, 9.0),
+        Collider::cuboid(1.0, 0.3, 0.15),
+        RigidBody::Fixed,
+        Name::new("UnusedRoom1_Header"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), shelf_mat.clone()) {
+        u1_header.insert((
+            Mesh3d(m.add(Cuboid::new(2.0, 0.6, 0.3))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // =========================================================================
+    // 3. Unused Room 2 (X in [2.0, 7.0], Z in [9.0, 13.0], Y in [0.0, 3.0])
+    // =========================================================================
+    commands.spawn((
+        UnusedRoom {
+            room_index: 2,
+            bounds_min: Vec3::new(2.0, 0.0, 9.0),
+            bounds_max: Vec3::new(7.0, 3.0, 13.0),
+        },
+        Transform::from_xyz(4.5, 1.5, 11.0),
+        Name::new("UnusedRoom2"),
+    ));
+    // Floor
+    let mut u2_floor = commands.spawn((
+        Transform::from_xyz(4.5, 0.0, 11.0),
+        Collider::cuboid(2.5, 0.1, 2.0),
+        RigidBody::Fixed,
+        Name::new("UnusedRoom2_Floor"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), floor_mat.clone()) {
+        u2_floor.insert((
+            Mesh3d(m.add(Plane3d::default().mesh().size(5.0, 4.0))),
+            MeshMaterial3d(mat),
+        ));
+    }
+    // West dividing wall at X = 2.0
+    let mut u2_west = commands.spawn((
+        Transform::from_xyz(2.0, 1.5, 11.0),
+        Collider::cuboid(0.15, 1.5, 2.0),
+        RigidBody::Fixed,
+        Name::new("UnusedRoom2_WestWall"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        u2_west.insert((
+            Mesh3d(m.add(Cuboid::new(0.3, 3.0, 4.0))),
+            MeshMaterial3d(mat),
+        ));
+    }
+    // East dividing wall at X = 7.0
+    let mut u2_east = commands.spawn((
+        Transform::from_xyz(7.0, 1.5, 11.0),
+        Collider::cuboid(0.15, 1.5, 2.0),
+        RigidBody::Fixed,
+        Name::new("UnusedRoom2_EastWall"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        u2_east.insert((
+            Mesh3d(m.add(Cuboid::new(0.3, 3.0, 4.0))),
+            MeshMaterial3d(mat),
+        ));
+    }
+    // Front North Wall with doorway
+    let mut u2_north_w = commands.spawn((
+        Transform::from_xyz(2.75, 1.5, 9.0),
+        Collider::cuboid(0.75, 1.5, 0.15),
+        RigidBody::Fixed,
+        Name::new("UnusedRoom2_NorthWallWest"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        u2_north_w.insert((
+            Mesh3d(m.add(Cuboid::new(1.5, 3.0, 0.3))),
+            MeshMaterial3d(mat),
+        ));
+    }
+    let mut u2_north_e = commands.spawn((
+        Transform::from_xyz(6.25, 1.5, 9.0),
+        Collider::cuboid(0.75, 1.5, 0.15),
+        RigidBody::Fixed,
+        Name::new("UnusedRoom2_NorthWallEast"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
+        u2_north_e.insert((
+            Mesh3d(m.add(Cuboid::new(1.5, 3.0, 0.3))),
+            MeshMaterial3d(mat),
+        ));
+    }
+    let mut u2_header = commands.spawn((
+        Transform::from_xyz(4.5, 2.7, 9.0),
+        Collider::cuboid(1.0, 0.3, 0.15),
+        RigidBody::Fixed,
+        Name::new("UnusedRoom2_Header"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), shelf_mat.clone()) {
+        u2_header.insert((
+            Mesh3d(m.add(Cuboid::new(2.0, 0.6, 0.3))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // =========================================================================
+    // 4. Staircase to Mezzanine (X in [8.5, 10.5], Z in [4.5, 9.0], Y from 0.0 to 3.0)
+    // =========================================================================
+    // Stepped stairs: collision for objects that are NOT player or elves
+    let stair_groups = CollisionGroups::new(GROUP_STAIRS, !(GROUP_PLAYER | GROUP_ELF));
+    for i in 0..12 {
+        let step_y = (i as f32 + 0.5) * 0.25;
+        let step_z = 4.5 + (i as f32 + 0.5) * 0.375;
+        let mut step_cmd = commands.spawn((
+            Transform::from_xyz(9.5, step_y, step_z),
+            Collider::cuboid(1.0, 0.125, 0.1875),
+            stair_groups,
+            RigidBody::Fixed,
+            StairStep { step_index: i },
+            Name::new(format!("StairStep_{}", i)),
+        ));
+        if let (Some(m), Some(mat)) = (meshes.as_mut(), shelf_mat.clone()) {
+            step_cmd.insert((
+                Mesh3d(m.add(Cuboid::new(2.0, 0.25, 0.375))),
+                MeshMaterial3d(mat),
+            ));
+        }
+    }
+
+    // Smooth collision ramp: for the player so that they ascend smoothly
+    let ramp_groups = CollisionGroups::new(GROUP_RAMP, GROUP_PLAYER);
+    let ramp_rot = Quat::from_rotation_x(-0.5880); // atan2(3.0, 4.5)
+    let mut ramp_cmd = commands.spawn((
+        Transform::from_xyz(9.5, 1.5, 6.75).with_rotation(ramp_rot),
+        Collider::cuboid(1.0, 0.05, 2.704),
+        ramp_groups,
+        RigidBody::Fixed,
+        StaircaseSmoothRamp,
+        Name::new("StaircaseSmoothRamp"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), shelf_mat.clone()) {
+        ramp_cmd.insert((
+            Mesh3d(m.add(Cuboid::new(2.0, 0.02, 5.408))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // =========================================================================
+    // 5. Mezzanine Area Above Rooms (Floor at Y = 3.0, Wood Railing, Wood Plank Floors)
+    // =========================================================================
+    let mut mezz_floor = commands.spawn((
+        Transform::from_xyz(0.0, 3.0, 11.0),
+        Collider::cuboid(13.0, 0.075, 2.0),
+        RigidBody::Fixed,
+        MezzanineArea {
+            floor_height: 3.0,
+            bounds_min: Vec3::new(-13.0, 3.0, 9.0),
+            bounds_max: Vec3::new(13.0, 8.0, 13.0),
+        },
+        Name::new("MezzanineFloor"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), floor_mat.clone()) {
+        mezz_floor.insert((
+            Mesh3d(m.add(Cuboid::new(26.0, 0.15, 4.0))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // Mezzanine Wood Railing along front edge (Z = 9.0)
+    // Left railing: X in [-13.0, 8.5] (width 21.5m)
+    let mut left_railing = commands.spawn((
+        Transform::from_xyz(-2.25, 3.5, 9.0),
+        Collider::cuboid(10.75, 0.5, 0.06),
+        RigidBody::Fixed,
+        Name::new("MezzanineRailing_Left"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), shelf_mat.clone()) {
+        left_railing.insert((
+            Mesh3d(m.add(Cuboid::new(21.5, 1.0, 0.12))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // Right railing: X in [10.5, 13.0] (width 2.5m)
+    let mut right_railing = commands.spawn((
+        Transform::from_xyz(11.75, 3.5, 9.0),
+        Collider::cuboid(1.25, 0.5, 0.06),
+        RigidBody::Fixed,
+        Name::new("MezzanineRailing_Right"),
+    ));
+    if let (Some(m), Some(mat)) = (meshes.as_mut(), shelf_mat.clone()) {
+        right_railing.insert((
+            Mesh3d(m.add(Cuboid::new(2.5, 1.0, 0.12))),
+            MeshMaterial3d(mat),
+        ));
+    }
+
+    // =========================================================================
+    // 6. Initial Moose Treat Jars & Restock Tracker Resource
     // =========================================================================
     let tracker = PantryRestockTracker::default();
     for slot_pos in &tracker.slots {
@@ -710,13 +1007,26 @@ pub fn pantry_door_spring_system(
 
         // Strictly enforce simple hinge rotating around fixed pivot:
         let hinge = door.hinge_anchor_pos;
+        let (forward, swing_out) = if door.hinge_forward != Vec3::ZERO {
+            (door.hinge_forward, door.hinge_swing_out)
+        } else if (door.hinge_anchor_pos.x - (-13.0)).abs() < 0.2 {
+            (Vec3::new(0.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 0.0))
+        } else {
+            (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0))
+        };
         let r = 0.73;
+        let cur_offset = yaw.cos() * forward + yaw.sin() * swing_out;
         tf.translation = Vec3::new(
-            hinge.x + r * yaw.sin(),
+            hinge.x + r * cur_offset.x,
             hinge.y,
-            hinge.z + r * yaw.cos(),
+            hinge.z + r * cur_offset.z,
         );
-        tf.rotation = Quat::from_rotation_y(yaw);
+        let base_rot = if (forward - Vec3::Z).length_squared() < 0.01 {
+            Quat::IDENTITY
+        } else {
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)
+        };
+        tf.rotation = base_rot * Quat::from_rotation_y(yaw);
     }
 }
 
@@ -760,7 +1070,7 @@ pub fn pantry_door_restock_cycle_system(
 
         let pantry_bounds = pantry_wing
             .and_then(|q| q.iter().next().map(|w| (w.bounds_min, w.bounds_max)))
-            .unwrap_or((Vec3::new(-17.0, 0.0, 3.5), Vec3::new(-13.0, 3.5, 7.5)));
+            .unwrap_or((Vec3::new(-13.0, 0.0, 9.0), Vec3::new(-7.0, 3.0, 13.0)));
 
         let is_in_pantry = |pos: Vec3| {
             pos.x >= pantry_bounds.0.x && pos.x <= pantry_bounds.1.x
@@ -785,7 +1095,7 @@ pub fn pantry_door_restock_cycle_system(
             }
 
             // Reset pantry supplies to default initialized state: spawn 1 jar at primary slot
-            let slot_pos = tracker.slots.first().copied().unwrap_or(Vec3::new(-15.0, 0.98, 3.80));
+            let slot_pos = tracker.slots.first().copied().unwrap_or(Vec3::new(-10.0, 0.98, 12.60));
             spawn_moose_treat_jar(
                 &mut commands,
                 &mut meshes,
@@ -815,8 +1125,15 @@ pub fn calculate_pantry_door_push_torque(
 ) -> f32 {
     let (_, yaw, _) = door_tf.rotation.to_euler(EulerRot::XYZ);
     let hinge = door.hinge_anchor_pos;
-    let door_dir = Vec3::new(yaw.sin(), 0.0, yaw.cos());
-    let door_normal = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
+    let (forward, swing_out) = if door.hinge_forward != Vec3::ZERO {
+        (door.hinge_forward, door.hinge_swing_out)
+    } else if (door.hinge_anchor_pos.x - (-13.0)).abs() < 0.2 {
+        (Vec3::new(0.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 0.0))
+    } else {
+        (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0))
+    };
+    let door_dir = yaw.cos() * forward + yaw.sin() * swing_out;
+    let door_normal = -yaw.sin() * forward + yaw.cos() * swing_out;
 
     let delta = Vec3::new(pos.x - hinge.x, 0.0, pos.z - hinge.z);
     let span = delta.dot(door_dir);

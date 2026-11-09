@@ -10,11 +10,11 @@ pub use soft_body::{
 };
 pub use ragdoll::{
     ElfAssistant, ElfNpcState, ElfLimbType, ElfRagdollLimb,
-    ElfMischiefTrait, ElfJob, ElfJobHat, ElfHatCloset,
+    ElfMischiefTrait, ElfJob, ElfJobHat, ElfHatCloset, PhilosopherPipe,
     ElfNavNode, ElfNavGraph, ElfNodePurpose, DynamicWaypointTarget,
-    setup_elf_assistants, spawn_hat_closet, spawn_three_job_hats,
+    setup_elf_assistants, spawn_hat_closet, spawn_three_job_hats, spawn_philosopher_pipe,
     elf_assistant_ai_system, elf_ragdoll_limb_animation_system,
-    hat_closet_interaction_system, elf_hat_assignment_system,
+    hat_closet_interaction_system, elf_hat_assignment_system, philosopher_pipe_system,
     debug_render_elf_nav_graph, spawn_single_elf,
 };
 
@@ -33,6 +33,7 @@ impl Plugin for PhysicsSandboxPlugin {
                     elf_ragdoll_limb_animation_system,
                     hat_closet_interaction_system,
                     elf_hat_assignment_system,
+                    philosopher_pipe_system,
                     debug_render_elf_nav_graph,
                 ),
             );

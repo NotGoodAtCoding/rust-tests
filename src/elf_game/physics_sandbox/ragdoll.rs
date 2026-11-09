@@ -39,6 +39,8 @@ pub enum ElfNpcState {
     VacuumRespawning,
     /// Navigating to pantry, checking if door is in the way, grabbing and pulling it open, going to pre-door node, then entering pantry.
     OpeningPantryDoor,
+    /// Contemplating reality at the mirror in thinking pose, or recruited elf listening in contemplation.
+    Philosophizing,
 }
 
 /// Mischievous behavioral traits assigned to workshop elves.
@@ -50,6 +52,8 @@ pub enum ElfMischiefTrait {
     Klepto,
     /// Tagged for future flammable mischief; currently passive.
     Pyro,
+    /// Contemplates existence at the Mirror Node, recruits other elves into thinking poses until philosophically debated.
+    Philosopher,
 }
 
 /// Tasks that can be assigned to elves by equipping them with hats.
@@ -65,6 +69,26 @@ pub enum ElfJob {
 pub struct ElfJobHat {
     pub job: ElfJob,
     pub worn_by: Option<Entity>,
+}
+
+/// A pipe hat item granting the Philosopher trait when equipped on an elf assistant.
+#[derive(Component, Debug, Clone)]
+pub struct PhilosopherPipe {
+    pub worn_by: Option<Entity>,
+    pub ember_intensity: f32,
+    pub ember_time: f32,
+    pub smoke_timer: f32,
+}
+
+impl Default for PhilosopherPipe {
+    fn default() -> Self {
+        Self {
+            worn_by: None,
+            ember_intensity: 1.0,
+            ember_time: 0.0,
+            smoke_timer: 0.0,
+        }
+    }
 }
 
 /// Interactive wardrobe on the back wall dispensing job hats.
@@ -83,6 +107,7 @@ pub enum ElfNodePurpose {
     PantryShelves,
     HatCloset,
     KleptoStash,
+    MirrorNode,
 }
 
 /// Target option for dynamic waypoint navigation for Elves, Moose, and other NPCs.
@@ -227,7 +252,7 @@ impl ElfNavGraph {
                 name: "SouthCentralHall".to_string(),
                 position: Vec3::new(0.0, 0.45, 7.0),
                 radius: 1.6,
-                neighbors: vec![8, 10, 12, 14],
+                neighbors: vec![8, 10, 12, 14, 19],
                 purpose: None,
             },
             // Node 12: Back Wall Hat Closet
@@ -236,7 +261,7 @@ impl ElfNavGraph {
                 name: "HatCloset".to_string(),
                 position: Vec3::new(-4.5, 0.45, 10.5),
                 radius: 1.4,
-                neighbors: vec![8, 11],
+                neighbors: vec![8, 11, 19],
                 purpose: Some(ElfNodePurpose::HatCloset),
             },
             // Node 13: Southwest Klepto Stash Leaf Node
@@ -292,6 +317,15 @@ impl ElfNavGraph {
                 radius: 1.4,
                 neighbors: vec![10],
                 purpose: Some(ElfNodePurpose::KleptoStash),
+            },
+            // Node 19: Mirror Node (at back wall near hat stand: X = -3.0, Z = 10.5)
+            ElfNavNode {
+                id: 19,
+                name: "MirrorNode".to_string(),
+                position: Vec3::new(-3.0, 0.45, 10.5),
+                radius: 1.2,
+                neighbors: vec![11, 12],
+                purpose: Some(ElfNodePurpose::MirrorNode),
             },
         ];
 
@@ -420,6 +454,11 @@ pub struct ElfAssistant {
     // Pantry door opening navigation sequence
     pub pantry_door_phase: u8,
     pub pantry_door_timer: f32,
+
+    // Philosopher Mischief state
+    pub is_recruiter: bool,
+    pub recruit_timer: f32,
+    pub is_recruited: bool,
 }
 
 impl ElfAssistant {
@@ -468,6 +507,9 @@ impl ElfAssistant {
             missing_treats_panic: false,
             pantry_door_phase: 0,
             pantry_door_timer: 0.0,
+            is_recruiter: false,
+            recruit_timer: 0.0,
+            is_recruited: false,
         }
     }
 
@@ -985,17 +1027,21 @@ pub fn hat_closet_interaction_system(
     }
 }
 
-/// When a player holding a job hat interacts with an elf, the hat is placed on that elf.
+/// When a player holding a job hat or philosopher pipe interacts with an elf, the hat is placed on that elf.
 pub fn elf_hat_assignment_system(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
-    mut q_player: Query<(&Transform, &mut ElfHands), (Without<ElfJobHat>, Without<ElfAssistant>)>,
-    mut q_elves: Query<(Entity, &Transform, &mut ElfAssistant), (Without<ElfHands>, Without<ElfJobHat>)>,
+    mut q_player: Query<(&Transform, &mut ElfHands), (Without<ElfJobHat>, Without<PhilosopherPipe>, Without<ElfAssistant>)>,
+    mut q_elves: Query<(Entity, &Transform, &mut ElfAssistant), (Without<ElfHands>, Without<ElfJobHat>, Without<PhilosopherPipe>)>,
     mut q_hats: Query<
         (&mut Transform, &mut ElfJobHat, Option<&mut Velocity>),
-        (Without<ElfAssistant>, Without<ElfHands>),
+        (Without<ElfAssistant>, Without<ElfHands>, Without<PhilosopherPipe>),
+    >,
+    mut q_pipes: Query<
+        (&mut Transform, &mut PhilosopherPipe, Option<&mut Velocity>),
+        (Without<ElfAssistant>, Without<ElfHands>, Without<ElfJobHat>),
     >,
     mut commands: Commands,
 ) {
@@ -1019,7 +1065,7 @@ pub fn elf_hat_assignment_system(
         return;
     };
 
-    // Check if player is holding a hat in either hand
+    // Check if player is holding a job hat in either hand
     let held_hat_e = if let Some(e) = hands.right_grabbed {
         if q_hats.contains(e) {
             Some((e, true))
@@ -1036,8 +1082,21 @@ pub fn elf_hat_assignment_system(
         None
     };
 
-    let Some((hat_entity, is_right)) = held_hat_e else {
-        return;
+    // Check if player is holding a philosopher pipe in either hand
+    let held_pipe_e = if let Some(e) = hands.right_grabbed {
+        if q_pipes.contains(e) {
+            Some((e, true))
+        } else {
+            hands.left_grabbed.filter(|&le| q_pipes.contains(le)).map(|le| (le, false))
+        }
+    } else if let Some(e) = hands.left_grabbed {
+        if q_pipes.contains(e) {
+            Some((e, false))
+        } else {
+            None
+        }
+    } else {
+        None
     };
 
     // Find nearest elf within interaction range (< 2.2m)
@@ -1049,7 +1108,11 @@ pub fn elf_hat_assignment_system(
         }
     }
 
-    if let Some((target_elf_e, _)) = nearest_elf {
+    let Some((target_elf_e, _)) = nearest_elf else {
+        return;
+    };
+
+    if let Some((hat_entity, is_right)) = held_hat_e {
         // Release hat from player's hand
         if is_right {
             hands.right_grabbed = None;
@@ -1094,6 +1157,97 @@ pub fn elf_hat_assignment_system(
                 elf.path_step = 0;
             }
         }
+    } else if let Some((pipe_entity, is_right)) = held_pipe_e {
+        // Release pipe from player's hand
+        if is_right {
+            hands.right_grabbed = None;
+        } else {
+            hands.left_grabbed = None;
+        }
+
+        if let Ok((mut pipe_tf, mut pipe, opt_vel)) = q_pipes.get_mut(pipe_entity) {
+            pipe.worn_by = Some(target_elf_e);
+
+            // Stop physics velocity
+            if let Some(mut vel) = opt_vel {
+                vel.linear = Vec3::ZERO;
+                vel.angular = Vec3::ZERO;
+            }
+
+            // Reparent pipe onto elf head
+            commands.entity(pipe_entity).remove::<(HeldByPlayer, Sensor, RigidBody, Collider, Grabbable)>();
+            commands.entity(pipe_entity).insert(ChildOf(target_elf_e));
+
+            // Position pipe at mouth / lower face
+            pipe_tf.translation = Vec3::new(0.08, 0.05, 0.18);
+            pipe_tf.rotation = Quat::IDENTITY;
+        }
+
+        // Grant Philosopher trait to elf!
+        if let Ok((_, _, mut elf)) = q_elves.get_mut(target_elf_e) {
+            if let Some(old_hat) = elf.worn_hat_entity {
+                if old_hat != pipe_entity {
+                    commands.entity(old_hat).despawn();
+                }
+            }
+            elf.mischief_trait = ElfMischiefTrait::Philosopher;
+            elf.is_recruiter = true;
+            elf.recruit_timer = 0.0;
+            elf.worn_hat_entity = Some(pipe_entity);
+            elf.assigned_job = None;
+            elf.state = ElfNpcState::Wandering;
+            elf.path.clear();
+            elf.path_step = 0;
+        }
+    }
+}
+
+/// Spawns a dynamic grabbable Philosopher Pipe.
+pub fn spawn_philosopher_pipe(
+    commands: &mut Commands,
+    meshes: Option<&mut Assets<Mesh>>,
+    materials: Option<&mut Assets<StandardMaterial>>,
+    pos: Vec3,
+) -> Entity {
+    let mut cmd = commands.spawn((
+        PhilosopherPipe::default(),
+        Transform::from_translation(pos),
+        Velocity::default(),
+        RigidBody::Dynamic,
+        Collider::cuboid(0.03, 0.04, 0.08),
+        Grabbable,
+        Name::new("PhilosopherPipe"),
+    ));
+    if let (Some(m), Some(mats)) = (meshes, materials) {
+        let pipe_mesh = m.add(Cuboid::new(0.04, 0.06, 0.12));
+        let pipe_mat = mats.add(StandardMaterial {
+            base_color: Color::srgb(0.35, 0.18, 0.08),
+            perceptual_roughness: 0.8,
+            ..default()
+        });
+        cmd.insert((Mesh3d(pipe_mesh), MeshMaterial3d(pipe_mat)));
+    }
+    cmd.id()
+}
+
+/// Updates the soft fluctuating ember glow and smoke timer for the Philosopher Pipe.
+pub fn philosopher_pipe_system(
+    time: Option<Res<Time>>,
+    menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
+    mut q_pipes: Query<&mut PhilosopherPipe>,
+) {
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+    let Some(time) = time else { return };
+    let dt = time.delta_secs();
+
+    for mut pipe in &mut q_pipes {
+        pipe.ember_time += dt;
+        // Soft ember glow that slowly fluctuates from the pipe
+        pipe.ember_intensity = 0.65 + 0.35 * (pipe.ember_time * 2.5).sin();
+        pipe.smoke_timer += dt;
     }
 }
 
@@ -1195,6 +1349,7 @@ pub fn elf_assistant_ai_system(
         .iter()
         .map(|(e, tf, _, _, _, _, _)| (e, tf.translation))
         .collect();
+    let mut recruited_elves: Vec<(Entity, Entity)> = Vec::new();
 
     for (_elf_entity, mut elf_tf, mut vel, mut impulse, mut locked_axes, mut elf, opt_comp_target) in &mut q_elves {
         if elf.klepto_cooldown > 0.0 {
@@ -1230,7 +1385,8 @@ pub fn elf_assistant_ai_system(
             | ElfNpcState::StashingPresent
             | ElfNpcState::FetchingMooseTreat
             | ElfNpcState::DeliveringMooseTreat
-            | ElfNpcState::OpeningPantryDoor => {
+            | ElfNpcState::OpeningPantryDoor
+            | ElfNpcState::Philosophizing => {
                 // If Moose is agitated or rampaging, panic immediately!
                 if moose_breached || moose_agitated {
                     elf.state = ElfNpcState::Panicking;
@@ -1361,6 +1517,106 @@ pub fn elf_assistant_ai_system(
                     elf.state = ElfNpcState::FetchingMooseTreat;
                     elf.path.clear();
                     elf.path_step = 0;
+                }
+
+                // 4. Philosopher Trait Mirror Navigation & Contemplation Logic
+                if elf.mischief_trait == ElfMischiefTrait::Philosopher {
+                    let mirror_node_idx = nav_graph
+                        .as_ref()
+                        .and_then(|g| g.find_node_by_purpose(ElfNodePurpose::MirrorNode))
+                        .unwrap_or(19);
+
+                    if elf.state != ElfNpcState::Philosophizing {
+                        // Pathfind to Mirror Node
+                        if elf.path.is_empty() || elf.target_node != mirror_node_idx {
+                            if let Some(ref graph) = nav_graph {
+                                if let Some(path) = graph.find_path(elf.current_node, mirror_node_idx) {
+                                    elf.path = path;
+                                    elf.path_step = 0;
+                                    elf.target_node = mirror_node_idx;
+                                }
+                            }
+                        }
+
+                        let target_pos = if let Some(ref graph) = nav_graph {
+                            if elf.path_step < elf.path.len() {
+                                graph.nodes[elf.path[elf.path_step]].position
+                            } else {
+                                graph.nodes.get(mirror_node_idx).map(|n| n.position).unwrap_or(elf.target_waypoint)
+                            }
+                        } else {
+                            elf.target_waypoint
+                        };
+
+                        let flat_diff = Vec3::new(
+                            target_pos.x - elf_tf.translation.x,
+                            0.0,
+                            target_pos.z - elf_tf.translation.z,
+                        );
+                        let dist = flat_diff.length();
+
+                        if dist < 0.8 {
+                            if let Some(ref _graph) = nav_graph {
+                                if elf.path_step + 1 < elf.path.len() {
+                                    elf.current_node = elf.path[elf.path_step];
+                                    elf.path_step += 1;
+                                } else {
+                                    elf.current_node = mirror_node_idx;
+                                    elf.state = ElfNpcState::Philosophizing;
+                                    elf.state_timer = 0.0;
+                                    elf.recruit_timer = 0.0;
+                                    vel.linear.x = 0.0;
+                                    vel.linear.z = 0.0;
+                                }
+                            } else {
+                                elf.state = ElfNpcState::Philosophizing;
+                                elf.state_timer = 0.0;
+                                elf.recruit_timer = 0.0;
+                                vel.linear.x = 0.0;
+                                vel.linear.z = 0.0;
+                            }
+                        } else {
+                            let dir = flat_diff / dist;
+                            vel.linear.x = dir.x * elf.walk_speed;
+                            vel.linear.z = dir.z * elf.walk_speed;
+                            if dir.length_squared() > 0.001 {
+                                let target_rot = Quat::from_rotation_y(dir.x.atan2(dir.z));
+                                elf_tf.rotation = elf_tf.rotation.slerp(target_rot, (dt * 8.0).min(1.0));
+                            }
+                        }
+                        continue;
+                    } else {
+                        // In Philosophizing state at Mirror Node!
+                        vel.linear.x = 0.0;
+                        vel.linear.z = 0.0;
+                        elf.state_timer += dt;
+                        elf.recruit_timer += dt;
+
+                        // Recruiting behavior: if left alone for >= 10s, recruit another elf to join
+                        if elf.recruit_timer >= 10.0 {
+                            elf.recruit_timer = 0.0;
+                            let mut nearest_recruit: Option<(Entity, f32)> = None;
+                            for (other_e, other_pos) in &elf_positions {
+                                if *other_e != _elf_entity {
+                                    let d = other_pos.distance(elf_tf.translation);
+                                    if nearest_recruit.is_none() || d < nearest_recruit.unwrap().1 {
+                                        nearest_recruit = Some((*other_e, d));
+                                    }
+                                }
+                            }
+                            if let Some((r_e, _)) = nearest_recruit {
+                                recruited_elves.push((r_e, _elf_entity));
+                            }
+                        }
+                        continue;
+                    }
+                }
+
+                // Recruited elf standing in contemplation pose alongside philosopher
+                if elf.is_recruited && elf.state == ElfNpcState::Philosophizing {
+                    vel.linear.x = 0.0;
+                    vel.linear.z = 0.0;
+                    continue;
                 }
 
                 // Navigation execution
@@ -1786,7 +2042,13 @@ pub fn elf_assistant_ai_system(
                     let arrival_dist = if is_dynamic { 1.2 } else { 0.5 };
 
                     if dist < arrival_dist {
-                        if is_dynamic {
+                        if elf.is_recruited {
+                            elf.state = ElfNpcState::Philosophizing;
+                            elf.state_timer = 0.0;
+                            elf.dynamic_target = None;
+                            vel.linear.x = 0.0;
+                            vel.linear.z = 0.0;
+                        } else if is_dynamic {
                             elf.state = ElfNpcState::Inspecting;
                             elf.state_timer = 0.0;
                             vel.linear.x = 0.0;
@@ -2211,6 +2473,18 @@ pub fn elf_assistant_ai_system(
             }
         }
     }
+
+    for (recruit_e, phil_e) in recruited_elves {
+        if let Ok((_, _, _, _, _, mut r_elf, _)) = q_elves.get_mut(recruit_e) {
+            if r_elf.mischief_trait != ElfMischiefTrait::Philosopher && !r_elf.is_recruited {
+                r_elf.is_recruited = true;
+                r_elf.dynamic_target = Some(DynamicWaypointTarget::Npc(phil_e));
+                r_elf.state = ElfNpcState::Wandering;
+                r_elf.path.clear();
+                r_elf.path_step = 0;
+            }
+        }
+    }
 }
 
 /// Drives procedural limb animations for walking, panicking arm flails, slacking slouch, and dynamic ragdoll wobble.
@@ -2459,6 +2733,39 @@ pub fn elf_ragdoll_limb_animation_system(
                         limb_tf.rotation = Quat::from_rotation_x(-0.4 + wobble * 0.2);
                     }
                     _ => {
+                        limb_tf.rotation = limb.rest_local_rotation;
+                    }
+                }
+            }
+
+            ElfNpcState::Philosophizing => {
+                let breathe = (total_time * 2.0).sin() * 0.015;
+                match limb.limb_type {
+                    ElfLimbType::Torso => {
+                        limb_tf.translation = limb.rest_local_translation + Vec3::Y * breathe;
+                        limb_tf.rotation = Quat::from_rotation_x(0.12);
+                    }
+                    ElfLimbType::Head => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        // Head tilted down and slightly turned in contemplative thought
+                        limb_tf.rotation = Quat::from_euler(EulerRot::YXZ, 0.15, 0.20, 0.0);
+                    }
+                    ElfLimbType::RightArm => {
+                        // Right hand under chin / near mouth (Rodin's Thinker pose)
+                        limb_tf.translation = limb.rest_local_translation + Vec3::new(-0.06, 0.12, 0.08);
+                        limb_tf.rotation = Quat::from_euler(EulerRot::XYZ, -1.2, 0.4, 0.3);
+                    }
+                    ElfLimbType::LeftArm => {
+                        // Left arm folded across lower chest supporting elbow
+                        limb_tf.translation = limb.rest_local_translation + Vec3::new(0.08, 0.04, 0.06);
+                        limb_tf.rotation = Quat::from_euler(EulerRot::XYZ, -0.6, -0.3, -0.5);
+                    }
+                    ElfLimbType::LeftLeg | ElfLimbType::RightLeg => {
+                        limb_tf.translation = limb.rest_local_translation;
+                        limb_tf.rotation = Quat::IDENTITY;
+                    }
+                    _ => {
+                        limb_tf.translation = limb.rest_local_translation;
                         limb_tf.rotation = limb.rest_local_rotation;
                     }
                 }

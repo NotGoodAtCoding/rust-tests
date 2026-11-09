@@ -20,6 +20,8 @@ pub enum DialogueAction {
     ClearJob,
     /// Elf speaks or provides feedback text inside the dialogue wheel.
     Speak(String),
+    /// Resolves philosophical contemplation and returns philosopher and listening elves back to work.
+    ConcludePhilosophy(String),
     /// Closes the dialogue (or returns up one level if in a submenu).
     Close,
 }
@@ -203,6 +205,7 @@ pub fn build_default_elf_dialogue(elf: &ElfAssistant) -> DialogueMenu {
             ElfMischiefTrait::Lazy => "*Yawn* Taking a quick break. What's up?".to_string(),
             ElfMischiefTrait::Klepto => "Just admiring the workshop presents!".to_string(),
             ElfMischiefTrait::Pyro => "Watching the warm holiday hearth glow.".to_string(),
+            ElfMischiefTrait::Philosopher => "Contemplating the infinite holiday void.".to_string(),
         },
     };
 
@@ -274,6 +277,142 @@ pub fn build_default_elf_dialogue(elf: &ElfAssistant) -> DialogueMenu {
     }
 }
 
+/// Builds a deep philosophical dialogue tree required to convince a Philosopher elf to return to work.
+pub fn build_philosopher_dialogue(elf: &ElfAssistant) -> DialogueMenu {
+    // Branch 1: The Meaning of Toy Making
+    let toys_level3 = DialogueMenu {
+        title: "Joy of Creation".to_string(),
+        prompt: "If joy is creation, why do we toil on an assembly line?".to_string(),
+        options: vec![
+            DialogueOption {
+                label: "Shared Purpose".to_string(),
+                description: "Shared holiday purpose unites all elves in joy.".to_string(),
+                action: DialogueAction::ConcludePhilosophy(
+                    "By Saint Nick's beard... you have synthesized the thesis and antithesis! My mind is clear. I shall return to work at once!".to_string(),
+                ),
+            },
+            DialogueOption {
+                label: "Doubt Toys".to_string(),
+                description: "Presents are just material distractions.".to_string(),
+                action: DialogueAction::Speak("Indeed... the void of consumerism swallows the tinsel.".to_string()),
+            },
+        ],
+    };
+
+    let toys_menu = DialogueMenu {
+        title: "Meaning of Toys".to_string(),
+        prompt: "If a locomotive is painted in the forest with no child to unwrap it, does it roll?".to_string(),
+        options: vec![
+            DialogueOption {
+                label: "Creation is Joy".to_string(),
+                description: "The joy of creation transcends the wrapping.".to_string(),
+                action: DialogueAction::Submenu(toys_level3),
+            },
+            DialogueOption {
+                label: "Presents Fade".to_string(),
+                description: "Snow is eternal, ribbons are fleeting.".to_string(),
+                action: DialogueAction::Speak("A melancholy truth. We wrap only to unwrap nothingness.".to_string()),
+            },
+        ],
+    };
+
+    // Branch 2: Cogito Ergo Present
+    let cogito_level3 = DialogueMenu {
+        title: "Santa's Observation".to_string(),
+        prompt: "Do we exist if Santa is asleep?".to_string(),
+        options: vec![
+            DialogueOption {
+                label: "Santa Believes".to_string(),
+                description: "Santa's belief collapses the existential wavefunction!".to_string(),
+                action: DialogueAction::ConcludePhilosophy(
+                    "Enlightenment achieved! Santa's gaze gives purpose to every ribbon! Back to the workbench!".to_string(),
+                ),
+            },
+            DialogueOption {
+                label: "We are Illusions".to_string(),
+                description: "We are merely figments of a winter dream.".to_string(),
+                action: DialogueAction::Speak("The dream fades... yet the conveyor belt hums endlessly.".to_string()),
+            },
+        ],
+    };
+
+    let cogito_menu = DialogueMenu {
+        title: "Cogito Ergo Present".to_string(),
+        prompt: "I wrap, therefore I am? Or do I only exist when unwrapped?".to_string(),
+        options: vec![
+            DialogueOption {
+                label: "Observe Santa".to_string(),
+                description: "Examine Santa's quantum observation of elves.".to_string(),
+                action: DialogueAction::Submenu(cogito_level3),
+            },
+            DialogueOption {
+                label: "Doubt Everything".to_string(),
+                description: "Doubt even the peppermint bark.".to_string(),
+                action: DialogueAction::Speak("When one stares into the hot cocoa, the hot cocoa stares back.".to_string()),
+            },
+        ],
+    };
+
+    // Branch 3: The Soul of Mr. Moose
+    let moose_level3 = DialogueMenu {
+        title: "Moose Empathy".to_string(),
+        prompt: "Is his bucking an expression of ontological dread?".to_string(),
+        options: vec![
+            DialogueOption {
+                label: "Empathy & Treats".to_string(),
+                description: "His hunger is a desire for connection and treats!".to_string(),
+                action: DialogueAction::ConcludePhilosophy(
+                    "Profound wisdom! Empathy transcends the animalistic id! I shall go help feed Mr. Moose!".to_string(),
+                ),
+            },
+            DialogueOption {
+                label: "Just a Moose".to_string(),
+                description: "He is just an angry beast with antlers.".to_string(),
+                action: DialogueAction::Speak("Reductionism is unworthy of Santa's workshop.".to_string()),
+            },
+        ],
+    };
+
+    let moose_menu = DialogueMenu {
+        title: "Soul of Mr. Moose".to_string(),
+        prompt: "Mr. Moose hungers, he huffs, he rampages. What is the root of his angst?".to_string(),
+        options: vec![
+            DialogueOption {
+                label: "Examine Hunger".to_string(),
+                description: "Analyze the connection between hunger and existential angst.".to_string(),
+                action: DialogueAction::Submenu(moose_level3),
+            },
+            DialogueOption {
+                label: "Fear the Antlers".to_string(),
+                description: "Antlers represent the harsh brutality of nature.".to_string(),
+                action: DialogueAction::Speak("Nature is red in tooth and candy cane.".to_string()),
+            },
+        ],
+    };
+
+    DialogueMenu {
+        title: format!("Philosopher {}", elf.name),
+        prompt: "*Puffs pipe* Traveler, before we make toys... what IS joy? Can Santa truly know the present?".to_string(),
+        options: vec![
+            DialogueOption {
+                label: "Meaning of Toys".to_string(),
+                description: "Debate the ontological essence of toy making.".to_string(),
+                action: DialogueAction::Submenu(toys_menu),
+            },
+            DialogueOption {
+                label: "Cogito Ergo Present".to_string(),
+                description: "Discuss whether wrapping defines elf existence.".to_string(),
+                action: DialogueAction::Submenu(cogito_menu),
+            },
+            DialogueOption {
+                label: "Soul of Moose".to_string(),
+                description: "Contemplate Mr. Moose's inner emotional landscape.".to_string(),
+                action: DialogueAction::Submenu(moose_menu),
+            },
+        ],
+    }
+}
+
 /// Global resource tracking the active elf dialogue session.
 #[derive(Resource, Debug)]
 pub struct ActiveDialogue {
@@ -316,7 +455,11 @@ impl ActiveDialogue {
         self.elf_trait = Some(elf.mischief_trait);
         self.elf_job = elf.assigned_job;
         self.menu_stack.clear();
-        let menu = build_default_elf_dialogue(elf);
+        let menu = if elf.mischief_trait == ElfMischiefTrait::Philosopher || elf.state == ElfNpcState::Philosophizing {
+            build_philosopher_dialogue(elf)
+        } else {
+            build_default_elf_dialogue(elf)
+        };
         self.sections_cache = compute_wheel_sections(&menu);
         self.current_menu = Some(menu);
         self.selected_index = 0;
@@ -760,6 +903,25 @@ pub fn elf_dialogue_interaction_system(
                     active_dialogue.status_feedback = reply;
                     active_dialogue.dirty = true;
                 }
+                DialogueAction::ConcludePhilosophy(reply) => {
+                    if let Some(elf_entity) = active_dialogue.elf_entity {
+                        if let Ok((_, _, mut elf)) = q_elves.get_mut(elf_entity) {
+                            elf.mischief_trait = ElfMischiefTrait::Lazy;
+                            elf.state = ElfNpcState::Wandering;
+                            elf.is_recruiter = false;
+                            elf.recruit_timer = 0.0;
+                        }
+                    }
+                    for (_, _, mut other_elf) in &mut q_elves {
+                        if other_elf.is_recruited {
+                            other_elf.is_recruited = false;
+                            other_elf.state = ElfNpcState::Wandering;
+                            other_elf.dynamic_target = None;
+                        }
+                    }
+                    active_dialogue.status_feedback = reply;
+                    active_dialogue.dirty = true;
+                }
             }
         }
     }
@@ -788,6 +950,8 @@ fn execute_back_action(
                 if elf.state == ElfNpcState::InDialogue {
                     elf.state = if elf.assigned_job == Some(ElfJob::MooseFeeder) {
                         ElfNpcState::FetchingMooseTreat
+                    } else if elf.mischief_trait == ElfMischiefTrait::Philosopher {
+                        ElfNpcState::Philosophizing
                     } else {
                         match elf.previous_state {
                             ElfNpcState::InDialogue | ElfNpcState::RagdollTumble => ElfNpcState::Wandering,

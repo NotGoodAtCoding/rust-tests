@@ -10658,3 +10658,277 @@ fn test_elf_navigates_pantry_door_opening_sequence() {
         );
     }
 }
+
+#[test]
+fn test_philosopher_pipe_equipping_and_ember_glow() {
+    use rust_tests::elf_game::physics_sandbox::ragdoll::{
+        ElfAssistant, ElfMischiefTrait, PhilosopherPipe,
+        elf_hat_assignment_system, philosopher_pipe_system,
+    };
+    use rust_tests::elf_game::player::ElfHands;
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time);
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+
+    let pipe_entity = app.world_mut().spawn((
+        PhilosopherPipe::default(),
+        Transform::from_xyz(0.0, 1.0, 0.0),
+        Velocity::default(),
+    )).id();
+
+    // Spawn player holding pipe in right hand
+    let player_e = app.world_mut().spawn((
+        Transform::from_xyz(0.0, 0.45, 0.0),
+        ElfHands {
+            right_grabbed: Some(pipe_entity),
+            ..default()
+        },
+    )).id();
+
+    // Spawn assistant elf nearby (< 2m)
+    let elf_e = app.world_mut().spawn((
+        Transform::from_xyz(0.5, 0.45, 0.5),
+        ElfAssistant::new(1, "ThinkerElf", vec![]),
+    )).id();
+
+    app.add_systems(Update, (elf_hat_assignment_system, philosopher_pipe_system).chain());
+
+    // Press KeyE to equip hat/pipe onto nearby elf
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyE);
+    app.update();
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().clear();
+
+    // Verify player released pipe and pipe was assigned to elf
+    {
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.right_grabbed, None, "Player must release pipe after equipping");
+
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert_eq!(
+            elf.mischief_trait,
+            ElfMischiefTrait::Philosopher,
+            "Equipping philosopher pipe must grant Philosopher mischief trait"
+        );
+        assert!(elf.is_recruiter, "Philosopher elf must be marked as recruiter");
+        assert_eq!(elf.worn_hat_entity, Some(pipe_entity));
+
+        let pipe = app.world().get::<PhilosopherPipe>(pipe_entity).unwrap();
+        assert_eq!(pipe.worn_by, Some(elf_e));
+    }
+
+    // Advance time and check ember intensity fluctuation
+    for _ in 0..10 {
+        {
+            let mut time_res = app.world_mut().resource_mut::<Time>();
+            time_res.advance_by(std::time::Duration::from_millis(100));
+        }
+        app.update();
+    }
+
+    {
+        let pipe = app.world().get::<PhilosopherPipe>(pipe_entity).unwrap();
+        assert!(pipe.ember_time > 0.5, "Pipe ember timer should advance");
+        assert!(pipe.smoke_timer > 0.5, "Pipe smoke timer should advance");
+        assert!(
+            pipe.ember_intensity >= 0.25 && pipe.ember_intensity <= 1.05,
+            "Ember intensity must fluctuate softly within bounds"
+        );
+    }
+}
+
+#[test]
+fn test_philosopher_elf_navigates_to_mirror_node_and_recruits() {
+    use rust_tests::elf_game::physics_sandbox::ragdoll::{
+        ElfAssistant, ElfMischiefTrait, ElfNavGraph, ElfNpcState, DynamicWaypointTarget,
+        elf_assistant_ai_system,
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time);
+    app.insert_resource(ElfNavGraph::default());
+
+    // Spawn philosopher elf at Hallway (Node 11 at 0.0, 0.45, 7.0)
+    let mut phil_elf_comp = ElfAssistant::new(10, "SocratesElf", vec![]);
+    phil_elf_comp.mischief_trait = ElfMischiefTrait::Philosopher;
+    phil_elf_comp.current_node = 11;
+
+    let phil_e = app.world_mut().spawn((
+        Transform::from_xyz(0.0, 0.45, 7.0),
+        Velocity::default(),
+        ExternalImpulse::default(),
+        LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
+        phil_elf_comp,
+    )).id();
+
+    // Spawn a regular helper elf wandering at SouthCentralHall
+    let helper_e = app.world_mut().spawn((
+        Transform::from_xyz(-1.0, 0.45, 7.5),
+        Velocity::default(),
+        ExternalImpulse::default(),
+        LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
+        ElfAssistant::new(20, "HelperElf", vec![]),
+    )).id();
+
+    app.add_systems(Update, elf_assistant_ai_system);
+
+    // 1. Philosopher elf should target Node 19 (MirrorNode)
+    app.update();
+
+    {
+        let phil = app.world().get::<ElfAssistant>(phil_e).unwrap();
+        assert_eq!(phil.target_node, 19, "Philosopher elf must target Mirror Node (19)");
+    }
+
+    // Teleport philosopher elf to MirrorNode (-3.0, 0.45, 10.5)
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(phil_e).unwrap();
+        tf.translation = Vec3::new(-3.0, 0.45, 10.5);
+    }
+
+    // Update to register arrival at MirrorNode
+    app.update();
+
+    {
+        let phil = app.world().get::<ElfAssistant>(phil_e).unwrap();
+        assert_eq!(
+            phil.state,
+            ElfNpcState::Philosophizing,
+            "Philosopher elf at Mirror Node must enter Philosophizing state"
+        );
+    }
+
+    // Advance 11 seconds to trigger recruiting logic
+    {
+        let mut tf = app.world_mut().get_mut::<ElfAssistant>(phil_e).unwrap();
+        tf.recruit_timer = 10.5;
+    }
+
+    app.update();
+
+    // Verify helper elf was recruited to philosopher
+    {
+        let helper = app.world().get::<ElfAssistant>(helper_e).unwrap();
+        assert!(helper.is_recruited, "Helper elf must be recruited by philosopher");
+        assert_eq!(
+            helper.dynamic_target,
+            Some(DynamicWaypointTarget::Npc(phil_e)),
+            "Recruited elf must navigate to philosopher elf"
+        );
+    }
+
+    // Move helper elf close to philosopher (< 1.5m)
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(helper_e).unwrap();
+        tf.translation = Vec3::new(-2.8, 0.45, 10.2);
+    }
+
+    app.update();
+
+    // Verify helper elf has entered Philosophizing state in thinking pose alongside philosopher
+    {
+        let helper = app.world().get::<ElfAssistant>(helper_e).unwrap();
+        assert_eq!(
+            helper.state,
+            ElfNpcState::Philosophizing,
+            "Recruited elf arriving near philosopher must enter Philosophizing thinking state"
+        );
+    }
+}
+
+#[test]
+fn test_philosopher_dialogue_tree_resolution_gets_elf_back_to_work() {
+    use rust_tests::elf_game::dialogue::{
+        ActiveDialogue, DialogueAction,
+    };
+    use rust_tests::elf_game::physics_sandbox::ragdoll::{
+        ElfAssistant, ElfMischiefTrait, ElfNpcState,
+    };
+
+    let mut app = App::new();
+
+    let mut phil_comp = ElfAssistant::new(1, "PlatoElf", vec![]);
+    phil_comp.mischief_trait = ElfMischiefTrait::Philosopher;
+    phil_comp.state = ElfNpcState::Philosophizing;
+    phil_comp.is_recruiter = true;
+
+    let phil_e = app.world_mut().spawn((
+        Transform::from_xyz(-3.0, 0.45, 10.5),
+        phil_comp,
+    )).id();
+
+    let mut helper_comp = ElfAssistant::new(2, "StudentElf", vec![]);
+    helper_comp.state = ElfNpcState::Philosophizing;
+    helper_comp.is_recruited = true;
+
+    let helper_e = app.world_mut().spawn((
+        Transform::from_xyz(-2.5, 0.45, 10.5),
+        helper_comp,
+    )).id();
+
+    let mut active_dialogue = ActiveDialogue::default();
+
+    // 1. Open dialogue for philosopher elf
+    {
+        let elf = app.world().get::<ElfAssistant>(phil_e).unwrap();
+        active_dialogue.open_for_elf(phil_e, elf);
+    }
+
+    assert!(active_dialogue.is_active);
+    let root_menu = active_dialogue.current_menu.as_ref().unwrap();
+    assert!(root_menu.prompt.contains("what IS joy?"));
+    assert_eq!(root_menu.options.len(), 3);
+    assert_eq!(root_menu.options[0].label, "Meaning of Toys");
+    assert_eq!(root_menu.options[1].label, "Cogito Ergo Present");
+    assert_eq!(root_menu.options[2].label, "Soul of Moose");
+
+    // 2. Navigate into branch 1: "Meaning of Toys"
+    let action1 = root_menu.options[0].action.clone();
+    let DialogueAction::Submenu(sub1) = action1 else { panic!("Expected Submenu"); };
+    assert_eq!(sub1.options.len(), 2);
+    assert_eq!(sub1.options[0].label, "Creation is Joy");
+
+    // 3. Navigate into level 3: "Creation is Joy" -> "Shared Purpose"
+    let action2 = sub1.options[0].action.clone();
+    let DialogueAction::Submenu(sub2) = action2 else { panic!("Expected Submenu level 3"); };
+    assert_eq!(sub2.options[0].label, "Shared Purpose");
+
+    // 4. Conclude Philosophy action!
+    let action3 = sub2.options[0].action.clone();
+    let DialogueAction::ConcludePhilosophy(msg) = action3 else { panic!("Expected ConcludePhilosophy"); };
+    assert!(msg.contains("synthesized the thesis and antithesis"));
+
+    // Simulate selecting ConcludePhilosophy
+    {
+        let mut q_elves = app.world_mut().query::<(Entity, &Transform, &mut ElfAssistant)>();
+        // Directly resolve as dialogue system does:
+        if let Ok((_, _, mut elf)) = q_elves.get_mut(app.world_mut(), phil_e) {
+            elf.mischief_trait = ElfMischiefTrait::Lazy;
+            elf.state = ElfNpcState::Wandering;
+            elf.is_recruiter = false;
+        }
+        for (_, _, mut other) in q_elves.iter_mut(app.world_mut()) {
+            if other.is_recruited {
+                other.is_recruited = false;
+                other.state = ElfNpcState::Wandering;
+                other.dynamic_target = None;
+            }
+        }
+    }
+
+    // 5. Verify both philosopher and recruited elf returned to work (Wandering state)
+    let phil_after = app.world().get::<ElfAssistant>(phil_e).unwrap();
+    assert_eq!(phil_after.state, ElfNpcState::Wandering, "Philosopher elf must return to work");
+    assert_ne!(phil_after.mischief_trait, ElfMischiefTrait::Philosopher, "Philosopher trait must be resolved");
+
+    let helper_after = app.world().get::<ElfAssistant>(helper_e).unwrap();
+    assert_eq!(helper_after.state, ElfNpcState::Wandering, "Recruited elf must return to work");
+    assert!(!helper_after.is_recruited, "Recruited status must be cleared");
+}

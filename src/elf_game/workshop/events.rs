@@ -89,6 +89,7 @@ pub fn monitor_present_delivery(
     q_chute: Query<&Transform, With<PresentDeliveryChute>>,
     mut quota: ResMut<WorkshopQuota>,
     mut delivery_messages: Option<MessageWriter<PresentDeliveredMessage>>,
+    mut confetti_events: Option<MessageWriter<crate::elf_game::workshop::particles::SpawnConfettiEvent>>,
     mut commands: Commands,
 ) {
     let Ok(chute_tf) = q_chute.single() else {
@@ -104,6 +105,12 @@ pub fn monitor_present_delivery(
                     quality: present.quality_score,
                 });
             }
+            if let Some(ref mut writer) = confetti_events {
+                writer.write(crate::elf_game::workshop::particles::SpawnConfettiEvent {
+                    position: chute_tf.translation + Vec3::Y * 0.5,
+                    count: 24,
+                });
+            }
             commands.entity(entity).despawn();
         }
     }
@@ -115,6 +122,7 @@ pub fn handle_moose_window_breach(
     mut q_window: Query<(&mut Visibility, &mut BreakableWindowPane)>,
     mut q_moose: Query<(Entity, &mut Transform), With<MrMoose>>,
     mut q_player: Query<&mut ElfMovement>,
+    mut glass_events: Option<MessageWriter<crate::elf_game::workshop::particles::SpawnGlassShardsEvent>>,
     mut commands: Commands,
 ) {
     let Some(mut messages) = breach_messages else {
@@ -126,6 +134,13 @@ pub fn handle_moose_window_breach(
         for (mut vis, mut pane) in &mut q_window {
             pane.is_broken = true;
             *vis = Visibility::Hidden;
+        }
+
+        if let Some(ref mut writer) = glass_events {
+            writer.write(crate::elf_game::workshop::particles::SpawnGlassShardsEvent {
+                position: Vec3::new(-6.5, 1.8, -13.0),
+                count: 32,
+            });
         }
 
         // Add rampage tracker to Mr. Moose and leap into opening

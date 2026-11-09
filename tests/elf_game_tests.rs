@@ -126,6 +126,7 @@ fn test_gift_tag_pen_writing_and_paper_pattern_variants() {
     assert_eq!(roll.pattern, PaperPattern::Plain);
     assert_eq!(roll.cycle(), PaperPattern::PolkaDots);
     assert_eq!(roll.cycle(), PaperPattern::Stripes);
+    assert_eq!(roll.cycle(), PaperPattern::Snowflakes);
     assert_eq!(roll.cycle(), PaperPattern::Plain);
 
     // 2. Present requiring PolkaDotPattern and GiftTagAttached
@@ -13739,4 +13740,122 @@ fn test_assembly_line_diverter_and_catapult() {
         "Catapult must launch elf high into the air (Y >= 7.0), got {}",
         elf_vel.linear.y
     );
+}
+#[test]
+fn test_visual_polish_confetti_glass_shards_and_snowflakes() {
+    use rust_tests::elf_game::{
+        workshop::particles::{
+            ConfettiParticle, GlassShardParticle, SpawnConfettiEvent, SpawnGlassShardsEvent,
+            confetti_particle_system, confetti_spawner_listener_system,
+            glass_shard_particle_system, glass_shard_spawner_listener_system,
+        },
+        wrapping::{
+            PaperPattern, PaperPatternRoll, Present, UseToolOnPresentMessage,
+            WrappingFeature, WrappingTool, generate_snowflake_pattern_image,
+            handle_present_wrapping,
+        },
+    };
+
+    // 1. Test Snowflake Image Generation
+    let snow_img = generate_snowflake_pattern_image();
+    assert_eq!(snow_img.texture_descriptor.size.width, 64);
+    assert_eq!(snow_img.texture_descriptor.size.height, 64);
+    let raw = snow_img.data.as_ref().expect("Snowflake image data must exist");
+    assert!(!raw.is_empty());
+
+    // 2. Test PaperPatternRoll Cycling to Snowflakes
+    let mut roll = PaperPatternRoll::default();
+    assert_eq!(roll.pattern, PaperPattern::Plain);
+    assert_eq!(roll.cycle(), PaperPattern::PolkaDots);
+    assert_eq!(roll.cycle(), PaperPattern::Stripes);
+    assert_eq!(roll.cycle(), PaperPattern::Snowflakes);
+    assert_eq!(roll.cycle(), PaperPattern::Plain);
+
+    // 3. Test Present Wrapping with Snowflake Pattern
+    let mut wrap_app = App::new();
+    wrap_app.add_message::<UseToolOnPresentMessage>();
+    wrap_app.add_systems(Update, handle_present_wrapping);
+
+    let present_e = wrap_app.world_mut().spawn(Present::default()).id();
+
+    // Apply wrapping paper with Snowflake pattern
+    {
+        let mut msgs = wrap_app.world_mut().resource_mut::<bevy::ecs::message::Messages<UseToolOnPresentMessage>>();
+        msgs.write(UseToolOnPresentMessage {
+            present_entity: present_e,
+            tool: WrappingTool::WrappingPaperRoll,
+            pattern: Some(PaperPattern::Snowflakes),
+            inscription: None,
+        });
+    }
+    wrap_app.update();
+
+    let present = wrap_app.world().get::<Present>(present_e).unwrap();
+    assert!(
+        present.features.contains(&WrappingFeature::SnowflakePattern),
+        "Present wrapped with Snowflake paper must have SnowflakePattern feature"
+    );
+    assert!(
+        present.features.contains(&WrappingFeature::PaperWrapped),
+        "Present wrapped with paper must have PaperWrapped feature"
+    );
+
+    // 4. Test Confetti and Glass Shard Particle Systems
+    let mut particle_app = App::new();
+    particle_app.insert_resource(Assets::<Mesh>::default());
+    particle_app.insert_resource(Assets::<StandardMaterial>::default());
+    particle_app.add_message::<SpawnConfettiEvent>();
+    particle_app.add_message::<SpawnGlassShardsEvent>();
+
+    particle_app.add_systems(
+        Update,
+        (
+            confetti_spawner_listener_system,
+            glass_shard_spawner_listener_system,
+            confetti_particle_system,
+            glass_shard_particle_system,
+        ),
+    );
+
+    // Dispatch SpawnConfettiEvent
+    {
+        let mut msgs = particle_app.world_mut().resource_mut::<bevy::ecs::message::Messages<SpawnConfettiEvent>>();
+        msgs.write(SpawnConfettiEvent {
+            position: Vec3::new(5.0, 3.8, -4.0),
+            count: 20,
+        });
+    }
+
+    // Dispatch SpawnGlassShardsEvent
+    {
+        let mut msgs = particle_app.world_mut().resource_mut::<bevy::ecs::message::Messages<SpawnGlassShardsEvent>>();
+        msgs.write(SpawnGlassShardsEvent {
+            position: Vec3::new(-6.5, 1.8, -13.0),
+            count: 25,
+        });
+    }
+
+    particle_app.update();
+
+    // Verify 20 confetti particles spawned
+    let confetti_count = particle_app.world_mut().query::<&ConfettiParticle>().iter(particle_app.world()).count();
+    assert_eq!(confetti_count, 20, "20 confetti particles must spawn from event");
+
+    // Verify 25 glass shard particles spawned
+    let shard_count = particle_app.world_mut().query::<&GlassShardParticle>().iter(particle_app.world()).count();
+    assert_eq!(shard_count, 25, "25 glass shard particles must spawn from event");
+
+    // Advance simulation and verify physics: gravity and floor bounce
+    for _ in 0..10 {
+        particle_app.update();
+    }
+
+    // All shards should be above or at floor (Y >= 0.05)
+    for tf in particle_app.world_mut().query_filtered::<&Transform, With<GlassShardParticle>>().iter(particle_app.world()) {
+        assert!(
+            tf.translation.y >= 0.04,
+            "Glass shard must bounce off the floor (Y >= 0.05), got {}",
+            tf.translation.y
+        );
+    }
 }

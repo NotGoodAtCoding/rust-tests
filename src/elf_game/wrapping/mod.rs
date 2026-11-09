@@ -1,5 +1,9 @@
 use std::collections::HashSet;
-use bevy::prelude::*;
+use bevy::{
+    asset::RenderAssetUsages,
+    prelude::*,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+};
 use bevy::ecs::message::{Message, MessageReader};
 
 pub mod auto_wrapper;
@@ -20,6 +24,7 @@ pub enum WrappingFeature {
     GiftTagAttached,
     PolkaDotPattern,
     StripedPattern,
+    SnowflakePattern,
     PlasmaShrinkSealed,
 }
 
@@ -30,6 +35,7 @@ pub enum PaperPattern {
     Plain,
     PolkaDots,
     Stripes,
+    Snowflakes,
 }
 
 /// Component attached to wrapping paper rolls specifying their pattern variant.
@@ -55,7 +61,8 @@ impl PaperPatternRoll {
         self.pattern = match self.pattern {
             PaperPattern::Plain => PaperPattern::PolkaDots,
             PaperPattern::PolkaDots => PaperPattern::Stripes,
-            PaperPattern::Stripes => PaperPattern::Plain,
+            PaperPattern::Stripes => PaperPattern::Snowflakes,
+            PaperPattern::Snowflakes => PaperPattern::Plain,
         };
         self.pattern
     }
@@ -219,10 +226,17 @@ pub fn handle_present_wrapping(
                         Some(PaperPattern::PolkaDots) => {
                             present.features.insert(WrappingFeature::PolkaDotPattern);
                             present.features.remove(&WrappingFeature::StripedPattern);
+                            present.features.remove(&WrappingFeature::SnowflakePattern);
                         }
                         Some(PaperPattern::Stripes) => {
                             present.features.insert(WrappingFeature::StripedPattern);
                             present.features.remove(&WrappingFeature::PolkaDotPattern);
+                            present.features.remove(&WrappingFeature::SnowflakePattern);
+                        }
+                        Some(PaperPattern::Snowflakes) => {
+                            present.features.insert(WrappingFeature::SnowflakePattern);
+                            present.features.remove(&WrappingFeature::PolkaDotPattern);
+                            present.features.remove(&WrappingFeature::StripedPattern);
                         }
                         _ => {}
                     }
@@ -300,4 +314,85 @@ impl Plugin for WrappingPlugin {
                 ).chain(),
             );
     }
+}
+
+/// Generates a procedural 64x64 festive snowflake wrapping paper texture
+pub fn generate_snowflake_pattern_image() -> Image {
+    const W: u32 = 64;
+    const H: u32 = 64;
+    let mut data = vec![0u8; (W * H * 4) as usize];
+
+    // Deep festive emerald pine green background
+    let bg_r = 18;
+    let bg_g = 68;
+    let bg_b = 32;
+
+    for i in (0..data.len()).step_by(4) {
+        data[i] = bg_r;
+        data[i + 1] = bg_g;
+        data[i + 2] = bg_b;
+        data[i + 3] = 255;
+    }
+
+    let set_pixel = |x: i32, y: i32, r: u8, g: u8, b: u8, data: &mut [u8]| {
+        let x = x.rem_euclid(W as i32) as u32;
+        let y = y.rem_euclid(H as i32) as u32;
+        let idx = ((y * W + x) * 4) as usize;
+        data[idx] = r;
+        data[idx + 1] = g;
+        data[idx + 2] = b;
+        data[idx + 3] = 255;
+    };
+
+    let draw_snowflake = |cx: i32, cy: i32, radius: i32, data: &mut [u8]| {
+        // Crisp snow white
+        let (sr, sg, sb) = (248, 250, 255);
+        // Central hub
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                set_pixel(cx + dx, cy + dy, sr, sg, sb, data);
+            }
+        }
+        // 6-fold radial symmetry arms
+        for step in 1..=radius {
+            // Horizontal and vertical crosses
+            set_pixel(cx + step, cy, sr, sg, sb, data);
+            set_pixel(cx - step, cy, sr, sg, sb, data);
+            set_pixel(cx, cy + step, sr, sg, sb, data);
+            set_pixel(cx, cy - step, sr, sg, sb, data);
+
+            // Diagonal arms
+            set_pixel(cx + step, cy + step, sr, sg, sb, data);
+            set_pixel(cx - step, cy - step, sr, sg, sb, data);
+            set_pixel(cx + step, cy - step, sr, sg, sb, data);
+            set_pixel(cx - step, cy + step, sr, sg, sb, data);
+
+            // Branching crystal barbs
+            if step == radius / 2 {
+                set_pixel(cx + step - 1, cy + step + 1, sr, sg, sb, data);
+                set_pixel(cx + step + 1, cy + step - 1, sr, sg, sb, data);
+                set_pixel(cx - step + 1, cy - step - 1, sr, sg, sb, data);
+                set_pixel(cx - step - 1, cy - step + 1, sr, sg, sb, data);
+            }
+        }
+    };
+
+    // Draw main snowflake in center and offset snowflakes around the tile
+    draw_snowflake(32, 32, 12, &mut data);
+    draw_snowflake(0, 0, 8, &mut data);
+    draw_snowflake(64, 0, 8, &mut data);
+    draw_snowflake(0, 64, 8, &mut data);
+    draw_snowflake(64, 64, 8, &mut data);
+
+    Image::new(
+        Extent3d {
+            width: W,
+            height: H,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    )
 }

@@ -10,6 +10,7 @@ pub mod stove;
 pub mod stable_door;
 pub mod baking;
 pub mod catapult;
+pub mod particles;
 
 pub use room::VacuumTractorBeamCone;
 pub use progression::*;
@@ -18,6 +19,7 @@ pub use stove::*;
 pub use stable_door::*;
 pub use baking::*;
 pub use catapult::*;
+pub use particles::*;
 
 #[derive(Message, Debug, Clone)]
 pub struct UnlockDoorMessage {
@@ -68,6 +70,8 @@ impl Plugin for WorkshopPlugin {
             .add_message::<baking::CookieBakedEvent>()
             .add_message::<catapult::TriggerCatapultMessage>()
             .add_message::<catapult::ToggleDiverterMessage>()
+            .add_message::<particles::SpawnConfettiEvent>()
+            .add_message::<particles::SpawnGlassShardsEvent>()
             .add_systems(
                 Startup,
                 (
@@ -84,6 +88,10 @@ impl Plugin for WorkshopPlugin {
                     catapult::assembly_line_ramp_physics_system,
                     catapult::conveyor_catapult_system,
                     catapult::catapult_and_diverter_interaction_system,
+                    particles::confetti_spawner_listener_system,
+                    particles::glass_shard_spawner_listener_system,
+                    particles::confetti_particle_system,
+                    particles::glass_shard_particle_system,
                 ),
             )
             .add_systems(

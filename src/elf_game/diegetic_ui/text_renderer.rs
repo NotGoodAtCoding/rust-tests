@@ -349,3 +349,31 @@ fn blend_pixel(pixel: &mut [u8], tr: f32, tg: f32, tb: f32, src_alpha: f32) {
         pixel[3] = (out_a * 255.0).clamp(0.0, 255.0) as u8;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_render_text_to_image_rasterization() {
+        let test_img = render_text_to_image(
+            "WRAPPING STATION\n▲ ASSEMBLE • TIE ┌─┐",
+            28.0,
+            Color::srgb(1.0, 0.9, 0.2),
+            Color::srgba(0.0, 0.0, 0.0, 0.0),
+            512,
+            128,
+            true,
+        );
+        assert_eq!(test_img.texture_descriptor.size.width, 512);
+        assert_eq!(test_img.texture_descriptor.size.height, 128);
+        let data = test_img.data.as_ref().expect("Image must have pixel data");
+        assert_eq!(data.len(), 512 * 128 * 4);
+        let non_zero_pixels = data.chunks_exact(4).filter(|p| p[3] > 0).count();
+        assert!(
+            non_zero_pixels > 200,
+            "Rasterizer must draw anti-aliased text and procedural symbols (got {} text pixels)",
+            non_zero_pixels
+        );
+    }
+}

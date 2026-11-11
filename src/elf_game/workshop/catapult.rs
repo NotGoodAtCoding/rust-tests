@@ -497,3 +497,171 @@ pub fn catapult_and_diverter_interaction_system(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy_rapier3d::prelude::Velocity;
+    use crate::elf_game::{
+        physics_sandbox::ragdoll::{ElfAssistant, ElfNpcState},
+        player::hands::Grabbable,
+        wrapping::Present,
+    };
+
+    #[test]
+    fn test_assembly_line_diverter_and_catapult() {
+        let mut app = App::new();
+        app.add_message::<TriggerCatapultMessage>();
+        app.add_message::<ToggleDiverterMessage>();
+
+        // 1. Spawn Diverter Paddle
+        let diverter_e = app
+            .world_mut()
+            .spawn((
+                AssemblyLineDiverter::default(),
+                Transform::from_xyz(3.0, 0.88, 3.0),
+            ))
+            .id();
+
+        // 2. Spawn Diverter Lever
+        let _div_lever_e = app
+            .world_mut()
+            .spawn((
+                DiverterLever { diverter_entity: diverter_e },
+                Transform::from_xyz(3.0, 0.3, 2.0),
+            ))
+            .id();
+
+        // 3. Spawn Assembly Line Gravity Ramp
+        let ramp_start = Vec3::new(3.0, 0.85, 2.8);
+        let ramp_end = Vec3::new(1.5, 0.55, -2.0);
+        app.world_mut().spawn((
+            AssemblyLineRamp {
+                start_pos: ramp_start,
+                end_pos: ramp_end,
+                slide_speed: 2.5,
+            },
+            Transform::from_xyz(2.25, 0.7, 0.4),
+        ));
+
+        // 4. Spawn Conveyor Catapult
+        let catapult_e = app
+            .world_mut()
+            .spawn((
+                ConveyorCatapult {
+                    state: CatapultState::Ready,
+                    launch_velocity: Vec3::new(-10.0, 9.5, -6.5),
+                    arm_angle: 0.0,
+                    target_angle: 0.0,
+                    state_timer: 0.0,
+                    cooldown_duration: 1.5,
+                    auto_trigger: true,
+                    trigger_radius: 0.75,
+                },
+                Transform::from_xyz(6.5, 0.88, 3.0),
+            ))
+            .id();
+
+        // 5. Spawn Catapult Lever
+        let _cat_lever_e = app
+            .world_mut()
+            .spawn((
+                CatapultLever { catapult_entity: catapult_e },
+                Transform::from_xyz(6.5, 0.3, 2.0),
+            ))
+            .id();
+
+        // 6. Spawn Present Cube on Conveyor approaching diverter
+        let cube_e = app
+            .world_mut()
+            .spawn((
+                Present::default(),
+                Grabbable,
+                Velocity::zero(),
+                Transform::from_xyz(3.0, 0.88, 3.0),
+            ))
+            .id();
+
+        // 7. Spawn Ragdoll Elf near catapult
+        let elf_e = app
+            .world_mut()
+            .spawn((
+                ElfAssistant::new(1, "TestElf", vec![Vec3::new(6.5, 0.88, 3.0)]),
+                Velocity::zero(),
+                Transform::from_xyz(6.5, 0.88, 3.0),
+            ))
+            .id();
+
+        app.add_systems(
+            Update,
+            (
+                catapult_and_diverter_interaction_system,
+                conveyor_diverter_paddle_system,
+                assembly_line_ramp_physics_system,
+                conveyor_catapult_system,
+            ),
+        );
+
+        // Initial tick: diverter is not diverting
+        app.update();
+        let div = app.world().get::<AssemblyLineDiverter>(diverter_e).unwrap();
+        assert!(!div.is_diverting, "Diverter should start inactive (passthrough)");
+
+        // Test Toggle Message: activate diverter
+        {
+            let mut msgs = app.world_mut().resource_mut::<bevy::ecs::message::Messages<ToggleDiverterMessage>>();
+            msgs.write(ToggleDiverterMessage);
+        }
+        app.update();
+
+        let div = app.world().get::<AssemblyLineDiverter>(diverter_e).unwrap();
+        assert!(div.is_diverting, "Diverter must toggle to diverting on message");
+
+        // Advance diverter paddle rotation and test cube deflection
+        for _ in 0..5 {
+            app.update();
+        }
+        let cube_vel = app.world().get::<Velocity>(cube_e).unwrap();
+        assert!(
+            cube_vel.linear.z < -0.5,
+            "Diverter must deflect present cube off conveyor along -Z onto ramp, got {}",
+            cube_vel.linear.z
+        );
+
+        // Test Ramp Guided Physics: Move cube onto ramp
+        {
+            let mut tf = app.world_mut().get_mut::<Transform>(cube_e).unwrap();
+            tf.translation = Vec3::new(2.5, 0.75, 1.0);
+        }
+        app.update();
+        let ramp_vel = app.world().get::<Velocity>(cube_e).unwrap();
+        assert!(
+            ramp_vel.linear.z < -1.0,
+            "Ramp must accelerate present along slope toward workbench, got {}",
+            ramp_vel.linear.z
+        );
+
+        // Test Conveyor Catapult: Elf on catapult cradle auto-triggers launch
+        let cat = app.world().get::<ConveyorCatapult>(catapult_e).unwrap();
+        assert_eq!(
+            cat.state,
+            CatapultState::Launching,
+            "Catapult flipper must auto-trigger when entity enters cradle"
+        );
+
+        // Run launch frame: elf must ragdoll and launch with extreme impulse
+        app.update();
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        assert_eq!(
+            elf.state,
+            ElfNpcState::RagdollTumble,
+            "Elf flung by catapult must enter RagdollTumble"
+        );
+        let elf_vel = app.world().get::<Velocity>(elf_e).unwrap();
+        assert!(
+            elf_vel.linear.y >= 7.0,
+            "Catapult must launch elf high into the air (Y >= 7.0), got {}",
+            elf_vel.linear.y
+        );
+    }
+}

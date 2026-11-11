@@ -313,3 +313,131 @@ impl Plugin for PlayerPlugin {
             );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bhop_perfect_timing_and_speed_scaling() {
+        let config = BhopConfig {
+            window: BhopWindow::Sixtieth,
+            max_boost_multiplier: 1.41421356, // sqrt(2)
+        };
+        let mut movement = ElfMovement::default();
+        let dt = 1.0 / 60.0;
+        let wish_dir = Vec3::new(0.0, 0.0, -1.0);
+
+        movement.is_grounded = true;
+        movement.time_since_landing = 0.0;
+        update_elf_physics(dt, wish_dir, true, false, &config, &mut movement);
+        assert_eq!(movement.consecutive_bhops, 1);
+        assert!(!movement.is_grounded);
+
+        movement.is_grounded = true;
+        movement.time_since_landing = 0.0;
+        update_elf_physics(dt, wish_dir, true, false, &config, &mut movement);
+        assert_eq!(movement.consecutive_bhops, 2);
+
+        movement.is_grounded = true;
+        movement.time_since_landing = 0.0;
+        update_elf_physics(dt, wish_dir, true, false, &config, &mut movement);
+        assert_eq!(movement.consecutive_bhops, 3);
+        let expected_boosted_speed = movement.base_speed * 1.41421356;
+        assert!((movement.current_max_speed - expected_boosted_speed).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_bhop_holding_space_does_not_bunnyhop() {
+        let config = BhopConfig {
+            window: BhopWindow::Sixtieth,
+            max_boost_multiplier: 1.41421356,
+        };
+        let mut movement = ElfMovement {
+            consecutive_bhops: 2,
+            ..default()
+        };
+        let dt = 1.0 / 60.0;
+        let wish_dir = Vec3::new(0.0, 0.0, -1.0);
+
+        movement.is_grounded = true;
+        movement.time_since_landing = 0.05;
+        update_elf_physics(dt, wish_dir, false, true, &config, &mut movement);
+
+        assert_eq!(movement.consecutive_bhops, 0);
+        assert_eq!(movement.current_max_speed, movement.base_speed);
+    }
+
+    #[test]
+    fn test_air_straining_vs_ground_acceleration() {
+        let config = BhopConfig::default();
+        let dt = 0.1;
+        let wish_dir = Vec3::new(1.0, 0.0, 0.0);
+
+        let mut ground_movement = ElfMovement::default();
+        ground_movement.is_grounded = true;
+        update_elf_physics(dt, wish_dir, false, false, &config, &mut ground_movement);
+        let ground_delta_v = ground_movement.velocity.x;
+
+        let mut air_movement = ElfMovement::default();
+        air_movement.is_grounded = false;
+        update_elf_physics(dt, wish_dir, false, false, &config, &mut air_movement);
+        let air_delta_v = air_movement.velocity.x;
+
+        assert!(air_delta_v > 0.0, "Air straining should impart some acceleration");
+        assert!(
+            air_delta_v < ground_delta_v * 0.25,
+            "Air straining ({air_delta_v}) must be much weaker than ground control ({ground_delta_v})"
+        );
+    }
+
+    #[test]
+    fn test_dual_hands_tape_pulling_and_limits() {
+        let mut hands = ElfHands::default();
+
+        assert_eq!(hands.update_tape_pull(0.5, true), None);
+        assert!((hands.current_tape_length - 0.125).abs() < 0.001);
+
+        let tape_cut = hands.update_tape_pull(0.0, false);
+        assert_eq!(tape_cut, Some(0.125));
+        assert_eq!(hands.current_tape_length, 0.0);
+
+        hands.update_tape_pull(2.0, true);
+        assert!(hands.tape_tangled, "Tape pulled beyond limit must tangle");
+
+        let ruined_tape = hands.update_tape_pull(0.0, false);
+        assert_eq!(ruined_tape, None);
+    }
+
+    #[test]
+    fn test_dual_hands_ribbon_shake_to_form_bow() {
+        let mut hands = ElfHands::default();
+
+        assert!(!hands.add_shake_energy(0.4));
+        assert!(!hands.add_shake_energy(0.4));
+
+        assert!(hands.add_shake_energy(0.3));
+        assert_eq!(hands.ribbon_shake_energy, 0.0, "Energy resets after forming bow");
+    }
+
+    #[test]
+    fn test_bhop_timing_window_cycling_and_debug_options() {
+        let mut config = BhopConfig::default();
+        assert_eq!(config.window, BhopWindow::Sixtieth);
+        assert_eq!(config.window.label(), "1/60s (Strict)");
+        assert!((config.window.duration_secs() - 1.0 / 60.0).abs() < 0.0001);
+
+        config.window = config.window.next();
+        assert_eq!(config.window, BhopWindow::Thirtieth);
+        assert_eq!(config.window.label(), "1/30s (Medium)");
+        assert!((config.window.duration_secs() - 1.0 / 30.0).abs() < 0.0001);
+
+        config.window = config.window.next();
+        assert_eq!(config.window, BhopWindow::Tenth);
+        assert_eq!(config.window.label(), "1/10s (Forgiving)");
+        assert!((config.window.duration_secs() - 1.0 / 10.0).abs() < 0.0001);
+
+        config.window = config.window.next();
+        assert_eq!(config.window, BhopWindow::Sixtieth);
+    }
+}

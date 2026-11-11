@@ -356,3 +356,280 @@ pub fn player_hat_equip_system(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_item_classes_and_hat_equipping_with_f_key() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+
+        let player_e = app
+            .world_mut()
+            .spawn((
+                ElfPlayer,
+                ElfMovement::default(),
+                ElfHands::default(),
+                Transform::from_xyz(0.0, 1.2, 0.0),
+                Name::new("ElfPlayer"),
+            ))
+            .id();
+
+        let _vm_root = app
+            .world_mut()
+            .spawn((
+                ViewModelRoot,
+                Transform::IDENTITY,
+                Visibility::default(),
+                ChildOf(player_e),
+                Name::new("ViewModelRoot"),
+            ))
+            .id();
+
+        let hat_e = app
+            .world_mut()
+            .spawn((
+                ElfJobHat {
+                    job: ElfJob::MooseFeeder,
+                    worn_by: None,
+                },
+                WearableHatItem::new(HatType::Job(ElfJob::MooseFeeder)),
+                ItemClass::WearableHat,
+                Transform::from_xyz(1.0, 0.5, 0.0),
+                Visibility::Inherited,
+                Name::new("MooseFeederHat"),
+            ))
+            .id();
+
+        app.add_systems(Update, player_hat_equip_system);
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<ItemClass>(hat_e).unwrap(),
+            ItemClass::WearableHat
+        );
+
+        {
+            let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+            hands.right_grabbed = Some(hat_e);
+        }
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyF);
+        }
+        app.update();
+
+        {
+            let hands = app.world().get::<ElfHands>(player_e).unwrap();
+            assert_eq!(hands.right_grabbed, None, "Hat must be cleared from hand on equip");
+
+            let worn = app.world().get::<PlayerWornHat>(player_e).expect("Player must have PlayerWornHat");
+            assert_eq!(worn.hat_entity, hat_e);
+            assert_eq!(worn.hat_type, HatType::Job(ElfJob::MooseFeeder));
+
+            let vis = app.world().get::<Visibility>(hat_e).unwrap();
+            assert_eq!(*vis, Visibility::Hidden, "Equipped hat should be hidden in world");
+        }
+    }
+
+    #[test]
+    fn test_hat_unequip_to_free_hand_when_pressing_f() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+
+        let hat_e = app
+            .world_mut()
+            .spawn((
+                ElfJobHat {
+                    job: ElfJob::PresentWrapper,
+                    worn_by: None,
+                },
+                WearableHatItem::new(HatType::Job(ElfJob::PresentWrapper)),
+                ItemClass::WearableHat,
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                Visibility::Hidden,
+                Name::new("PresentWrapperHat"),
+            ))
+            .id();
+
+        let player_e = app
+            .world_mut()
+            .spawn((
+                ElfPlayer,
+                ElfMovement::default(),
+                ElfHands::default(),
+                PlayerWornHat {
+                    hat_entity: hat_e,
+                    hat_type: HatType::Job(ElfJob::PresentWrapper),
+                },
+                Transform::from_xyz(0.0, 1.2, 0.0),
+                Name::new("ElfPlayer"),
+            ))
+            .id();
+
+        app.add_systems(Update, player_hat_equip_system);
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyF);
+        }
+        app.update();
+
+        assert!(app.world().get::<PlayerWornHat>(player_e).is_none(), "Player must no longer wear hat");
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.right_grabbed, Some(hat_e), "Hat must be unequipped into free right hand");
+        assert!(app.world().get::<HeldByPlayer>(hat_e).is_some());
+        assert_eq!(*app.world().get::<Visibility>(hat_e).unwrap(), Visibility::Inherited);
+    }
+
+    #[test]
+    fn test_hat_swap_when_both_hands_full_and_holding_different_hat() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+
+        let hat_a_e = app
+            .world_mut()
+            .spawn((
+                ElfJobHat {
+                    job: ElfJob::MooseFeeder,
+                    worn_by: None,
+                },
+                WearableHatItem::new(HatType::Job(ElfJob::MooseFeeder)),
+                ItemClass::WearableHat,
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                Visibility::Hidden,
+                Name::new("HatA_MooseFeeder"),
+            ))
+            .id();
+
+        let hat_b_e = app
+            .world_mut()
+            .spawn((
+                PhilosopherPipe::default(),
+                WearableHatItem::new(HatType::PhilosopherPipe),
+                ItemClass::WearableHat,
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                Visibility::Inherited,
+                Name::new("HatB_PhilosopherPipe"),
+            ))
+            .id();
+
+        let present_e = app
+            .world_mut()
+            .spawn((
+                ItemClass::GrabbablePhysics,
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                Visibility::Inherited,
+                Name::new("PresentCube"),
+            ))
+            .id();
+
+        let player_e = app
+            .world_mut()
+            .spawn((
+                ElfPlayer,
+                ElfMovement::default(),
+                ElfHands {
+                    left_grabbed: Some(present_e),
+                    right_grabbed: Some(hat_b_e),
+                    ..default()
+                },
+                PlayerWornHat {
+                    hat_entity: hat_a_e,
+                    hat_type: HatType::Job(ElfJob::MooseFeeder),
+                },
+                Transform::from_xyz(0.0, 1.2, 0.0),
+                Name::new("ElfPlayer"),
+            ))
+            .id();
+
+        app.add_systems(Update, player_hat_equip_system);
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyF);
+        }
+        app.update();
+
+        let worn = app.world().get::<PlayerWornHat>(player_e).expect("Player must wear Hat B");
+        assert_eq!(worn.hat_entity, hat_b_e);
+        assert_eq!(worn.hat_type, HatType::PhilosopherPipe);
+
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.right_grabbed, Some(hat_a_e), "Right hand must now hold swapped Hat A");
+        assert_eq!(hands.left_grabbed, Some(present_e), "Left hand must still hold non-hat present");
+    }
+
+    #[test]
+    fn test_hat_cannot_unequip_when_both_hands_full_with_non_hats() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+
+        let hat_e = app
+            .world_mut()
+            .spawn((
+                ElfJobHat {
+                    job: ElfJob::WorkshopMaintenance,
+                    worn_by: None,
+                },
+                WearableHatItem::new(HatType::Job(ElfJob::WorkshopMaintenance)),
+                ItemClass::WearableHat,
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                Visibility::Hidden,
+                Name::new("MaintenanceHat"),
+            ))
+            .id();
+
+        let non_hat1 = app.world_mut().spawn((ItemClass::GrabbablePhysics, Name::new("Cube1"))).id();
+        let non_hat2 = app.world_mut().spawn((ItemClass::HandheldTool, Name::new("Tape"))).id();
+
+        let player_e = app
+            .world_mut()
+            .spawn((
+                ElfPlayer,
+                ElfMovement::default(),
+                ElfHands {
+                    left_grabbed: Some(non_hat1),
+                    right_grabbed: Some(non_hat2),
+                    ..default()
+                },
+                PlayerWornHat {
+                    hat_entity: hat_e,
+                    hat_type: HatType::Job(ElfJob::WorkshopMaintenance),
+                },
+                Transform::from_xyz(0.0, 1.2, 0.0),
+                Name::new("ElfPlayer"),
+            ))
+            .id();
+
+        app.add_systems(Update, player_hat_equip_system);
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyF);
+        }
+        app.update();
+
+        let worn = app.world().get::<PlayerWornHat>(player_e).expect("Hat must remain equipped");
+        assert_eq!(worn.hat_entity, hat_e);
+
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.left_grabbed, Some(non_hat1));
+        assert_eq!(hands.right_grabbed, Some(non_hat2));
+    }
+}

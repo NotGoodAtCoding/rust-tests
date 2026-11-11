@@ -248,3 +248,245 @@ impl Plugin for MoosePlugin {
             );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::message::Messages;
+    use crate::elf_game::{
+        core::{GameState, WorkshopQuota},
+        ui::MenuState,
+        workshop::room::{TubeTravellingLump, tube_travelling_lump_system},
+    };
+
+    #[test]
+    fn test_moose_hunger_progression_stages() {
+        let mut app = App::new();
+        app.add_plugins(MoosePlugin);
+
+        // Initial state: hunger = 0.0 -> BehindShutters
+        {
+            let hunger = app.world().resource::<MooseHunger>();
+            assert_eq!(hunger.value, 0.0);
+            assert_eq!(hunger.stage, MooseHungerStage::BehindShutters);
+        }
+
+        // Advance 30 seconds -> PeekingThrough (20..50)
+        {
+            let mut time = Time::<()>::default();
+            time.advance_by(std::time::Duration::from_secs(30));
+            app.insert_resource(time);
+        }
+        app.update();
+        {
+            let hunger = app.world().resource::<MooseHunger>();
+            assert_eq!(hunger.stage, MooseHungerStage::PeekingThrough);
+            assert_eq!(hunger.value, 30.0);
+        }
+
+        // Advance another 25 seconds -> AgitatedHuffing (50..60)
+        {
+            let mut time = Time::<()>::default();
+            time.advance_by(std::time::Duration::from_secs(25));
+            app.insert_resource(time);
+        }
+        app.update();
+        {
+            let hunger = app.world().resource::<MooseHunger>();
+            assert_eq!(hunger.stage, MooseHungerStage::AgitatedHuffing);
+            assert_eq!(hunger.value, 55.0);
+        }
+
+        // Advance 10 seconds -> WindowSlammed (60.0 reached, starts breach countdown)
+        {
+            let mut time = Time::<()>::default();
+            time.advance_by(std::time::Duration::from_secs(10));
+            app.insert_resource(time);
+        }
+        app.update();
+        {
+            let hunger = app.world().resource::<MooseHunger>();
+            assert_eq!(hunger.stage, MooseHungerStage::WindowSlammed);
+            assert_eq!(hunger.value, 60.0);
+            assert!(hunger.breach_delay_remaining.is_some());
+        }
+
+        // Advance remaining breach delay (e.g. 7s) -> Smashes through into BreachedRampage
+        {
+            let mut time = Time::<()>::default();
+            time.advance_by(std::time::Duration::from_secs(7));
+            app.insert_resource(time);
+        }
+        app.update();
+        {
+            let hunger = app.world().resource::<MooseHunger>();
+            assert!(hunger.is_breached);
+            assert_eq!(hunger.stage, MooseHungerStage::BreachedRampage);
+        }
+    }
+
+    #[test]
+    fn test_moose_hunger_feeding_reduces_value() {
+        let mut app = App::new();
+        app.add_plugins(MoosePlugin);
+
+        // Set hunger to 45.0 (Peeking stage)
+        {
+            let mut hunger = app.world_mut().resource_mut::<MooseHunger>();
+            hunger.value = 45.0;
+            hunger.stage = MooseHungerStage::PeekingThrough;
+        }
+
+        // Spawn snack (30 nutrition)
+        let snack_entity = app.world_mut().spawn(MooseSnack {
+            nutrition_value: 30.0,
+        }).id();
+
+        // Feed moose
+        app.world_mut().write_message(FeedMooseMessage { snack_entity });
+        app.update();
+
+        let hunger = app.world().resource::<MooseHunger>();
+        assert_eq!(hunger.value, 15.0, "Hunger reduced by 30 to 15.0");
+        assert_eq!(hunger.stage, MooseHungerStage::BehindShutters, "Moose retreats behind shutters");
+        assert!(app.world().get_entity(snack_entity).is_err(), "Snack consumed");
+    }
+
+    #[test]
+    fn test_pause_button_and_menu_pauses_hunger_meter_and_timers() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+
+        app.insert_resource(MenuState::default());
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<GameState>();
+        app.insert_resource(MooseHunger {
+            value: 10.0,
+            increment_rate: 2.0,
+            stage: MooseHungerStage::BehindShutters,
+            ..default()
+        });
+        app.add_systems(Update, update_moose_hunger_system);
+
+        // 1. Unpaused: hunger accumulates with dt
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(1));
+        app.update();
+
+        let hunger_unpaused = app.world().resource::<MooseHunger>().value;
+        assert!(
+            hunger_unpaused > 10.0,
+            "Moose hunger must increase while game is unpaused, got {}",
+            hunger_unpaused
+        );
+
+        // 2. Pause via MenuState::is_open = true
+        app.world_mut().resource_mut::<MenuState>().is_open = true;
+
+        let snapshot_hunger = hunger_unpaused;
+        for _ in 0..10 {
+            app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(1));
+            app.update();
+        }
+
+        let hunger_paused_menu = app.world().resource::<MooseHunger>().value;
+        assert_eq!(
+            hunger_paused_menu, snapshot_hunger,
+            "Moose hunger must remain strictly frozen while menu is open"
+        );
+
+        // 3. Pause via GameState::Paused
+        {
+            let mut menu = app.world_mut().resource_mut::<MenuState>();
+            menu.is_open = false;
+            let mut next_state = app.world_mut().resource_mut::<NextState<GameState>>();
+            next_state.set(GameState::Paused);
+        }
+        app.update(); // Apply state transition
+
+        for _ in 0..10 {
+            app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(1));
+            app.update();
+        }
+
+        let hunger_paused_state = app.world().resource::<MooseHunger>().value;
+        assert_eq!(
+            hunger_paused_state, snapshot_hunger,
+            "Moose hunger must remain strictly frozen while GameState is Paused"
+        );
+
+        // 4. Unpause: resuming allows hunger to accumulate again
+        {
+            let mut next_state = app.world_mut().resource_mut::<NextState<GameState>>();
+            next_state.set(GameState::InWorkshop);
+        }
+        app.update();
+
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(1));
+        app.update();
+
+        let hunger_resumed = app.world().resource::<MooseHunger>().value;
+        assert!(
+            hunger_resumed > snapshot_hunger,
+            "Moose hunger must resume accumulating after unpausing, got {}",
+            hunger_resumed
+        );
+    }
+
+    #[test]
+    fn test_moose_initial_dormancy_and_first_present_wakeup() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+
+        // Insert dormant MooseHunger
+        app.insert_resource(MooseHunger::new_dormant());
+        app.insert_resource(WorkshopQuota::default());
+        app.add_message::<MooseAwakenedMessage>();
+
+        app.add_systems(Update, (update_moose_hunger_system, tube_travelling_lump_system));
+
+        // 1. Advance time while Mr. Moose is dormant: hunger remains 0.0, stage remains BehindShutters
+        for _ in 0..100 {
+            app.update();
+        }
+
+        let hunger = app.world().resource::<MooseHunger>();
+        assert!(hunger.is_dormant, "Mr. Moose must remain dormant initially");
+        assert_eq!(hunger.value, 0.0, "Hunger must stay at 0.0 while dormant");
+        assert_eq!(hunger.stage, MooseHungerStage::BehindShutters);
+
+        // 2. Dispatch a present through the pneumatic tube (progress = 0.99)
+        app.world_mut().spawn(TubeTravellingLump {
+            progress: 0.99,
+            speed: 1.0,
+            mass: 1.5,
+            size: 0.3,
+        });
+
+        app.update();
+
+        // 3. Delivery completed! Verify Mr. Moose has awakened
+        let updated_hunger = app.world().resource::<MooseHunger>();
+        assert!(!updated_hunger.is_dormant, "Mr. Moose must awaken when first present is delivered");
+
+        // Verify MooseAwakenedMessage was emitted
+        let events = app.world().resource::<Messages<MooseAwakenedMessage>>();
+        assert_eq!(events.len(), 1, "Must emit MooseAwakenedMessage on wakeup");
+
+        // 4. Now that Mr. Moose is awake, ticking time increments hunger normally (+1/s)
+        let initial_val = app.world().resource::<MooseHunger>().value;
+        for _ in 0..50 {
+            app.update();
+        }
+        let final_val = app.world().resource::<MooseHunger>().value;
+        assert!(
+            final_val > initial_val,
+            "Hunger must accumulate after awakening: was {}, now {}",
+            initial_val,
+            final_val
+        );
+    }
+}

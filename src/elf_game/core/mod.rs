@@ -90,3 +90,28 @@ impl Plugin for CorePlugin {
             .add_systems(Update, (sync_world_gravity_system, apply_physics_damping_system));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy_rapier3d::prelude::*;
+
+    #[test]
+    fn test_world_gravity_and_physics_damping() {
+        let mut app = App::new();
+        let rapier_entity = app.world_mut().spawn(RapierConfiguration::new(1.0)).id();
+        app.add_systems(Update, (sync_world_gravity_system, apply_physics_damping_system));
+        app.update();
+
+        let config = app.world().get::<RapierConfiguration>(rapier_entity).unwrap();
+        assert_eq!(config.gravity, WORLD_GRAVITY, "World gravity must be higher (-18.0 m/s^2)");
+
+        let dynamic_cube = app.world_mut().spawn((
+            RigidBody::Dynamic,
+            Transform::from_xyz(0.0, 1.0, 0.0),
+        )).id();
+        app.update();
+        let damping = app.world().get::<Damping>(dynamic_cube).expect("Dynamic physics objects must be given dampening");
+        assert!(damping.linear_damping >= 0.5, "Dynamic object must have linear damping");
+    }
+}

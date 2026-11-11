@@ -460,3 +460,135 @@ pub fn floppy_ears_physics_bob_system(
         tf.rotation = ear.rest_rotation * rot_delta;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::elf_game::player::{
+        hands::spawn_workshop_tools_and_materials,
+        update_elf_physics, BhopConfig, BhopWindow,
+    };
+
+    #[test]
+    fn test_bunny_ears_item_equip_viewmodel_and_bhop_mechanics() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<BhopConfig>();
+
+        app.add_systems(Startup, (
+            spawn_workshop_tools_and_materials,
+            |mut commands: Commands| {
+                let player_e = commands
+                    .spawn((
+                        ElfPlayer,
+                        ElfMovement::default(),
+                        ElfHands::default(),
+                        Transform::from_xyz(0.0, 1.2, 0.0),
+                        Name::new("ElfPlayer"),
+                    ))
+                    .id();
+
+                let _vm_root = commands
+                    .spawn((
+                        ViewModelRoot,
+                        Transform::IDENTITY,
+                        Visibility::default(),
+                        ChildOf(player_e),
+                        Name::new("ViewModelRoot"),
+                    ))
+                    .id();
+            },
+        ));
+
+        app.add_systems(
+            Update,
+            (
+                player_bunny_ears_equip_system,
+                floppy_ears_physics_bob_system,
+            ),
+        );
+
+        app.update();
+
+        let mut bunny_q = app.world_mut().query::<(Entity, &BunnyEarsItem, &Transform)>();
+        let (item_e, _, item_tf) = bunny_q.iter(app.world()).next().expect("BunnyEarsItem must spawn in workshop");
+        assert!((item_tf.translation.x - 1.8).abs() < 0.2);
+
+        let mut player_q = app.world_mut().query::<(Entity, &mut ElfHands)>();
+        let (p_e, mut hands) = player_q.single_mut(app.world_mut()).unwrap();
+        hands.right_grabbed = Some(item_e);
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyH);
+        }
+        app.update();
+
+        assert!(app.world().get::<BunnyEarsEquipped>(p_e).is_some(), "Player must have BunnyEarsEquipped");
+        let mov = app.world().get::<ElfMovement>(p_e).unwrap();
+        assert!(mov.has_bunny_ears, "Movement has_bunny_ears must be true");
+
+        let hands = app.world().get::<ElfHands>(p_e).unwrap();
+        assert_eq!(hands.right_grabbed, None, "Equipped item must be cleared from hand");
+
+        let mut item_check_q = app.world_mut().query::<&BunnyEarsItem>();
+        assert_eq!(item_check_q.iter(app.world()).count(), 0, "World pickup must be despawned on equip");
+
+        let mut vm_ears_q = app.world_mut().query::<&ViewmodelBunnyEars>();
+        assert_eq!(vm_ears_q.iter(app.world()).count(), 1, "ViewmodelBunnyEars must be spawned");
+
+        let mut floppy_q = app.world_mut().query::<(&FloppyEar, &Transform)>();
+        assert_eq!(floppy_q.iter(app.world()).count(), 2, "Must spawn left and right floppy ears");
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyH);
+            keys.reset(KeyCode::KeyH);
+            let mut mov = app.world_mut().get_mut::<ElfMovement>(p_e).unwrap();
+            mov.velocity = Vec3::new(4.0, 3.5, 0.0);
+        }
+        app.update();
+
+        let config = BhopConfig {
+            window: BhopWindow::Sixtieth,
+            max_boost_multiplier: 1.414,
+        };
+        let mut mov_equipped = ElfMovement {
+            is_grounded: true,
+            time_since_landing: 0.08,
+            has_bunny_ears: true,
+            ..default()
+        };
+        update_elf_physics(0.016, Vec3::ZERO, true, false, &config, &mut mov_equipped);
+        assert_eq!(mov_equipped.consecutive_bhops, 1, "Bunnyhop must succeed within 1/10s grace period when bunny ears equipped");
+        assert!((mov_equipped.velocity.y - 7.7).abs() < 0.01, "Player with bunny ears equipped must jump 10% higher (7.7 vs 7.0)");
+
+        let mut mov_air = ElfMovement {
+            is_grounded: false,
+            air_strain_accel: 5.0,
+            has_bunny_ears: true,
+            ..default()
+        };
+        update_elf_physics(0.1, Vec3::new(1.0, 0.0, 0.0), false, false, &config, &mut mov_air);
+        assert!((mov_air.velocity.x - 1.0).abs() < 0.01, "Player with bunny ears must have 2x air straining (1.0 vs 0.5)");
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyH);
+        }
+        app.update();
+
+        assert!(app.world().get::<BunnyEarsEquipped>(p_e).is_none(), "BunnyEarsEquipped must be removed on unequip");
+        let mov_after = app.world().get::<ElfMovement>(p_e).unwrap();
+        assert!(!mov_after.has_bunny_ears, "has_bunny_ears must be false after unequip");
+
+        let mut vm_check_q = app.world_mut().query::<&ViewmodelBunnyEars>();
+        assert_eq!(vm_check_q.iter(app.world()).count(), 0, "Viewmodel ears must be despawned on unequip");
+
+        let mut item_respawn_q = app.world_mut().query::<&BunnyEarsItem>();
+        assert_eq!(item_respawn_q.iter(app.world()).count(), 1, "BunnyEarsItem must drop back into world on unequip");
+    }
+}

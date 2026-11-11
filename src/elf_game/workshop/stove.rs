@@ -2043,3 +2043,8 @@ pub fn unattended_stove_and_pyro_hazard_system(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "stove_tests.rs"]
+mod tests;
+

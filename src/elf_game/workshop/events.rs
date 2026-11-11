@@ -717,3 +717,759 @@ pub fn moose_rampage_path_and_physics_impulse_system(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::elf_game::{
+        core::GameState,
+        player::hands::{GROUP_HELD_ITEM, GROUP_MOOSE, GROUP_PLAYER},
+        ui::MenuState,
+    };
+
+    #[test]
+    fn test_moose_rampage_retreat_and_reset() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+        app.insert_resource(MooseHunger {
+            value: 60.0,
+            stage: MooseHungerStage::BreachedRampage,
+            is_breached: true,
+            ..default()
+        });
+        app.add_systems(Update, moose_rampage_path_and_physics_impulse_system);
+
+        // Moose retreating along last leg towards (-6.5, 1.8, -17.0), currently at (-6.5, 1.4, -16.5)
+        // facing 180 degrees backward (away from the window, into -Z)
+        let moose_entity = app.world_mut().spawn((
+            MrMoose,
+            MooseRampageTracker {
+                current_waypoint_index: 1,
+                speed: 8.5,
+                waypoints: vec![
+                    Vec3::new(-6.5, 1.4, -10.0),
+                    Vec3::new(-6.5, 1.8, -17.0), // Final retreat destination
+                ],
+                ..default()
+            },
+            Transform::from_xyz(-6.5, 1.8, -16.6).with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+        )).id();
+
+        // Moose Head stretched forward from peeking / breach
+        let head_entity = app.world_mut().spawn((
+            MooseHead,
+            Transform::from_xyz(0.0, 1.1, 3.6).with_rotation(Quat::from_rotation_x(0.2)),
+        )).id();
+
+        // Shutters blown wide open
+        let shutter_entity = app.world_mut().spawn((
+            WindowShutters,
+            Transform::from_xyz(-7.4, 2.9, -13.0).with_rotation(Quat::from_rotation_y(1.95)),
+            Visibility::Hidden,
+        )).id();
+
+        // Broken window pane
+        let window_entity = app.world_mut().spawn((
+            BreakableWindowPane { is_broken: true },
+            Transform::from_xyz(-6.5, 2.9, -13.0),
+            Visibility::Hidden,
+        )).id();
+
+        // Update app: distance to final waypoint is 0.509m < 0.6m -> reaches destination!
+        app.update();
+
+        let hunger = app.world().resource::<MooseHunger>();
+        assert_eq!(hunger.stage, MooseHungerStage::BehindShutters);
+        assert_eq!(hunger.value, 0.0);
+        assert!(!hunger.is_breached);
+        assert!(app.world().get::<MooseRampageTracker>(moose_entity).is_none(), "Tracker should be removed on retreat");
+
+        // 1. Assert Mr. Moose root transform snapped to default position and Quat::IDENTITY (facing +Z toward window)
+        let moose_tf = app.world().get::<Transform>(moose_entity).unwrap();
+        assert_eq!(
+            moose_tf.translation,
+            Vec3::new(-6.5, 1.8, -17.0),
+            "Moose translation must reset to default snowy hill position (-6.5, 1.8, -17.0)"
+        );
+        assert_eq!(
+            moose_tf.rotation,
+            Quat::IDENTITY,
+            "Moose orientation must reset to Quat::IDENTITY facing +Z toward window"
+        );
+
+        // 2. Assert Moose Head transform reset to default (0.0, 1.1, 1.6) and Quat::IDENTITY
+        let head_tf = app.world().get::<Transform>(head_entity).unwrap();
+        assert_eq!(
+            head_tf.translation,
+            Vec3::new(0.0, 1.1, 1.6),
+            "Moose head translation must reset to default (0.0, 1.1, 1.6)"
+        );
+        assert_eq!(
+            head_tf.rotation,
+            Quat::IDENTITY,
+            "Moose head rotation must reset to Quat::IDENTITY"
+        );
+
+        // 3. Assert shutters reset to Quat::IDENTITY and Visibility::Inherited
+        let shutter_tf = app.world().get::<Transform>(shutter_entity).unwrap();
+        let shutter_vis = app.world().get::<Visibility>(shutter_entity).unwrap();
+        assert_eq!(shutter_tf.rotation, Quat::IDENTITY, "Shutters rotation must reset to Quat::IDENTITY (shut)");
+        assert_eq!(*shutter_vis, Visibility::Inherited, "Shutters visibility must be Inherited");
+
+        // 4. Assert breakable window pane is restored
+        let window_pane = app.world().get::<BreakableWindowPane>(window_entity).unwrap();
+        let window_vis = app.world().get::<Visibility>(window_entity).unwrap();
+        assert!(!window_pane.is_broken, "Window pane must be repaired");
+        assert_eq!(*window_vis, Visibility::Inherited, "Window pane visibility must be Inherited");
+    }
+
+    #[test]
+    fn test_player_launched_on_contact_with_rampaging_moose() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs_f32(0.016));
+        app.insert_resource(time);
+        app.insert_resource(MooseHunger {
+            value: 60.0,
+            stage: MooseHungerStage::BreachedRampage,
+            is_breached: true,
+            ..default()
+        });
+        app.add_systems(Update, moose_rampage_path_and_physics_impulse_system);
+
+        // Moose rampaging at (0.0, 1.4, -4.0) towards next waypoint (5.0, 1.4, 3.0)
+        app.world_mut().spawn((
+            MrMoose,
+            MooseRampageTracker {
+                current_waypoint_index: 0,
+                speed: 8.5,
+                waypoints: vec![Vec3::new(5.0, 1.4, 3.0)],
+                ..default()
+            },
+            Transform::from_xyz(0.0, 1.4, -4.0),
+        ));
+
+        // Player standing within contact distance (0.5m from Moose)
+        let player_entity = app.world_mut().spawn((
+            ElfMovement {
+                velocity: Vec3::ZERO,
+                is_grounded: true,
+                ..default()
+            },
+            Transform::from_xyz(0.5, 1.2, -4.0),
+        )).id();
+
+        app.update();
+
+        let movement = app.world().get::<ElfMovement>(player_entity).unwrap();
+        assert!(
+            movement.velocity.y >= 10.0,
+            "Player should be launched upwards with high vertical speed (>= 10.0), got {}",
+            movement.velocity.y
+        );
+        assert!(!movement.is_grounded, "Player must become airborne upon being launched");
+        let h_speed = Vec2::new(movement.velocity.x, movement.velocity.z).length();
+        assert!(
+            h_speed >= 5.0,
+            "Player should have strong horizontal momentum, got {}",
+            h_speed
+        );
+    }
+
+    #[test]
+    fn test_moose_rampage_bucking_animation() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+
+        app.insert_resource(MooseHunger {
+            value: 60.0,
+            stage: MooseHungerStage::BreachedRampage,
+            is_breached: true,
+            ..default()
+        });
+        app.add_systems(Update, moose_rampage_path_and_physics_impulse_system);
+
+        // Spawn Moose inside workshop heading towards waypoint 2 (currently at (1.0, 1.4, -2.0))
+        let moose_entity = app.world_mut().spawn((
+            MrMoose,
+            MooseRampageTracker {
+                current_waypoint_index: 2,
+                speed: 8.5,
+                base_speed: 8.5,
+                waypoints: vec![
+                    Vec3::new(-6.5, 1.4, -10.0),
+                    Vec3::new(0.0, 1.4, -4.0),
+                    Vec3::new(5.0, 1.4, 3.0),
+                    Vec3::new(-6.5, 1.8, -17.0),
+                ],
+                buck_timer: 1.15,
+                next_buck_interval: 1.20,
+                buck_duration: 0.80,
+                is_bucking: false,
+                current_buck_pitch: 0.0,
+                ..default()
+            },
+            Transform::from_xyz(1.0, 1.4, -2.0),
+        )).id();
+
+        // 1. Step 1: Advance by 0.1s -> buck_timer exceeds next_buck_interval, bucking initiates!
+        {
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(100));
+        }
+        app.update();
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(tracker.is_bucking, "Moose must start bucking when buck timer reaches interval");
+
+        // 2. Step into Phase 1 (Rearing upward from back feet, slowing down slightly)
+        // Advance progress to ~0.30 of buck_duration (0.80s * 0.30 = ~0.24s)
+        {
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(200));
+        }
+        app.update();
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        let moose_tf = app.world().get::<Transform>(moose_entity).unwrap();
+
+        assert!(
+            tracker.current_buck_pitch > 0.30,
+            "Moose should rotate upward from back feet (pitch > 0.30 rad / ~17 deg), got: {}",
+            tracker.current_buck_pitch
+        );
+        assert!(
+            tracker.speed < tracker.base_speed,
+            "Moose should slow down slightly while rearing upward (speed {} < base {})",
+            tracker.speed, tracker.base_speed
+        );
+        assert!(
+            moose_tf.translation.y > 1.45,
+            "Moose torso should elevate (Y > 1.45m) to pivot upward from rear feet, got: {}",
+            moose_tf.translation.y
+        );
+
+        // 3. Step into Phase 2 (Rotating back to flat and speeding up again)
+        // Advance progress to ~0.70 of buck_duration
+        {
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(350));
+        }
+        app.update();
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(
+            tracker.speed > tracker.base_speed,
+            "Moose should speed up again while rotating back to flat (speed {} > base {})",
+            tracker.speed, tracker.base_speed
+        );
+        assert!(
+            tracker.current_buck_pitch < 0.40,
+            "Moose pitch should be rotating back down towards flat, got: {}",
+            tracker.current_buck_pitch
+        );
+
+        // 4. Advance past buck completion (> 0.80s total)
+        {
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(400));
+        }
+        app.update();
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        let moose_tf = app.world().get::<Transform>(moose_entity).unwrap();
+
+        assert!(!tracker.is_bucking, "Bucking cycle should finish and reset");
+        assert_eq!(tracker.current_buck_pitch, 0.0, "Pitch must return to flat 0.0");
+        assert!(
+            (tracker.speed - tracker.base_speed).abs() < 0.01,
+            "Speed must return to base speed after bucking recovery, got: {}",
+            tracker.speed
+        );
+        assert!(
+            (moose_tf.translation.y - 1.4).abs() < 0.05,
+            "Moose height must return to flat ground level (1.4m), got: {}",
+            moose_tf.translation.y
+        );
+    }
+
+    #[test]
+    fn test_pause_freezes_moose_rampage_movement_and_bucking_animation() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+
+        app.insert_resource(MenuState::default());
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<GameState>();
+        app.insert_resource(MooseHunger {
+            value: 60.0,
+            stage: MooseHungerStage::BreachedRampage,
+            is_breached: true,
+            ..default()
+        });
+        app.add_systems(Update, moose_rampage_path_and_physics_impulse_system);
+
+        let moose = app.world_mut().spawn((
+            MrMoose,
+            MooseRampageTracker::default(),
+            Transform::from_xyz(-2.0, 1.4, -10.0),
+        )).id();
+
+        // Advance 10 frames while unpaused so the moose is actively moving and bucking
+        for _ in 0..10 {
+            app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(16));
+            app.update();
+        }
+
+        let (pos_before_pause, rot_before_pause, tracker_before_pause) = {
+            let tf = app.world().get::<Transform>(moose).unwrap();
+            let tracker = app.world().get::<MooseRampageTracker>(moose).unwrap();
+            (tf.translation, tf.rotation, tracker.clone())
+        };
+
+        assert!(
+            tracker_before_pause.buck_timer > 0.0,
+            "Moose should have accumulated bucking animation timer"
+        );
+
+        // Pause the game
+        app.world_mut().resource_mut::<MenuState>().is_open = true;
+
+        // Advance 30 frames with significant delta
+        for _ in 0..30 {
+            app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(33));
+            app.update();
+        }
+
+        let (pos_after_pause, rot_after_pause, tracker_after_pause) = {
+            let tf = app.world().get::<Transform>(moose).unwrap();
+            let tracker = app.world().get::<MooseRampageTracker>(moose).unwrap();
+            (tf.translation, tf.rotation, tracker.clone())
+        };
+
+        assert_eq!(
+            pos_after_pause, pos_before_pause,
+            "Moose rampage position must freeze in place while paused"
+        );
+        assert_eq!(
+            rot_after_pause, rot_before_pause,
+            "Moose rampage orientation must freeze in place while paused"
+        );
+        assert_eq!(
+            tracker_after_pause.current_waypoint_index, tracker_before_pause.current_waypoint_index,
+            "Moose waypoint index must remain frozen while paused"
+        );
+        assert_eq!(
+            tracker_after_pause.buck_timer, tracker_before_pause.buck_timer,
+            "Moose buck animation timer must remain frozen while paused"
+        );
+        assert_eq!(
+            tracker_after_pause.buck_progress, tracker_before_pause.buck_progress,
+            "Moose buck progress must remain frozen while paused"
+        );
+        assert_eq!(
+            tracker_after_pause.current_buck_pitch, tracker_before_pause.current_buck_pitch,
+            "Moose bucking animation pitch must remain frozen while paused"
+        );
+    }
+
+    #[test]
+    fn test_moose_rampage_dynamic_player_targeting_and_cooldown() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(50));
+        app.insert_resource(time);
+
+        app.insert_resource(MooseHunger {
+            value: 60.0,
+            stage: MooseHungerStage::BreachedRampage,
+            is_breached: true,
+            ..default()
+        });
+        app.add_systems(Update, moose_rampage_path_and_physics_impulse_system);
+
+        // Spawn Moose at origin (0.0, 1.4, 0.0)
+        let moose_entity = app.world_mut().spawn((
+            MrMoose,
+            MooseRampageTracker {
+                current_waypoint_index: 1,
+                speed: 8.5,
+                base_speed: 8.5,
+                waypoints: vec![
+                    Vec3::new(0.0, 1.4, -100.0),
+                    Vec3::new(0.0, 1.4, 100.0),
+                    Vec3::new(0.0, 1.8, 500.0),
+                ],
+                ..default()
+            },
+            Transform::from_xyz(0.0, 1.4, 0.0),
+        )).id();
+
+        // Spawn Player far away at (10.0, 0.45, 0.0) (> 5m)
+        let player_entity = app.world_mut().spawn((
+            Transform::from_xyz(10.0, 0.45, 0.0),
+            ElfMovement {
+                velocity: Vec3::ZERO,
+                base_speed: 6.0,
+                ..default()
+            },
+        )).id();
+
+        // 1. Player is > 5m away: Moose does NOT target player
+        app.update();
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(!tracker.is_targeting_player, "Moose must not target player when > 5m away");
+        assert_eq!(tracker.dynamic_target, None);
+
+        // 2. Player moves within 5m (4.5m from Moose)
+        {
+            let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
+            let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            p_tf.translation = moose_pos + Vec3::new(4.5, 0.0, 0.0);
+        }
+        app.update();
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(tracker.is_targeting_player, "Moose must target player when within 5m");
+        assert_eq!(tracker.dynamic_target, Some(DynamicWaypointTarget::Player));
+
+        // 3. Player moves to 5.8m (<= 6m): Moose keeps targeting player
+        {
+            let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
+            let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            p_tf.translation = moose_pos + Vec3::new(5.8, 0.0, 0.0);
+        }
+        app.update();
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(tracker.is_targeting_player, "Moose must keep targeting player while within 6m");
+
+        // 4. Player runs away to 7.0m (> 6m), but only 1 second has elapsed (< 5s)
+        for _ in 0..10 {
+            let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
+            let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            p_tf.translation = moose_pos + Vec3::new(7.0, 0.0, 0.0);
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(100));
+            app.update();
+        }
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(
+            tracker.is_targeting_player,
+            "Moose must keep targeting player for 5 seconds even if player steps beyond 6m"
+        );
+
+        // 5. Advance time by 4.5 more seconds (total > 5s, player still running away at 7.0m > 6m)
+        for _ in 0..45 {
+            let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
+            let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            p_tf.translation = moose_pos + Vec3::new(7.0, 0.0, 0.0);
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(100));
+            app.update();
+        }
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(
+            !tracker.is_targeting_player,
+            "Moose must stop targeting player after 5s have elapsed and player is outside 6m"
+        );
+        assert_eq!(tracker.dynamic_target, None);
+
+        // 6. Player comes back within 5m (4.0m): Moose targets player again
+        {
+            let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
+            let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            p_tf.translation = moose_pos + Vec3::new(4.0, 0.0, 0.0);
+        }
+        app.update();
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(tracker.is_targeting_player, "Moose must retarget player when entering 5m again");
+
+        // 7. Contact: Player collides with Moose (< 1.6m)
+        {
+            let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
+            let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            p_tf.translation = moose_pos + Vec3::new(0.8, 0.0, 0.0);
+        }
+        app.update();
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        let player_mov = app.world().get::<ElfMovement>(player_entity).unwrap();
+
+        assert!(player_mov.velocity.y >= 8.0, "Player must be launched on contact with Moose");
+        assert!(!tracker.is_targeting_player, "Targeting must stop upon contact");
+        assert_eq!(tracker.dynamic_target, None);
+        assert!(
+            tracker.player_target_cooldown >= 2.9,
+            "Moose must enter 3-second cooldown upon contacting player, got {}",
+            tracker.player_target_cooldown
+        );
+
+        // 8. While on cooldown, player being <= 5m (3.0m) does NOT trigger targeting
+        for _ in 0..10 {
+            let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
+            let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            p_tf.translation = moose_pos + Vec3::new(3.0, 0.0, 0.0);
+            let mut p_mov = app.world_mut().get_mut::<ElfMovement>(player_entity).unwrap();
+            p_mov.velocity = Vec3::ZERO;
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(100)); // 1.0s elapsed, 2.0s cooldown remaining
+            app.update();
+        }
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(
+            !tracker.is_targeting_player,
+            "Moose must NOT target player while 3s cooldown is active (cooldown = {})",
+            tracker.player_target_cooldown
+        );
+
+        // 9. Advance time past remaining cooldown (2.1s)
+        for _ in 0..21 {
+            let moose_pos = app.world().get::<Transform>(moose_entity).unwrap().translation;
+            let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            p_tf.translation = moose_pos + Vec3::new(3.0, 0.0, 0.0);
+            let mut p_mov = app.world_mut().get_mut::<ElfMovement>(player_entity).unwrap();
+            p_mov.velocity = Vec3::ZERO;
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(100)); // Cooldown expires!
+            app.update();
+        }
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(
+            tracker.is_targeting_player,
+            "Moose should target player again once cooldown expires and player is within 5m"
+        );
+    }
+
+    #[test]
+    fn test_moose_rampage_randomized_waypoints_mezzanine_and_player_targeting() {
+        // 1. Verify ground waypoints do not go through new back wall subrooms (Z >= 9.0)
+        assert_eq!(
+            MOOSE_ALL_WAYPOINTS.len(),
+            MOOSE_GROUND_WAYPOINTS.len() + MOOSE_MEZZANINE_WAYPOINTS.len()
+        );
+        for wp in MOOSE_GROUND_WAYPOINTS {
+            assert!(
+                wp.z <= 6.5,
+                "Ground waypoints must not enter back wall subrooms (Z >= 9.0), got Z = {}",
+                wp.z
+            );
+            assert_eq!(wp.y, 1.4, "Ground waypoints must be at Moose ground height Y = 1.4");
+        }
+
+        // 2. Verify mezzanine waypoints are elevated at Y = 4.4 and in mezzanine bounds (Z >= 9.0)
+        for wp in MOOSE_MEZZANINE_WAYPOINTS {
+            assert_eq!(wp.y, 4.4, "Mezzanine waypoints must be elevated at Y = 4.4");
+            assert!(wp.z >= 9.0, "Mezzanine waypoints must be on mezzanine (Z >= 9.0)");
+        }
+
+        // 3. Verify choose_rampage_waypoints chooses 5 to 7 waypoints
+        for count in 5..=7 {
+            let chosen = MooseRampageTracker::choose_rampage_waypoints(count);
+            assert_eq!(chosen.len(), count, "Must choose requested count in 5..=7");
+        }
+
+        // 4. Verify randomized tracker path generation includes 5-7 chosen waypoints
+        let randomized_tracker = MooseRampageTracker::new_randomized(-2.0);
+        assert!(
+            randomized_tracker.chosen_waypoints.len() >= 5 && randomized_tracker.chosen_waypoints.len() <= 7,
+            "Randomized tracker must choose 5 to 7 waypoints, got {}",
+            randomized_tracker.chosen_waypoints.len()
+        );
+
+        // 5. Verify Moose does NOT target player when player is on the mezzanine above (Y = 3.45m vs Moose Y = 1.4m)
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(50));
+        app.insert_resource(time);
+        app.insert_resource(MooseHunger {
+            value: 60.0,
+            stage: MooseHungerStage::BreachedRampage,
+            is_breached: true,
+            ..default()
+        });
+        app.add_systems(Update, moose_rampage_path_and_physics_impulse_system);
+
+        let moose_entity = app.world_mut().spawn((
+            MrMoose,
+            MooseRampageTracker {
+                current_waypoint_index: 1,
+                speed: 8.5,
+                base_speed: 8.5,
+                waypoints: vec![
+                    Vec3::new(0.0, 1.4, -10.0),
+                    Vec3::new(0.0, 1.4, 0.0),
+                    Vec3::new(0.0, 1.8, -17.0),
+                ],
+                ..default()
+            },
+            Transform::from_xyz(0.0, 1.4, 0.0),
+        )).id();
+
+        // Spawn player on the mezzanine directly above Moose (X = 3.5, Y = 3.45, Z = 0.0, flat dist = 3.5m <= 5m)
+        let player_entity = app.world_mut().spawn((
+            Transform::from_xyz(3.5, 3.45, 0.0),
+            ElfMovement {
+                velocity: Vec3::ZERO,
+                base_speed: 6.0,
+                ..default()
+            },
+        )).id();
+
+        app.update();
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(
+            !tracker.is_targeting_player,
+            "Moose must NOT target player when player is elevated on the mezzanine above"
+        );
+
+        // If player drops down to main floor (Y = 0.45m), Moose targets player
+        {
+            let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            p_tf.translation = Vec3::new(3.5, 0.45, 0.0);
+        }
+        app.update();
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(
+            tracker.is_targeting_player,
+            "Moose must target player once player is on ground floor within 5m"
+        );
+
+        // If player climbs back to mezzanine (Y = 3.45m), targeting is immediately cancelled
+        {
+            let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            p_tf.translation = Vec3::new(3.5, 3.45, 0.0);
+        }
+        app.update();
+
+        let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+        assert!(
+            !tracker.is_targeting_player,
+            "Moose targeting must immediately disengage when player escapes to mezzanine"
+        );
+    }
+
+    #[test]
+    fn test_moose_all_parts_launch_player_and_non_collision_window() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs_f32(0.016));
+        app.insert_resource(time);
+        app.insert_resource(MooseHunger {
+            value: 60.0,
+            stage: MooseHungerStage::BreachedRampage,
+            is_breached: true,
+            ..default()
+        });
+        app.add_systems(Update, moose_rampage_path_and_physics_impulse_system);
+
+        // Spawn Moose at (0.0, 1.4, -4.0)
+        let moose_tf = Transform::from_xyz(0.0, 1.4, -4.0);
+        let moose_e = app.world_mut().spawn((
+            MrMoose,
+            MoosePart,
+            MooseRampageTracker {
+                current_waypoint_index: 0,
+                speed: 8.5,
+                waypoints: vec![Vec3::new(0.0, 1.4, 10.0)],
+                ..default()
+            },
+            moose_tf,
+        )).id();
+
+        // 1. Antler part contact test:
+        // Right antler is at offset (0.85, 1.8, 1.85) from Moose origin => world (0.85, 3.2, -2.15)
+        let antler_offset = Vec3::new(0.85, 1.8, 1.85);
+        let antler_world_pos = moose_tf.transform_point(antler_offset);
+        app.world_mut().spawn((
+            MoosePart,
+            Transform::from_translation(antler_offset),
+            ChildOf(moose_e),
+        ));
+
+        let player_e = app.world_mut().spawn((
+            ElfMovement {
+                velocity: Vec3::ZERO,
+                is_grounded: true,
+                ..default()
+            },
+            Transform::from_translation(antler_world_pos),
+            CollisionGroups::new(GROUP_PLAYER, !GROUP_HELD_ITEM),
+            KinematicCharacterController {
+                filter_groups: Some(CollisionGroups::new(GROUP_PLAYER, !GROUP_HELD_ITEM)),
+                ..default()
+            },
+        )).id();
+
+        app.update();
+
+        // Verify player is launched by antler contact
+        {
+            let mov = app.world().get::<ElfMovement>(player_e).unwrap();
+            assert!(mov.velocity.y >= 10.0, "Antler must launch player upwards (>= 10.0), got {}", mov.velocity.y);
+            assert!(!mov.is_grounded, "Player must become airborne on antler contact");
+            let h_speed = Vec2::new(mov.velocity.x, mov.velocity.z).length();
+            assert!(h_speed >= 5.0, "Player must have horizontal momentum from launch");
+
+            // Verify short non-collision window is activated
+            assert!(mov.moose_non_collision_timer > 0.8, "Non-collision timer must be initialized to ~1.0s, got {}", mov.moose_non_collision_timer);
+            let nc = app.world().get::<MooseNonCollision>(player_e);
+            assert!(nc.is_some(), "MooseNonCollision component must be attached to player");
+
+            // Verify Rapier collision groups filter out GROUP_MOOSE during non-collision
+            let groups = app.world().get::<CollisionGroups>(player_e).unwrap();
+            assert_eq!(*groups, CollisionGroups::new(GROUP_PLAYER, !(GROUP_HELD_ITEM | GROUP_MOOSE)));
+            let kcc = app.world().get::<KinematicCharacterController>(player_e).unwrap();
+            assert_eq!(kcc.filter_groups, Some(CollisionGroups::new(GROUP_PLAYER, !(GROUP_HELD_ITEM | GROUP_MOOSE))));
+        }
+
+        // 2. Next frame: with non-collision active, reset velocity to zero and verify player is NOT re-launched
+        {
+            let mut mov = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+            mov.velocity = Vec3::ZERO;
+            mov.is_grounded = true;
+        }
+
+        app.update();
+
+        {
+            let mov = app.world().get::<ElfMovement>(player_e).unwrap();
+            assert_eq!(mov.velocity, Vec3::ZERO, "Player must NOT be re-launched while in non-collision window");
+            assert!(mov.is_grounded, "Player must remain grounded if non-collision ignores contact");
+            assert!(mov.moose_non_collision_timer < 1.0 && mov.moose_non_collision_timer > 0.5, "Timer must tick down");
+        }
+
+        // 3. Fast-forward past non-collision duration (1.0s) -> collision is restored
+        {
+            let mut mov = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+            mov.moose_non_collision_timer = 0.01;
+        }
+
+        app.update();
+
+        {
+            let mov = app.world().get::<ElfMovement>(player_e).unwrap();
+            assert_eq!(mov.moose_non_collision_timer, 0.0, "Non-collision timer must expire to 0");
+            assert!(app.world().get::<MooseNonCollision>(player_e).is_none(), "MooseNonCollision component must be removed");
+
+            // Rapier collision restored
+            let groups = app.world().get::<CollisionGroups>(player_e).unwrap();
+            assert_eq!(*groups, CollisionGroups::new(GROUP_PLAYER, !GROUP_HELD_ITEM));
+            let kcc = app.world().get::<KinematicCharacterController>(player_e).unwrap();
+            assert_eq!(kcc.filter_groups, Some(CollisionGroups::new(GROUP_PLAYER, !GROUP_HELD_ITEM)));
+        }
+    }
+}

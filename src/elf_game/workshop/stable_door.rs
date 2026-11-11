@@ -450,3 +450,289 @@ pub fn stable_door_interaction_system(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::elf_game::{
+        moose::{
+            MooseHunger, MooseHungerStage,
+            toy_model::{MrMoose, MooseHead, animate_mr_moose_peeking_system},
+        },
+        player::{
+            ElfHands,
+            hands::{Grabbable, HeldByPlayer},
+        },
+    };
+
+    #[test]
+    fn test_mr_moose_center_wall_and_stable_door_mechanics() {
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        let hunger = MooseHunger {
+            value: 35.0,
+            max_value: 60.0,
+            stage: MooseHungerStage::PeekingThrough,
+            ..default()
+        };
+        app.insert_resource(hunger);
+
+        app.add_systems(Update, (stable_door_system, stable_door_interaction_system));
+
+        // Spawn Stable Door Top Half
+        let top_door_e = app.world_mut().spawn((
+            StableDoorTopHalf {
+                current_angle: 0.0,
+                target_angle: 0.0,
+                angular_velocity: 0.0,
+                is_physics_driven: false,
+                hinge_pos: Vec3::new(-2.9, 1.78, -13.0),
+            },
+            Transform::from_xyz(-2.0, 1.78, -13.0),
+            Grabbable,
+        )).id();
+
+        // Spawn Stable Door Bottom Half
+        let bottom_door_e = app.world_mut().spawn((
+            StableDoorBottomHalf {
+                current_angle: 0.0,
+                target_angle: 0.0,
+                angular_velocity: 0.0,
+                is_physics_driven: false,
+                hinge_pos: Vec3::new(-2.9, 0.58, -13.0),
+            },
+            Transform::from_xyz(-2.0, 0.58, -13.0),
+            Grabbable,
+        )).id();
+
+        // 1. Advance frames during Peeking stage
+        for _ in 0..10 {
+            app.update();
+        }
+
+        let top = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+        let bottom = app.world().get::<StableDoorBottomHalf>(bottom_door_e).unwrap();
+        assert!(top.current_angle > 0.5, "Top half must open during peeking, got {}", top.current_angle);
+        assert_eq!(bottom.current_angle, 0.0, "Bottom half must remain firmly closed during peeking");
+
+        // 2. Trigger Rampage Breach
+        {
+            let mut h = app.world_mut().resource_mut::<MooseHunger>();
+            h.is_breached = true;
+            h.stage = MooseHungerStage::BreachedRampage;
+        }
+
+        app.update();
+
+        let top_breach = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+        let bottom_breach = app.world().get::<StableDoorBottomHalf>(bottom_door_e).unwrap();
+        assert!(top_breach.is_physics_driven, "Top half becomes physics driven on rampage");
+        assert!(bottom_breach.is_physics_driven, "Bottom half becomes physics driven on rampage");
+        assert!(top_breach.angular_velocity > 5.0, "Top half receives large impulse");
+        assert!(bottom_breach.angular_velocity > 5.0, "Bottom half receives large impulse");
+
+        // Run physics updates and verify angle stays within 2.0 radian range
+        for _ in 0..20 {
+            app.update();
+        }
+        let top_swung = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+        let bottom_swung = app.world().get::<StableDoorBottomHalf>(bottom_door_e).unwrap();
+        assert!(top_swung.current_angle <= 2.0, "Top angle must not exceed 2.0 rad, got {}", top_swung.current_angle);
+        assert!(bottom_swung.current_angle <= 2.0, "Bottom angle must not exceed 2.0 rad, got {}", bottom_swung.current_angle);
+
+        // 3. Moose fed / rampage ends: return to closed
+        {
+            let mut h = app.world_mut().resource_mut::<MooseHunger>();
+            h.is_breached = false;
+            h.value = 0.0;
+            h.stage = MooseHungerStage::BehindShutters;
+        }
+
+        for _ in 0..30 {
+            app.update();
+        }
+        let top_closed = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+        let bottom_closed = app.world().get::<StableDoorBottomHalf>(bottom_door_e).unwrap();
+        assert!(top_closed.current_angle < 0.05, "Top half returns to fully closed when rampage ends, got {}", top_closed.current_angle);
+        assert!(bottom_closed.current_angle < 0.05, "Bottom half returns to fully closed when rampage ends, got {}", bottom_closed.current_angle);
+
+        // 4. Test grabbable but not movable by player
+        let hands_e = app.world_mut().spawn(ElfHands {
+            left_grabbed: Some(bottom_door_e),
+            right_grabbed: Some(top_door_e),
+            ..default()
+        }).id();
+        app.world_mut().entity_mut(top_door_e).insert(HeldByPlayer);
+        app.world_mut().entity_mut(bottom_door_e).insert(HeldByPlayer);
+
+        app.update();
+
+        let hands = app.world().get::<ElfHands>(hands_e).unwrap();
+        assert!(hands.left_grabbed.is_none(), "Player cannot hold bottom door");
+        assert!(hands.right_grabbed.is_none(), "Player cannot hold top door");
+        assert!(app.world().get::<HeldByPlayer>(top_door_e).is_none());
+        assert!(app.world().get::<HeldByPlayer>(bottom_door_e).is_none());
+    }
+
+    #[test]
+    fn test_stable_door_and_moose_slow_peeking_over_30_seconds() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+
+        let hunger = MooseHunger {
+            value: 10.0,
+            max_value: 60.0,
+            stage: MooseHungerStage::BehindShutters,
+            ..default()
+        };
+        app.insert_resource(hunger);
+
+        app.add_systems(Update, (animate_mr_moose_peeking_system, stable_door_system));
+
+        let moose_e = app.world_mut().spawn((
+            MrMoose,
+            Transform::from_xyz(-2.0, 1.8, -17.0),
+        )).id();
+
+        let head_e = app.world_mut().spawn((
+            MooseHead,
+            Transform::from_xyz(0.0, 1.1, 1.6),
+        )).id();
+
+        let top_door_e = app.world_mut().spawn((
+            StableDoorTopHalf {
+                current_angle: 0.0,
+                target_angle: 0.0,
+                angular_velocity: 0.0,
+                is_physics_driven: false,
+                hinge_pos: Vec3::new(-2.9, 1.78, -13.0),
+            },
+            Transform::from_xyz(-2.0, 1.78, -13.0),
+        )).id();
+
+        // 1. In BehindShutters (hunger = 10.0), door is completely closed and Moose is far back outside
+        app.update();
+        {
+            let top = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+            let moose_tf = app.world().get::<Transform>(moose_e).unwrap();
+            let head_tf = app.world().get::<Transform>(head_e).unwrap();
+            assert_eq!(top.current_angle, 0.0);
+            assert!((moose_tf.translation.z - (-17.0)).abs() < 0.05);
+            assert!((head_tf.translation.z - 1.6).abs() < 0.05);
+        }
+
+        // 2. Step through peeking over 30 seconds as hunger increases from 20.0 to 50.0
+        // Verify monotonic forward progression and slow door opening
+        let check_points = [
+            (20.0, 0.0, -17.0, 1.6),
+            (25.0, 0.26, -16.58, 1.75),
+            (35.0, 0.785, -15.75, 2.05),
+            (45.0, 1.308, -14.92, 2.35),
+            (50.0, 1.57, -14.5, 2.5),
+        ];
+
+        let mut prev_angle = -0.01;
+        let mut prev_moose_z = -17.1;
+        let mut prev_head_z = 1.5;
+
+        for (hunger_val, expected_angle, expected_moose_z, expected_head_z) in check_points {
+            {
+                let mut h = app.world_mut().resource_mut::<MooseHunger>();
+                h.value = hunger_val;
+                h.stage = MooseHungerStage::PeekingThrough;
+            }
+
+            // Run several ticks for smooth follow
+            for _ in 0..20 {
+                app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(16));
+                app.update();
+            }
+
+            let top = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+            let moose_tf = app.world().get::<Transform>(moose_e).unwrap();
+            let head_tf = app.world().get::<Transform>(head_e).unwrap();
+
+            // Must be strictly monotonic
+            assert!(top.current_angle >= prev_angle, "Door angle must advance monotonically (at hunger {hunger_val}: got {}, prev {})", top.current_angle, prev_angle);
+            assert!(moose_tf.translation.z >= prev_moose_z, "Moose Z must advance monotonically (at hunger {hunger_val}: got {}, prev {})", moose_tf.translation.z, prev_moose_z);
+            assert!(head_tf.translation.z >= prev_head_z, "Head Z must advance monotonically (at hunger {hunger_val}: got {}, prev {})", head_tf.translation.z, prev_head_z);
+
+            // Approximate checks at key points
+            assert!(
+                (top.current_angle - expected_angle).abs() < 0.12,
+                "Door angle at hunger {hunger_val} expected ~{expected_angle}, got {}",
+                top.current_angle
+            );
+            assert!(
+                (moose_tf.translation.z - expected_moose_z).abs() < 0.15,
+                "Moose Z at hunger {hunger_val} expected ~{expected_moose_z}, got {}",
+                moose_tf.translation.z
+            );
+            assert!(
+                (head_tf.translation.z - expected_head_z).abs() < 0.15,
+                "Head Z at hunger {hunger_val} expected ~{expected_head_z}, got {}",
+                head_tf.translation.z
+            );
+
+            prev_angle = top.current_angle;
+            prev_moose_z = moose_tf.translation.z;
+            prev_head_z = head_tf.translation.z;
+        }
+
+        // 3. Fast slam when window is slammed at hunger = 60
+        {
+            let mut h = app.world_mut().resource_mut::<MooseHunger>();
+            h.value = 60.0;
+            h.stage = MooseHungerStage::WindowSlammed;
+        }
+
+        for _ in 0..15 {
+            app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(16));
+            app.update();
+        }
+
+        let top_slammed = app.world().get::<StableDoorTopHalf>(top_door_e).unwrap();
+        let moose_slammed = app.world().get::<Transform>(moose_e).unwrap();
+        let head_slammed = app.world().get::<Transform>(head_e).unwrap();
+
+        assert!(top_slammed.current_angle < 0.05, "Top stable door must slam shut within 0.25s, got {}", top_slammed.current_angle);
+        assert!(moose_slammed.translation.z < -16.8, "Moose body must snap back outside within 0.25s, got {}", moose_slammed.translation.z);
+        assert!(head_slammed.translation.z < 1.7, "Moose head must snap back behind shutters within 0.25s, got {}", head_slammed.translation.z);
+    }
+
+    #[test]
+    fn test_taller_stable_door_scaling() {
+        use crate::elf_game::{
+            assets::AssetsPlugin,
+            moose::toy_model::spawn_mr_moose,
+            workshop::room::setup_workshop_scene,
+        };
+
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.add_plugins(AssetsPlugin);
+        app.add_systems(Startup, (setup_workshop_scene, spawn_mr_moose));
+        app.update();
+
+        let mut door_q = app.world_mut().query::<(&Name, &Transform, &Collider)>();
+        let mut found_top = false;
+        let mut found_bottom = false;
+        for (name, tf, _col) in door_q.iter(app.world()) {
+            match name.as_str() {
+                "StableDoorTopHalf" => {
+                    found_top = true;
+                    assert!((tf.translation.y - 2.61).abs() < 0.1, "Top half must be centered at Y ≈ 2.61");
+                }
+                "StableDoorBottomHalf" => {
+                    found_bottom = true;
+                    assert!((tf.translation.y - 0.87).abs() < 0.1, "Bottom half must be centered at Y ≈ 0.87");
+                }
+                _ => {}
+            }
+        }
+        assert!(found_top && found_bottom, "Both door sections must be present and scaled");
+    }
+}

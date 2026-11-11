@@ -305,3 +305,120 @@ pub fn update_soft_body_meshes_system(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_soft_body_spring_oscillation_and_damping() {
+        let mut lattice = SoftBodyLattice::new_cube(Vec3::splat(0.5), 50.0, 5.0);
+
+        lattice.apply_impulse(Vec3::new(2.0, 0.0, 0.0));
+
+        for _ in 0..10 {
+            lattice.step(0.01);
+        }
+
+        let pt = &lattice.points[0];
+        assert!(pt.position.x > pt.original_offset.x);
+
+        for _ in 0..200 {
+            lattice.step(0.01);
+        }
+        let pt_rested = &lattice.points[0];
+        assert!(
+            (pt_rested.position.x - pt_rested.original_offset.x).abs() < 0.05,
+            "Damped lattice should settle back near rest position"
+        );
+    }
+
+    #[test]
+    fn test_soft_body_mesh_deformation_renderer() {
+        let base_cuboid = Cuboid::new(1.0, 1.0, 1.0);
+        let mut mesh = Mesh::from(base_cuboid);
+        let half_extents = Vec3::splat(0.5);
+
+        let deformable = SoftBodyDeformableMesh::from_mesh(&mesh, half_extents)
+            .expect("Deformable mesh extraction must succeed");
+
+        assert_eq!(deformable.original_positions.len(), 24, "Cube mesh has 24 vertices (6 faces * 4 vertices)");
+        assert_eq!(deformable.half_extents, half_extents);
+
+        let mut lattice = SoftBodyLattice::new_cube(half_extents, 120.0, 8.0);
+        assert_eq!(lattice.points.len(), 8, "Cube lattice must have 8 corner spring points");
+        assert_eq!(lattice.edge_springs.len(), 12, "Cube must have 12 edge springs");
+
+        lattice.apply_directional_squash(Vec3::Y, 0.4);
+
+        for pt in &lattice.points {
+            if pt.original_offset.y > 0.0 {
+                assert!(
+                    pt.position.y < pt.original_offset.y,
+                    "Top points must be compressed downward: got {}, original {}",
+                    pt.position.y,
+                    pt.original_offset.y
+                );
+            } else {
+                assert!(
+                    pt.position.y > pt.original_offset.y,
+                    "Bottom points must be compressed upward: got {}, original {}",
+                    pt.position.y,
+                    pt.original_offset.y
+                );
+            }
+            let orig_lat = (pt.original_offset.x.powi(2) + pt.original_offset.z.powi(2)).sqrt();
+            let cur_lat = (pt.position.x.powi(2) + pt.position.z.powi(2)).sqrt();
+            assert!(
+                cur_lat > orig_lat,
+                "Lateral radius must expand for volume preservation: got {cur_lat}, original {orig_lat}"
+            );
+        }
+
+        deformable.apply_deformation(&lattice, &mut mesh);
+
+        let pos_attr = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
+        let VertexAttributeValues::Float32x3(deformed_positions) = pos_attr else {
+            panic!("ATTRIBUTE_POSITION must be Float32x3");
+        };
+
+        for (orig, def) in deformable.original_positions.iter().zip(deformed_positions.iter()) {
+            if orig.y > 0.49 {
+                assert!(
+                    def[1] < orig.y,
+                    "Top vertices must be squashed downwards: deformed {}, original {}",
+                    def[1],
+                    orig.y
+                );
+            }
+        }
+
+        let mut app = App::new();
+        let mut meshes = Assets::<Mesh>::default();
+        let handle = meshes.add(mesh);
+        app.insert_resource(meshes);
+
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+
+        let entity = app.world_mut().spawn((
+            Mesh3d(handle.clone()),
+            lattice,
+            deformable,
+        )).id();
+
+        app.add_systems(Update, (update_soft_bodies_system, update_soft_body_meshes_system).chain());
+
+        for _ in 0..10 {
+            app.update();
+        }
+
+        let lat = app.world().get::<SoftBodyLattice>(entity).unwrap();
+        assert!(lat.max_displacement() > 0.0, "Lattice must still be oscillating with elastic restitution");
+
+        let mesh_assets = app.world().resource::<Assets<Mesh>>();
+        let updated_mesh = mesh_assets.get(&handle).unwrap();
+        assert!(updated_mesh.attribute(Mesh::ATTRIBUTE_POSITION).is_some());
+    }
+}

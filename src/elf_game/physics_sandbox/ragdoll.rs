@@ -3458,3 +3458,7 @@ pub fn chandelier_sparky_easter_egg_system(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "ragdoll_tests.rs"]
+mod tests;

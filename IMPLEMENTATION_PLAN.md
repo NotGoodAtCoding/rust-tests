@@ -206,3 +206,7 @@ This document tracks the short-form task breakdown for each section of [`PLAN.md
 | **Dynamic Wrapping Specifications**: Specification generator `WrappingSpecification::for_toy` configuring mandatory and forbidden wrapping features tailored to toy material and fragility (e.g. Teddy Bear requires Snowflake pattern and Ribbon, forbids Plasma Shrink; Tin Robot requires Stripes and Tape, forbids Ribbon) | **DONE** | [`wrapping/mod.rs`](file:///home/stef/repo/rust-tests/src/elf_game/wrapping/mod.rs) |
 | **Conveyor Toy Cycle Spawning & Procedural Meshes**: Cyclic conveyor spawner delivering diverse toys on the belt with impressionist geometric meshes, distinct material assets (`toy_blue`, `toy_teddy`, `toy_robot`), and individual physical properties | **DONE** | [`room.rs`](file:///home/stef/repo/rust-tests/src/elf_game/workshop/room.rs), [`materials.rs`](file:///home/stef/repo/rust-tests/src/elf_game/assets/materials.rs) |
 
+### 5.4 Outside tasks
+
+* **Propane refill** Refilling the propane tank should have a visual indicator of some kind, like a Gauge that shows the current fill level of the attached propane tank to the Anchor Point.
+* **Snowball fight snowmen** Place a few snowmen around the outside. When the player is not looking at the snowmen, every few seconds they have a chance to throw a snowball in the direction of the player. If it hits, it should push the player a little bit, not too much. On hit, the snowball should break apart and then disappear over a few seconds.

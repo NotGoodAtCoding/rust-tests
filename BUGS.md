@@ -5,6 +5,8 @@ ACTIVE:
 
 Refactor: Tests should be co-located with the file containing the logic so that they can be run on update to the file itself rather than running the entire test file for every change. If the tests get too big for the file, then they can be separated out into a different file in the same directory and mod. label unit tests with `#[cfg(test)]` in a mod tests and label each test with `#[test]`. 
 
+Change the key to initiate dialog with elves to X instead of E.
+
 DONE:
 
 In debug overlay mode, display the XYZ coordinates of the player's current position and the raycast collision point of the crosshair.

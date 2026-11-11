@@ -701,3 +701,260 @@ pub fn animate_crt_scanlines(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::render::mesh::VertexAttributeValues;
+
+    #[test]
+    fn test_curved_crt_mesh_and_scanlines_geometry() {
+        let crt_mesh = create_curved_crt_mesh(2.1, 1.1, 0.08, 24, 16);
+        let positions = match crt_mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap() {
+            VertexAttributeValues::Float32x3(p) => p,
+            _ => panic!("Expected Float32x3 positions"),
+        };
+
+        let center_idx = 8 * (24 + 1) + 12;
+        let center_pos = positions[center_idx];
+        assert!(
+            (center_pos[2] - 0.08).abs() < 0.005,
+            "CRT center must bulge forward ~0.08m, got: {}",
+            center_pos[2]
+        );
+
+        let corner_pos = positions[0];
+        assert!(
+            corner_pos[2] < 0.01,
+            "CRT corner must have flat border Z ~ 0.0m, got: {}",
+            corner_pos[2]
+        );
+
+        let scanline_mesh = create_curved_crt_scanlines_mesh(2.1, 1.1, 0.08, 28, 0.014);
+        let sl_positions = match scanline_mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap() {
+            VertexAttributeValues::Float32x3(p) => p,
+            _ => panic!("Expected Float32x3 positions for scanlines"),
+        };
+        assert!(!sl_positions.is_empty(), "Scanline mesh must contain vertices");
+        let max_z = sl_positions.iter().map(|p| p[2]).fold(0.0f32, f32::max);
+        assert!(
+            (max_z - 0.083).abs() < 0.005,
+            "Peak scanline bulge should match curved glass + 3mm offset (0.083m), got: {}",
+            max_z
+        );
+    }
+
+    #[test]
+    fn test_crt_monitor_cyclic_instruction_messages() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+        app.insert_resource(WorkshopQuota {
+            presents_delivered: 2,
+            target_quota: 5,
+            tier: 1,
+        });
+        app.insert_resource(MooseHunger {
+            value: 15.0,
+            is_breached: false,
+            ..default()
+        });
+
+        app.add_systems(Startup, spawn_diegetic_screens_and_signs);
+        app.add_systems(Update, update_diegetic_monitor_text);
+        app.update();
+
+        {
+            let mut q_mon = app.world_mut().query::<&CrtInstructionMonitor>();
+            let monitor = q_mon.single(app.world()).unwrap();
+            assert_eq!(monitor.current_page, 0, "Monitor should start at Page 0");
+            assert_eq!(monitor.total_pages, 4, "Monitor should have 4 instructional pages");
+        }
+
+        {
+            let mut q_txt = app.world_mut().query::<&Text2d>();
+            let text_page0 = q_txt.iter(app.world()).find(|t| t.0.contains("PAGE 1/4")).expect("Must find Page 1 text");
+            assert!(text_page0.0.contains("PRESENT INSTRUCTIONS"));
+            assert!(text_page0.0.contains("GRAB RAW TOY CUBE FROM CONVEYOR BELT"));
+            assert!(text_page0.0.contains("QUOTA: 2 / 5 [TIER 1]"));
+        }
+
+        {
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(4050));
+        }
+        app.update();
+
+        {
+            let mut q_mon = app.world_mut().query::<&CrtInstructionMonitor>();
+            let monitor = q_mon.single(app.world()).unwrap();
+            assert_eq!(monitor.current_page, 1, "Monitor should cycle to Page 1");
+        }
+        {
+            let mut q_txt = app.world_mut().query::<&Text2d>();
+            let text_page1 = q_txt.iter(app.world()).find(|t| t.0.contains("PAGE 2/4")).expect("Must find Page 2 text");
+            assert!(text_page1.0.contains("DISPATCH & VACUUM GUIDE"));
+            assert!(text_page1.0.contains("CARRY WRAPPED PRESENTS TO THE CIRCULAR SEND PAD"));
+        }
+
+        {
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(4050));
+        }
+        app.update();
+
+        {
+            let mut q_mon = app.world_mut().query::<&CrtInstructionMonitor>();
+            let monitor = q_mon.single(app.world()).unwrap();
+            assert_eq!(monitor.current_page, 2, "Monitor should cycle to Page 2");
+        }
+        {
+            let mut q_txt = app.world_mut().query::<&Text2d>();
+            let text_page2 = q_txt.iter(app.world()).find(|t| t.0.contains("PAGE 3/4")).expect("Must find Page 3 text");
+            assert!(text_page2.0.contains("MR. MOOSE SAFETY PROTOCOL"));
+            assert!(text_page2.0.contains("GRAB SMALL MOOSE SNACKS FROM WORKBENCH JAR"));
+        }
+
+        {
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(4050));
+        }
+        app.update();
+
+        {
+            let mut q_mon = app.world_mut().query::<&CrtInstructionMonitor>();
+            let monitor = q_mon.single(app.world()).unwrap();
+            assert_eq!(monitor.current_page, 3, "Monitor should cycle to Page 3");
+        }
+        {
+            let mut q_txt = app.world_mut().query::<&Text2d>();
+            let text_page3 = q_txt.iter(app.world()).find(|t| t.0.contains("PAGE 4/4")).expect("Must find Page 4 text");
+            assert!(text_page3.0.contains("ELF CONTROLS & BHOP GUIDE"));
+            assert!(text_page3.0.contains("TIME LANDING TO BHOP BOOST"));
+        }
+
+        {
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(4050));
+        }
+        app.update();
+
+        {
+            let mut q_mon = app.world_mut().query::<&CrtInstructionMonitor>();
+            let monitor = q_mon.single(app.world()).unwrap();
+            assert_eq!(monitor.current_page, 0, "Monitor must wrap back to Page 0 in an infinite loop");
+        }
+
+        {
+            let mut moose = app.world_mut().resource_mut::<MooseHunger>();
+            moose.is_breached = true;
+        }
+        app.update();
+
+        {
+            let mut q_txt = app.world_mut().query::<&Text2d>();
+            let text_breach = q_txt.iter(app.world()).find(|t| t.0.contains("EMERGENCY ALERT")).expect("Must find Emergency Alert");
+            assert!(text_breach.0.contains("MR. MOOSE HAS BREACHED THE WORKSHOP"));
+        }
+    }
+
+    #[test]
+    fn test_in_world_directional_signs_and_object_labels() {
+        let mut app = App::new();
+        app.add_systems(Startup, spawn_diegetic_screens_and_signs);
+        app.update();
+
+        let signs: Vec<(String, String)> = {
+            let mut q_signs = app.world_mut().query::<&DirectionalSign>();
+            q_signs
+                .iter(app.world())
+                .map(|s| (s.station.clone(), s.label.clone()))
+                .collect()
+        };
+
+        assert!(signs.len() >= 2, "Expected at least 2 directional signs/labels, found: {}", signs.len());
+
+        let stations: Vec<&str> = signs.iter().map(|(st, _)| st.as_str()).collect();
+        assert!(stations.contains(&"WrappingWorkbench"), "Must have Workbench Wrapping plaque");
+        assert!(stations.contains(&"PresentSendingPlatform"), "Must have Present Sending Platform sign");
+
+        let workbench_sign = signs.iter().find(|(st, _)| st == "WrappingWorkbench").unwrap();
+        assert!(workbench_sign.1.contains("WRAPPING STATION"));
+        assert!(workbench_sign.1.contains("ASSEMBLE, TAPE & TIE"));
+
+        let send_sign = signs.iter().find(|(st, _)| st == "PresentSendingPlatform").unwrap();
+        assert!(send_sign.1.contains("PLACE WRAPPED GIFT ON CIRCLE"));
+        assert!(send_sign.1.contains("HIT RED BUTTON TO SEND"));
+    }
+
+    #[test]
+    fn test_diegetic_3d_quad_displays() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(50));
+        app.insert_resource(time);
+        app.insert_resource(WorkshopQuota {
+            presents_delivered: 0,
+            target_quota: 5,
+            tier: 1,
+        });
+        app.insert_resource(MooseHunger {
+            value: 10.0,
+            is_breached: false,
+            ..default()
+        });
+
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+
+        app.add_systems(Startup, spawn_diegetic_screens_and_signs);
+        app.add_systems(Update, update_diegetic_monitor_text);
+        app.update();
+
+        let (crt_display, mesh3d, mat3d) = {
+            let mut q_crt = app.world_mut().query::<(&CrtMonitorTextDisplay, &Mesh3d, &MeshMaterial3d<StandardMaterial>)>();
+            let (disp, m, mat) = q_crt.single(app.world()).expect("Must spawn CrtMonitor3dTextQuad with 3D text display");
+            (disp.clone(), m.clone(), mat.clone())
+        };
+        assert!(crt_display.last_content.contains("PAGE 1/4"));
+        assert!(crt_display.last_content.contains("PRESENT INSTRUCTIONS"));
+
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        assert!(meshes.get(&mesh3d.0).is_some(), "CRT 3D text quad mesh must exist in Assets<Mesh>");
+        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        let mat = materials.get(&mat3d.0).expect("CRT 3D text material must exist");
+        assert!(mat.base_color_texture.is_some(), "Material must reference the rasterized text texture");
+        let images = app.world().resource::<Assets<Image>>();
+        let crt_image = images.get(&crt_display.image_handle).expect("CRT image asset must exist");
+        let crt_data = crt_image.data.as_ref().unwrap();
+        let crt_text_pixels = crt_data.chunks_exact(4).filter(|p| p[1] > 100).count();
+        assert!(crt_text_pixels > 500, "CRT screen image must contain green phosphor text pixels");
+
+        let sign_3d_count = {
+            let mut q_signs = app.world_mut().query::<(&DirectionalSign3dText, &Mesh3d, &MeshMaterial3d<StandardMaterial>)>();
+            q_signs.iter(app.world()).count()
+        };
+        assert!(sign_3d_count >= 2, "Expected at least 2 in-world directional sign 3D text quads, found: {}", sign_3d_count);
+
+        {
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(4100));
+        }
+        app.update();
+
+        let q_mon = {
+            let mut q = app.world_mut().query::<&CrtInstructionMonitor>();
+            q.single(app.world()).unwrap().clone()
+        };
+        assert_eq!(q_mon.current_page, 1, "Monitor should cycle to Page 1 (Page 2/4)");
+
+        let q_display = {
+            let mut q = app.world_mut().query::<&CrtMonitorTextDisplay>();
+            q.single(app.world()).unwrap().clone()
+        };
+        assert!(q_display.last_content.contains("PAGE 2/4"), "CRT display component must update to Page 2 content");
+        assert!(q_display.last_content.contains("DISPATCH & VACUUM GUIDE"));
+    }
+}

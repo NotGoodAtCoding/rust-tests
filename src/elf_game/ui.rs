@@ -1579,3 +1579,7 @@ impl Plugin for ElfUiPlugin {
             .add_systems(Update, update_interactive_object_name_display_system);
     }
 }
+
+#[cfg(test)]
+#[path = "ui_tests.rs"]
+mod tests;

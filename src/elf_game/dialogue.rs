@@ -1224,3 +1224,7 @@ impl Plugin for ElfDialoguePlugin {
             );
     }
 }
+
+#[cfg(test)]
+#[path = "dialogue_tests.rs"]
+mod tests;

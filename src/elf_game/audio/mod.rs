@@ -339,3 +339,178 @@ impl Plugin for ElfAudioPlugin {
             );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_audio_driver_failure_does_not_reinstantiate_per_frame() {
+        let mut app = App::new();
+        app.add_plugins(ElfAudioPlugin);
+        app.add_message::<MooseHuffEvent>();
+        app.add_message::<MooseWindowSlamEvent>();
+
+        // Simulate an ALSA lock failure (e.g. EBUSY on raw hardware device hw:0,0 or hw:1,0)
+        app.world_mut().insert_resource(AudioDriverStatus::FailedLock {
+            reason: "ALSA pcm open failed with error 'Device or resource busy (EBUSY)'".into(),
+            attempts: 1,
+        });
+        app.world_mut().resource_mut::<AudioMetrics>().initialization_attempts = 1;
+
+        // Run the game simulation loop for 60 consecutive frames
+        for frame in 0..60 {
+            if frame == 10 {
+                app.world_mut().write_message(MooseHuffEvent);
+            }
+            if frame == 25 {
+                app.world_mut().write_message(MooseWindowSlamEvent);
+            }
+            if frame == 40 {
+                app.world_mut().write_message(PlaySoundMessage::new(SoundCueType::VacuumSuction));
+            }
+            app.update();
+        }
+
+        let metrics = app.world().resource::<AudioMetrics>();
+        let status = app.world().resource::<AudioDriverStatus>();
+
+        // CRITICAL: Initialization attempts must remain strictly 1 — no per-frame reinstantiation!
+        assert_eq!(
+            metrics.initialization_attempts, 1,
+            "Audio driver must NOT be reinstantiated on subsequent frames when in FailedLock state! Found: {}",
+            metrics.initialization_attempts
+        );
+        assert_eq!(metrics.frames_elapsed, 60, "60 frames must have elapsed");
+        assert_eq!(metrics.sound_events_received, 3, "3 gameplay sound events must have been received");
+        assert_eq!(metrics.sound_events_suppressed, 3, "All 3 sound events must be safely suppressed without audio lock");
+        assert_eq!(metrics.sound_events_played, 0, "No sounds played when audio lock is absent");
+        assert!(status.is_failed_lock(), "Driver status must remain in FailedLock");
+        assert!(!status.is_available(), "Audio must report unavailable");
+    }
+
+    #[test]
+    fn test_audio_driver_available_dispatches_sound_cues() {
+        let mut app = App::new();
+        app.add_plugins(ElfAudioPlugin);
+        app.add_message::<MooseHuffEvent>();
+        app.add_message::<MooseWindowSlamEvent>();
+
+        // Simulate available audio driver lock
+        app.world_mut().insert_resource(AudioDriverStatus::Available {
+            backend: "Alsa".into(),
+            device: "default".into(),
+        });
+
+        app.update();
+
+        // Fire audio events
+        app.world_mut().write_message(MooseHuffEvent);
+        app.world_mut().write_message(MooseWindowSlamEvent);
+        app.world_mut().write_message(PlaySoundMessage::new(SoundCueType::PresentDelivered));
+
+        app.update();
+
+        let metrics = app.world().resource::<AudioMetrics>();
+        assert_eq!(metrics.sound_events_received, 3, "3 sound events received");
+        assert_eq!(metrics.sound_events_played, 3, "All 3 sound cues successfully played");
+        assert_eq!(metrics.sound_events_suppressed, 0, "Zero sound events suppressed when available");
+    }
+
+    #[test]
+    fn test_audio_driver_rate_limited_retry_prevents_per_frame_reconnect() {
+        let mut app = App::new();
+        app.add_plugins(ElfAudioPlugin);
+
+        // Initial failed lock state
+        app.world_mut().insert_resource(AudioDriverStatus::FailedLock {
+            reason: "Device locked".into(),
+            attempts: 1,
+        });
+        app.world_mut().resource_mut::<AudioMetrics>().initialization_attempts = 1;
+
+        // Enable retry with 30s cooldown
+        let mut config = app.world_mut().resource_mut::<AudioConfig>();
+        config.allow_reinit_retry = true;
+        config.min_retry_interval_secs = 30.0;
+        config.last_retry_time = 0.0; // Last retry was at t=0
+
+        // Frame 1 at t=5s (within 30s cooldown): rapid retries must be rejected
+        let mut time: Time<()> = Time::default();
+        time.advance_by(std::time::Duration::from_secs(5));
+        app.world_mut().insert_resource(time);
+
+        // Send 3 retry requests in the same frame
+        app.world_mut().write_message(RetryAudioInitMessage);
+        app.update();
+
+        let metrics = app.world().resource::<AudioMetrics>();
+        assert_eq!(
+            metrics.initialization_attempts, 1,
+            "Rapid retry requests within cooldown must be rejected and not re-probe ALSA!"
+        );
+
+        // Now advance time past 30s cooldown (t = 35s)
+        let mut time: Time<()> = Time::default();
+        time.advance_by(std::time::Duration::from_secs(35));
+        app.world_mut().insert_resource(time);
+
+        // Request retry once after cooldown expires
+        app.world_mut().write_message(RetryAudioInitMessage);
+        app.update();
+
+        let metrics = app.world().resource::<AudioMetrics>();
+        assert_eq!(
+            metrics.initialization_attempts, 2,
+            "Retry after cooldown expires should increment attempt count to 2"
+        );
+
+        // Immediately in the very next frame (t = 35.016s, 60fps), another retry request arrives:
+        let mut time: Time<()> = Time::default();
+        time.advance_by(std::time::Duration::from_millis(35016));
+        app.world_mut().insert_resource(time);
+
+        app.world_mut().write_message(RetryAudioInitMessage);
+        app.update();
+
+        let metrics = app.world().resource::<AudioMetrics>();
+        assert_eq!(
+            metrics.initialization_attempts, 2,
+            "Next-frame retry request must be blocked by rate-limiter, preventing per-frame poll loops!"
+        );
+    }
+
+    #[test]
+    fn test_audio_disabled_by_default_suppresses_cues_without_alsa_calls() {
+        let mut app = App::new();
+        app.add_plugins(ElfAudioPlugin);
+        app.add_message::<MooseHuffEvent>();
+        app.add_message::<MooseWindowSlamEvent>();
+
+        // Run startup and update frames without any manual configuration
+        app.update();
+
+        let status = app.world().resource::<AudioDriverStatus>();
+        let metrics = app.world().resource::<AudioMetrics>();
+        let config = app.world().resource::<AudioConfig>();
+
+        assert!(!config.enabled, "AudioConfig must be disabled by default");
+        assert!(status.is_disabled(), "AudioDriverStatus must be Disabled by default to avoid alsa::poll() errors");
+        assert_eq!(
+            metrics.initialization_attempts, 0,
+            "Zero ALSA/CPAL probe attempts must be made when audio is disabled by default"
+        );
+
+        // Write audio messages
+        app.world_mut().write_message(MooseHuffEvent);
+        app.world_mut().write_message(MooseWindowSlamEvent);
+        app.world_mut().write_message(PlaySoundMessage::new(SoundCueType::VacuumSuction));
+        app.update();
+
+        let metrics = app.world().resource::<AudioMetrics>();
+        assert_eq!(metrics.sound_events_received, 3, "3 sound events received");
+        assert_eq!(metrics.sound_events_suppressed, 3, "All 3 sound events safely suppressed without ALSA calls");
+        assert_eq!(metrics.sound_events_played, 0, "Zero sound events played");
+        assert_eq!(metrics.initialization_attempts, 0, "Initialization attempts must strictly remain 0");
+    }
+}

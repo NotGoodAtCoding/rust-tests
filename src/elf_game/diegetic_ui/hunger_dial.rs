@@ -505,3 +505,150 @@ pub fn animate_gauge_system(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::elf_game::workshop::stove::WorkshopGasLine;
+
+    #[test]
+    fn test_physical_mechanical_hunger_dial_and_scale() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+
+        app.add_systems(Startup, spawn_gas_pressure_gauge);
+        app.add_systems(Update, animate_gauge_system);
+
+        app.update();
+
+        let mut gauge_q = app.world_mut().query::<(&GasPressureGauge, &Gauge, &Transform)>();
+        let dial = gauge_q.iter(app.world()).next();
+        assert!(dial.is_some(), "GasPressureGauge must be spawned beside stove");
+        let (_, _, dial_tf) = dial.unwrap();
+        assert!(
+            (dial_tf.translation.x - (-9.0)).abs() < 0.2 && (dial_tf.translation.z - (-12.75)).abs() < 0.2,
+            "Dial must be mounted beside stove by the window, got {:?}",
+            dial_tf.translation
+        );
+
+        let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
+        assert_eq!(needle_q.iter(app.world()).count(), 1, "Needle entity must exist");
+
+        let mut beacon_q = app.world_mut().query::<&GaugeWarningBeacon>();
+        assert_eq!(beacon_q.iter(app.world()).count(), 1, "Warning beacon must exist");
+
+        {
+            let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
+            let needle = needle_q.iter(app.world()).next().unwrap();
+            assert!(
+                (needle.current_angle - needle.max_angle).abs() < 0.1,
+                "Needle should be at maximum angle (≈ +2.356) at value 1.0, got {}",
+                needle.current_angle
+            );
+            assert!(!needle.is_jittering, "Needle should not jitter when calm");
+        }
+
+        {
+            let mut q = app.world_mut().query::<&mut Gauge>();
+            let mut gauge = q.single_mut(app.world_mut()).unwrap();
+            gauge.set_value(0.5);
+        }
+        app.update();
+        {
+            let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
+            let needle = needle_q.iter(app.world()).next().unwrap();
+            assert!(
+                needle.current_angle.abs() < 0.2,
+                "Needle should be at top center (≈ 0.0) at value 0.5, got {}",
+                needle.current_angle
+            );
+        }
+
+        {
+            let mut q = app.world_mut().query::<&mut Gauge>();
+            let mut gauge = q.single_mut(app.world_mut()).unwrap();
+            gauge.set_value(0.0);
+        }
+        app.update();
+        {
+            let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
+            let needle = needle_q.iter(app.world()).next().unwrap();
+            assert!(
+                (needle.current_angle - needle.min_angle).abs() < 0.1,
+                "Needle should be at far left (≈ -2.356) at value 0.0, got {}",
+                needle.current_angle
+            );
+            assert!(needle.is_jittering, "Needle must jitter when value <= critical_threshold");
+
+            let mut beacon_q = app.world_mut().query::<&GaugeWarningBeacon>();
+            let beacon = beacon_q.iter(app.world()).next().unwrap();
+            assert!(beacon.is_alert, "Warning beacon must be in alert mode when critical");
+        }
+
+        {
+            let mut q = app.world_mut().query::<&mut Gauge>();
+            let mut gauge = q.single_mut(app.world_mut()).unwrap();
+            gauge.set_value(0.9);
+        }
+        app.update();
+        {
+            let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
+            let needle = needle_q.iter(app.world()).next().unwrap();
+            assert!(!needle.is_jittering, "Needle must not jitter in safe state");
+
+            let mut beacon_q = app.world_mut().query::<&GaugeWarningBeacon>();
+            let beacon = beacon_q.iter(app.world()).next().unwrap();
+            assert!(!beacon.is_alert, "Warning beacon must return to calm state");
+        }
+    }
+
+    #[test]
+    fn test_repurposed_gas_pressure_gauge_needle_and_alert() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.insert_resource(WorkshopGasLine {
+            pressure_psi: 100.0,
+            burn_rate: 0.8,
+            leak_vent_rate: 2.5,
+        });
+
+        app.add_systems(Startup, spawn_gas_pressure_gauge);
+        app.add_systems(Update, (update_gas_pressure_gauge_system, animate_gauge_system));
+        app.update();
+
+        let mut gauge_q = app.world_mut().query::<(&GasPressureGauge, &Gauge)>();
+        let (_, gauge) = gauge_q.iter(app.world()).next().expect("GasPressureGauge must exist");
+        assert_eq!(gauge.value, 1.0, "Gauge value should be 1.0 at 100 PSI");
+
+        {
+            let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
+            let needle = needle_q.iter(app.world()).next().unwrap();
+            assert!(
+                (needle.current_angle - needle.max_angle).abs() < 0.1,
+                "Needle should be at maximum angle (≈ +2.356) when gas tank is full (100 PSI), got {}",
+                needle.current_angle
+            );
+            let mut beacon_q = app.world_mut().query::<&GaugeWarningBeacon>();
+            let beacon = beacon_q.iter(app.world()).next().unwrap();
+            assert!(!beacon.is_alert, "Warning beacon must not alert when gas pressure is full");
+        }
+
+        {
+            let mut gas = app.world_mut().resource_mut::<WorkshopGasLine>();
+            gas.pressure_psi = 10.0;
+        }
+        app.update();
+
+        {
+            let mut needle_q = app.world_mut().query::<&GaugeNeedle>();
+            let needle = needle_q.iter(app.world()).next().unwrap();
+            assert!(needle.is_jittering, "Needle must jitter when gas pressure is critically low");
+
+            let mut beacon_q = app.world_mut().query::<&GaugeWarningBeacon>();
+            let beacon = beacon_q.iter(app.world()).next().unwrap();
+            assert!(beacon.is_alert, "Warning beacon must pulse in alert mode when gas pressure is < 15 PSI");
+        }
+    }
+}

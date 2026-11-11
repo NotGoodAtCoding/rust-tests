@@ -708,3 +708,368 @@ pub fn spawn_storage_wing_and_forbidden_workshop(
         ));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use crate::elf_game::{
+        core::{CorePlugin, WorkshopQuota},
+        moose::MooseHunger,
+        workshop::{
+            room::ConveyorBelt,
+            WorkshopPlugin,
+        },
+        wrapping::{Present, WrappingFeature, WrappingSpecification},
+    };
+
+    #[test]
+    fn test_workshop_progression_and_door_unlocks() {
+        let mut app = App::new();
+        app.add_plugins((CorePlugin, WorkshopPlugin));
+
+        // Deliver enough presents to pass Tier 1 quota (target is 5)
+        {
+            let mut quota = app.world_mut().resource_mut::<WorkshopQuota>();
+            quota.presents_delivered = 5;
+        }
+
+        app.update();
+
+        let quota = app.world().resource::<WorkshopQuota>();
+        assert_eq!(quota.tier, 2, "Progresses to Tier 2 (Storage Wing)");
+        assert_eq!(quota.target_quota, 15);
+    }
+
+    #[test]
+    fn test_progression_unlock_conditions() {
+        let mut app = App::new();
+        app.add_plugins((CorePlugin, WorkshopPlugin));
+        app.update();
+
+        // 1. Initial State: Both doors exist and are locked
+        {
+            let mut q_doors = app.world_mut().query::<(&WorkshopDoor, &Name)>();
+            let mut found_storage = false;
+            let mut found_forbidden = false;
+            for (door, _name) in q_doors.iter(app.world()) {
+                if door.door_id == "StorageWing" {
+                    assert_eq!(door.state, DoorState::Locked);
+                    assert_eq!(door.required_tier, 2);
+                    found_storage = true;
+                } else if door.door_id == "ForbiddenBackWorkshop" {
+                    assert_eq!(door.state, DoorState::Locked);
+                    assert_eq!(door.required_tier, 3);
+                    found_forbidden = true;
+                }
+            }
+            assert!(found_storage, "StorageWingDoor must be spawned and locked");
+            assert!(found_forbidden, "ForbiddenBackWorkshopDoor must be spawned and locked");
+        }
+
+        // 2. Pass Tier 1 Quota (deliver 5 presents) -> Storage Wing Door transitions to Opening
+        {
+            let mut quota = app.world_mut().resource_mut::<WorkshopQuota>();
+            quota.presents_delivered = 5;
+        }
+        app.update();
+
+        {
+            let quota = app.world().resource::<WorkshopQuota>();
+            assert_eq!(quota.tier, 2, "Quota tier must advance to Tier 2");
+            assert_eq!(quota.target_quota, 15);
+
+            let mut q_doors = app.world_mut().query::<&WorkshopDoor>();
+            for door in q_doors.iter(app.world()) {
+                if door.door_id == "StorageWing" {
+                    match door.state {
+                        DoorState::Opening { progress, .. } => {
+                            assert!(progress >= 0.0, "Storage door must begin opening");
+                        }
+                        other => panic!("Expected StorageWing door to be Opening, got {:?}", other),
+                    }
+                } else if door.door_id == "ForbiddenBackWorkshop" {
+                    assert_eq!(door.state, DoorState::Locked, "Forbidden door must remain locked in Tier 2");
+                }
+            }
+        }
+
+        // 3. Pass Tier 2 Quota (deliver 15 presents) -> Forbidden Back Workshop Door transitions to Opening
+        {
+            let mut quota = app.world_mut().resource_mut::<WorkshopQuota>();
+            quota.presents_delivered = 15;
+        }
+        app.update();
+
+        {
+            let quota = app.world().resource::<WorkshopQuota>();
+            assert_eq!(quota.tier, 3, "Quota tier must advance to Tier 3");
+
+            let mut q_doors = app.world_mut().query::<&WorkshopDoor>();
+            for door in q_doors.iter(app.world()) {
+                if door.door_id == "ForbiddenBackWorkshop" {
+                    match door.state {
+                        DoorState::Opening { .. } => {}
+                        other => panic!("Expected ForbiddenBackWorkshop door to be Opening, got {:?}", other),
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_door_opening_animation_and_collider_removal() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(500));
+        app.insert_resource(time);
+
+        let door_entity = app.world_mut().spawn((
+            Transform::from_xyz(13.0, 1.7, 0.0),
+            WorkshopDoor {
+                door_id: "StorageWing".to_string(),
+                required_tier: 2,
+                state: DoorState::Opening { progress: 0.0, speed: 1.0 },
+                closed_position: Vec3::new(13.0, 1.7, 0.0),
+                open_position: Vec3::new(13.0, 5.0, 0.0),
+            },
+            Collider::cuboid(0.25, 1.7, 1.95),
+        )).id();
+
+        app.add_systems(Update, animate_workshop_doors_system);
+
+        // Step 1: 0.5s -> progress = 0.5, translation halfway
+        app.update();
+        let tf = app.world().get::<Transform>(door_entity).unwrap();
+        let door = app.world().get::<WorkshopDoor>(door_entity).unwrap();
+        match door.state {
+            DoorState::Opening { progress, .. } => {
+                assert!((progress - 0.5).abs() < 0.01);
+            }
+            other => panic!("Expected Opening state, got {:?}", other),
+        }
+        assert!((tf.translation.y - 3.35).abs() < 0.05, "Door should be halfway up");
+        assert!(app.world().get::<Collider>(door_entity).is_some(), "Collider must remain while opening");
+
+        // Step 2: Another 0.6s -> progress >= 1.0 -> DoorState::Open and Collider removed
+        {
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(600));
+        }
+        app.update();
+
+        let door = app.world().get::<WorkshopDoor>(door_entity).unwrap();
+        assert_eq!(door.state, DoorState::Open, "Door must complete opening and become Open");
+        let tf = app.world().get::<Transform>(door_entity).unwrap();
+        assert!((tf.translation.y - 5.0).abs() < 0.01, "Door should reach full open position");
+        assert!(
+            app.world().get::<Collider>(door_entity).is_none(),
+            "Blocking Collider must be removed once door is Open so player can pass through"
+        );
+    }
+
+    #[test]
+    fn test_storage_wing_motorized_turntable() {
+        let mut app = App::new();
+        app.add_systems(Update, motorized_turntable_system);
+
+        // Spawn Turntable at (18.0, 0.35, 0.0)
+        let _tt = app.world_mut().spawn((
+            Transform::from_xyz(18.0, 0.35, 0.0),
+            MotorizedTurntable {
+                angular_speed: 3.0,
+                radius: 1.5,
+            },
+        )).id();
+
+        // Spawn Present placed on turntable at (18.5, 0.55, 0.0) with PaperSized feature
+        let mut initial_features = HashSet::new();
+        initial_features.insert(WrappingFeature::PaperSized);
+
+        let present_entity = app.world_mut().spawn((
+            Transform::from_xyz(18.5, 0.55, 0.0),
+            Velocity::default(),
+            Present {
+                toy_name: "Wooden Train".to_string(),
+                features: initial_features,
+                ..default()
+            },
+        )).id();
+
+        app.update();
+
+        let (vel, present) = {
+            let p_world = app.world();
+            (
+                p_world.get::<Velocity>(present_entity).unwrap().clone(),
+                p_world.get::<Present>(present_entity).unwrap().clone(),
+            )
+        };
+
+        // 1. Angular and Tangential Velocity applied
+        assert_eq!(vel.angular.y, 3.0, "Turntable must impart spin to the present");
+        assert!(vel.linear.z > 1.0, "Turntable must impart tangential velocity (+Z)");
+
+        // 2. Motorized auto-wrapping: PaperSized -> PaperWrapped
+        assert!(
+            present.features.contains(&WrappingFeature::PaperWrapped),
+            "Turntable must automatically wrap sized presents into PaperWrapped"
+        );
+    }
+
+    #[test]
+    fn test_forbidden_tools_volatility() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(500));
+        app.insert_resource(time);
+
+        app.add_message::<TriggerPlasmaWrapperMessage>();
+        app.add_message::<PlasmaExplosionEvent>();
+        app.add_systems(Update, plasma_shrink_wrapper_system);
+
+        // Spawn Plasma Shrink Wrapper
+        let wrapper_entity = app.world_mut().spawn((
+            Transform::from_xyz(-3.0, 0.85, 18.0),
+            PlasmaShrinkWrapper {
+                heat: 0.0,
+                max_heat: 100.0,
+                cooling_rate: 10.0,
+                heat_per_use: 35.0,
+                ..default()
+            },
+        )).id();
+
+        // Spawn present to wrap
+        let present_entity = app.world_mut().spawn((
+            Transform::from_xyz(-3.0, 1.0, 18.0),
+            Velocity::default(),
+            Present::default(),
+            WrappingSpecification::default(),
+        )).id();
+
+        // 1. First trigger: Normal wrap processing starts, heat increases
+        app.world_mut().write_message(TriggerPlasmaWrapperMessage {
+            wrapper_entity,
+            present_entity,
+        });
+        app.update();
+
+        let wrapper = app.world().get::<PlasmaShrinkWrapper>(wrapper_entity).unwrap();
+        assert_eq!(wrapper.heat, 35.0, "Heat should increase by 35 per wrap");
+        assert!(wrapper.is_processing, "Should be in active processing state");
+        assert!(!wrapper.is_overheated);
+
+        // Advance 1.6s to complete processing (duration 1.5s)
+        {
+            let mut t = app.world_mut().resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(1600));
+        }
+        app.update();
+
+        let present = app.world().get::<Present>(present_entity).unwrap();
+        assert!(present.features.contains(&WrappingFeature::PlasmaShrinkSealed));
+        assert!(present.features.contains(&WrappingFeature::PaperWrapped));
+        assert!(present.features.contains(&WrappingFeature::DecorativeBow));
+        assert!(present.is_completed, "Specification should be fulfilled by instant plasma seal");
+        assert!(present.quality_score > 1.4, "Quality score should receive high-tech boost");
+
+        // 2. Consecutive triggers to provoke overheat volatility
+        app.world_mut().write_message(TriggerPlasmaWrapperMessage {
+            wrapper_entity,
+            present_entity,
+        });
+        app.update();
+
+        app.world_mut().write_message(TriggerPlasmaWrapperMessage {
+            wrapper_entity,
+            present_entity,
+        });
+        app.update();
+
+        app.world_mut().write_message(TriggerPlasmaWrapperMessage {
+            wrapper_entity,
+            present_entity,
+        });
+        app.update();
+
+        let wrapper = app.world().get::<PlasmaShrinkWrapper>(wrapper_entity).unwrap();
+        assert!(wrapper.is_overheated, "Wrapper must enter overheated volatility lock when heat >= 100");
+        assert!(!wrapper.is_processing, "Processing must be aborted on overheat");
+    }
+
+    #[test]
+    fn test_ribbon_cannon_and_candy_cane_overclocker() {
+        let mut app = App::new();
+        app.insert_resource(MooseHunger {
+            value: 10.0,
+            increment_rate: 1.0,
+            ..default()
+        });
+
+        app.add_message::<FireRibbonCannonMessage>();
+        app.add_message::<ToggleOverclockerMessage>();
+        app.add_systems(Update, (ribbon_cannon_system, candy_cane_overclocker_system));
+
+        // 1. Ribbon Cannon Test
+        let cannon_entity = app.world_mut().spawn((
+            Transform::from_xyz(3.0, 0.85, 18.0),
+            RibbonCannon::default(),
+        )).id();
+
+        let present_entity = app.world_mut().spawn((
+            Transform::from_xyz(3.0, 0.85, 17.0),
+            Velocity::default(),
+            Present::default(),
+        )).id();
+
+        app.world_mut().write_message(FireRibbonCannonMessage {
+            cannon_entity,
+            present_entity,
+        });
+        app.update();
+
+        let (present, vel) = {
+            let p_world = app.world();
+            (
+                p_world.get::<Present>(present_entity).unwrap().clone(),
+                p_world.get::<Velocity>(present_entity).unwrap().clone(),
+            )
+        };
+        assert!(present.features.contains(&WrappingFeature::RibbonTied));
+        assert!(present.features.contains(&WrappingFeature::DecorativeBow));
+        assert!(vel.linear.y > 2.0, "Cannon must deliver upward pneumatic launch impulse");
+
+        // 2. Candy-Cane Overclocker Test
+        let conveyor_entity = app.world_mut().spawn((
+            Transform::from_xyz(0.0, 0.75, 3.0),
+            ConveyorBelt {
+                speed: 2.0,
+                direction: Vec3::X,
+            },
+        )).id();
+
+        let _overclocker_entity = app.world_mut().spawn((
+            Transform::from_xyz(0.0, 1.2, 22.0),
+            CandyCaneOverclocker::default(),
+        )).id();
+
+        // Toggle ON -> 2.0x conveyor speed, 1.75x moose hunger rate
+        app.world_mut().write_message(ToggleOverclockerMessage);
+        app.update();
+
+        let belt = app.world().get::<ConveyorBelt>(conveyor_entity).unwrap();
+        assert_eq!(belt.speed, 4.0, "Conveyor belt speed must double when overclocked");
+        let moose = app.world().resource::<MooseHunger>();
+        assert_eq!(moose.increment_rate, 1.75, "Mr. Moose hunger rate must scale by 1.75x while overclocked");
+
+        // Toggle OFF -> restored to normal
+        app.world_mut().write_message(ToggleOverclockerMessage);
+        app.update();
+
+        let belt = app.world().get::<ConveyorBelt>(conveyor_entity).unwrap();
+        assert_eq!(belt.speed, 2.0, "Conveyor belt speed must return to normal");
+        let moose = app.world().resource::<MooseHunger>();
+        assert_eq!(moose.increment_rate, 1.0, "Moose hunger rate must return to 1.0");
+    }
+}

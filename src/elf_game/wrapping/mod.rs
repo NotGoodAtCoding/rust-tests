@@ -481,3 +481,291 @@ pub fn generate_snowflake_pattern_image() -> Image {
         RenderAssetUsages::default(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wrapping_attribute_specification_fulfillment() {
+        let mut app = App::new();
+        app.add_plugins(WrappingPlugin);
+
+        // Specification requires PaperSized, PaperWrapped, TapedCorners, and DecorativeBow
+        let mut required = HashSet::new();
+        required.insert(WrappingFeature::PaperSized);
+        required.insert(WrappingFeature::PaperWrapped);
+        required.insert(WrappingFeature::TapedCorners);
+        required.insert(WrappingFeature::DecorativeBow);
+
+        let present_entity = app.world_mut().spawn((
+            Present {
+                toy_name: "Wooden Train".to_string(),
+                ..default()
+            },
+            WrappingSpecification {
+                required_features: required,
+                forbidden_features: HashSet::new(),
+            },
+        )).id();
+
+        // 1. Cut Paper (PaperSized)
+        app.world_mut().write_message(UseToolOnPresentMessage::new(
+            WrappingTool::Scissors,
+            present_entity,
+        ));
+        app.update();
+        let p = app.world().get::<Present>(present_entity).unwrap();
+        assert!(p.features.contains(&WrappingFeature::PaperSized));
+        assert!(!p.is_completed);
+
+        // 2. Wrap Paper (PaperWrapped)
+        app.world_mut().write_message(UseToolOnPresentMessage::new(
+            WrappingTool::WrappingPaperRoll,
+            present_entity,
+        ));
+        app.update();
+        let p = app.world().get::<Present>(present_entity).unwrap();
+        assert!(p.features.contains(&WrappingFeature::PaperWrapped));
+        assert!(!p.is_completed);
+
+        // 3. Tape Corners (TapedCorners)
+        app.world_mut().write_message(UseToolOnPresentMessage::new(
+            WrappingTool::TapeDispenser,
+            present_entity,
+        ));
+        app.update();
+        let p = app.world().get::<Present>(present_entity).unwrap();
+        assert!(p.features.contains(&WrappingFeature::TapedCorners));
+        assert!(!p.is_completed);
+
+        // 4. Attach Decorative Bow (DecorativeBow) -> All required attributes present!
+        app.world_mut().write_message(UseToolOnPresentMessage::new(
+            WrappingTool::DecorativeBowBox,
+            present_entity,
+        ));
+        app.update();
+        let p = app.world().get::<Present>(present_entity).unwrap();
+        assert!(p.features.contains(&WrappingFeature::DecorativeBow));
+        assert!(p.is_completed, "Present should be completed when all specified attributes are met");
+    }
+
+    #[test]
+    fn test_forbidden_plasma_instant_wrap() {
+        let mut app = App::new();
+        app.add_plugins(WrappingPlugin);
+
+        let present_entity = app.world_mut().spawn((
+            Present {
+                toy_name: "Giant Teddy".to_string(),
+                quality_score: 1.0,
+                ..default()
+            },
+            WrappingSpecification::default(),
+        )).id();
+
+        // Instantly seal with Forbidden Plasma Shrink
+        app.world_mut().write_message(UseToolOnPresentMessage::new(
+            WrappingTool::ForbiddenPlasmaShrink,
+            present_entity,
+        ));
+        app.update();
+
+        let p = app.world().get::<Present>(present_entity).unwrap();
+        assert!(p.is_completed, "Forbidden plasma wrap fulfills required specifications");
+        assert!(p.features.contains(&WrappingFeature::PlasmaShrinkSealed));
+        assert_eq!(p.quality_score, 1.5, "Forbidden tool gives instant high quality boost");
+    }
+
+    #[test]
+    fn test_gift_tag_pen_writing_and_paper_pattern_variants() {
+        let mut app = App::new();
+        app.add_plugins(WrappingPlugin);
+
+        // 1. Verify PaperPatternRoll cycling
+        let mut roll = PaperPatternRoll::default();
+        assert_eq!(roll.pattern, PaperPattern::Plain);
+        assert_eq!(roll.cycle(), PaperPattern::PolkaDots);
+        assert_eq!(roll.cycle(), PaperPattern::Stripes);
+        assert_eq!(roll.cycle(), PaperPattern::Snowflakes);
+        assert_eq!(roll.cycle(), PaperPattern::Plain);
+
+        // 2. Present requiring PolkaDotPattern and GiftTagAttached
+        let mut req = HashSet::new();
+        req.insert(WrappingFeature::PaperWrapped);
+        req.insert(WrappingFeature::PolkaDotPattern);
+        req.insert(WrappingFeature::GiftTagAttached);
+
+        let mut forb = HashSet::new();
+        forb.insert(WrappingFeature::StripedPattern);
+
+        let spec = WrappingSpecification {
+            required_features: req,
+            forbidden_features: forb,
+        };
+
+        let present_e = app.world_mut().spawn((
+            Present {
+                toy_name: "Rocket Ship".to_string(),
+                ..default()
+            },
+            spec.clone(),
+        )).id();
+
+        // Wrap with stripes first - should have stripes and not satisfy spec (forbidden feature)
+        app.world_mut().write_message(
+            UseToolOnPresentMessage::new(WrappingTool::WrappingPaperRoll, present_e)
+                .with_pattern(PaperPattern::Stripes),
+        );
+        app.update();
+
+        let p = app.world().get::<Present>(present_e).unwrap();
+        assert!(p.features.contains(&WrappingFeature::PaperWrapped));
+        assert!(p.features.contains(&WrappingFeature::StripedPattern));
+        assert!(!p.meets_specification(&spec));
+        assert!(!p.is_completed);
+
+        // Now re-wrap with polka dots - should replace stripes with polka dots
+        app.world_mut().write_message(
+            UseToolOnPresentMessage::new(WrappingTool::WrappingPaperRoll, present_e)
+                .with_pattern(PaperPattern::PolkaDots),
+        );
+        app.update();
+
+        let p = app.world().get::<Present>(present_e).unwrap();
+        assert!(p.features.contains(&WrappingFeature::PolkaDotPattern));
+        assert!(!p.features.contains(&WrappingFeature::StripedPattern));
+        assert!(!p.is_completed, "Still missing GiftTagAttached");
+
+        // Write with GiftTagPen
+        app.world_mut().write_message(
+            UseToolOnPresentMessage::new(WrappingTool::GiftTagPen, present_e)
+                .with_inscription("For: Clara - Merry Christmas!"),
+        );
+        app.update();
+
+        let p = app.world().get::<Present>(present_e).unwrap();
+        assert!(p.features.contains(&WrappingFeature::GiftTagAttached));
+        assert_eq!(p.recipient_tag.as_deref(), Some("For: Clara - Merry Christmas!"));
+        assert!(p.meets_specification(&spec));
+        assert!(p.is_completed, "Present should be completed once all requirements including tag and pattern are met");
+    }
+
+    #[test]
+    fn test_visual_polish_snowflakes_and_pattern_cycling() {
+        // 1. Test Snowflake Image Generation
+        let snow_img = generate_snowflake_pattern_image();
+        assert_eq!(snow_img.texture_descriptor.size.width, 64);
+        assert_eq!(snow_img.texture_descriptor.size.height, 64);
+        let raw = snow_img.data.as_ref().expect("Snowflake image data must exist");
+        assert!(!raw.is_empty());
+
+        // 2. Test Present Wrapping with Snowflake Pattern
+        let mut wrap_app = App::new();
+        wrap_app.add_message::<UseToolOnPresentMessage>();
+        wrap_app.add_systems(Update, handle_present_wrapping);
+
+        let present_e = wrap_app.world_mut().spawn(Present::default()).id();
+
+        // Apply wrapping paper with Snowflake pattern
+        {
+            let mut msgs = wrap_app.world_mut().resource_mut::<bevy::ecs::message::Messages<UseToolOnPresentMessage>>();
+            msgs.write(UseToolOnPresentMessage {
+                present_entity: present_e,
+                tool: WrappingTool::WrappingPaperRoll,
+                pattern: Some(PaperPattern::Snowflakes),
+                inscription: None,
+            });
+        }
+        wrap_app.update();
+
+        let present = wrap_app.world().get::<Present>(present_e).unwrap();
+        assert!(
+            present.features.contains(&WrappingFeature::SnowflakePattern),
+            "Present wrapped with Snowflake paper must have SnowflakePattern feature"
+        );
+        assert!(
+            present.features.contains(&WrappingFeature::PaperWrapped),
+            "Present wrapped with paper must have PaperWrapped feature"
+        );
+    }
+
+    #[test]
+    fn test_toy_types_dimensions_mass_and_specifications() {
+        let train = ToyType::WoodenTrain;
+        assert_eq!(train.name(), "Wooden Train");
+        assert_eq!(train.dimensions(), Vec3::new(0.65, 0.45, 0.45));
+        assert_eq!(train.mass(), 1.2);
+        let train_spec = train.default_specification();
+        assert!(train_spec.required_features.contains(&WrappingFeature::PaperSized));
+        assert!(train_spec.required_features.contains(&WrappingFeature::PaperWrapped));
+        assert!(train_spec.required_features.contains(&WrappingFeature::TapedCorners));
+        assert!(train_spec.required_features.contains(&WrappingFeature::DecorativeBow));
+        assert!(train_spec.required_features.contains(&WrappingFeature::GiftTagAttached));
+        assert!(train_spec.forbidden_features.is_empty());
+
+        let bear = ToyType::TeddyBear;
+        assert_eq!(bear.name(), "Teddy Bear");
+        assert_eq!(bear.dimensions(), Vec3::new(0.50, 0.55, 0.50));
+        assert_eq!(bear.mass(), 0.6);
+        let bear_spec = bear.default_specification();
+        assert!(bear_spec.required_features.contains(&WrappingFeature::PaperWrapped));
+        assert!(bear_spec.required_features.contains(&WrappingFeature::SnowflakePattern));
+        assert!(bear_spec.required_features.contains(&WrappingFeature::RibbonTied));
+        assert!(bear_spec.forbidden_features.contains(&WrappingFeature::PlasmaShrinkSealed));
+
+        let robot = ToyType::TinRobot;
+        assert_eq!(robot.name(), "Tin Robot");
+        assert_eq!(robot.dimensions(), Vec3::new(0.45, 0.65, 0.40));
+        assert_eq!(robot.mass(), 2.0);
+        let robot_spec = robot.default_specification();
+        assert!(robot_spec.required_features.contains(&WrappingFeature::PaperWrapped));
+        assert!(robot_spec.required_features.contains(&WrappingFeature::StripedPattern));
+        assert!(robot_spec.required_features.contains(&WrappingFeature::TapedCorners));
+        assert!(robot_spec.required_features.contains(&WrappingFeature::TapedCenter));
+        assert!(robot_spec.forbidden_features.contains(&WrappingFeature::RibbonTied));
+    }
+
+    #[test]
+    fn test_toy_wrapping_specification_fulfillment_and_forbidden_violations() {
+        let mut app = App::new();
+        app.add_plugins(WrappingPlugin);
+
+        // 1. Teddy Bear order: requires PaperWrapped, SnowflakePattern, RibbonTied; forbids PlasmaShrinkSealed
+        let bear_spec = WrappingSpecification::for_toy(ToyType::TeddyBear);
+        let bear_entity = app.world_mut().spawn((
+            Present::new(ToyType::TeddyBear),
+            bear_spec.clone(),
+        )).id();
+
+        // Wrap paper with Snowflake pattern
+        app.world_mut().write_message(
+            UseToolOnPresentMessage::new(WrappingTool::WrappingPaperRoll, bear_entity)
+                .with_pattern(PaperPattern::Snowflakes),
+        );
+        app.update();
+
+        let p = app.world().get::<Present>(bear_entity).unwrap();
+        assert!(!p.is_completed, "Needs ribbon tied");
+
+        // Tie ribbon
+        app.world_mut().write_message(
+            UseToolOnPresentMessage::new(WrappingTool::RibbonSpool, bear_entity),
+        );
+        app.update();
+
+        let p = app.world().get::<Present>(bear_entity).unwrap();
+        assert!(p.is_completed, "Teddy bear completed with snowflake paper and ribbon!");
+        assert_eq!(p.specification_satisfaction(&bear_spec), 1.0);
+
+        // Violate with forbidden plasma shrink wrap
+        app.world_mut().write_message(
+            UseToolOnPresentMessage::new(WrappingTool::ForbiddenPlasmaShrink, bear_entity),
+        );
+        app.update();
+
+        let p = app.world().get::<Present>(bear_entity).unwrap();
+        assert!(!p.meets_specification(&bear_spec), "Plasma wrap violates teddy bear forbidden specification!");
+        assert!(p.specification_satisfaction(&bear_spec) < 1.0);
+    }
+}

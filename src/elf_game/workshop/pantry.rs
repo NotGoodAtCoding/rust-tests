@@ -1320,3 +1320,664 @@ pub fn pantry_door_interaction_system(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::message::Messages;
+    use crate::elf_game::{
+        physics_sandbox::ragdoll::ElfAssistant,
+        player::{controller::ElfPlayer, ElfMovement},
+        workshop::room::setup_workshop_scene,
+    };
+
+    #[test]
+    fn test_pantry_storage_wing_geometry_and_shelving() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.add_systems(Startup, setup_workshop_scene);
+        app.update();
+
+        // 1. Verify Pantry Storage Wing root entity and spatial bounds
+        let Ok((pantry, p_tf)) = app.world_mut().query::<(&PantryWing, &Transform)>().single(app.world()) else {
+            panic!("PantryWing must be spawned");
+        };
+        assert_eq!(pantry.bounds_min, Vec3::new(-13.0, 0.0, 9.0));
+        assert_eq!(pantry.bounds_max, Vec3::new(-7.0, 3.0, 13.0));
+        assert_eq!(p_tf.translation, Vec3::new(-10.0, 1.5, 11.0));
+
+        // 2. Verify Floor, Ceiling, Walls, Header, and Lantern
+        let names: Vec<String> = app
+            .world_mut()
+            .query::<&Name>()
+            .iter(app.world())
+            .map(|n| n.to_string())
+            .collect();
+
+        assert!(names.contains(&"PantryFloor".to_string()), "Must spawn PantryFloor");
+        assert!(names.contains(&"PantryCeiling".to_string()), "Must spawn PantryCeiling");
+        assert!(names.contains(&"PantryNorthWall".to_string()), "Must spawn PantryNorthWall");
+        assert!(names.contains(&"PantrySouthWall".to_string()), "Must spawn PantrySouthWall");
+        assert!(names.contains(&"PantryWestWall".to_string()), "Must spawn PantryWestWall");
+        assert!(names.contains(&"PantryEastWallNorth".to_string()), "Must spawn PantryEastWallNorth");
+        assert!(names.contains(&"PantryEastWallSouth".to_string()), "Must spawn PantryEastWallSouth");
+        assert!(names.contains(&"WallWestMidSouth".to_string()), "Must spawn WallWestMidSouth");
+        assert!(names.contains(&"PantryDoorHeaderLintel".to_string()), "Must spawn PantryDoorHeaderLintel");
+        assert!(names.contains(&"PantryCeilingLantern".to_string()), "Must spawn warm ambient ceiling lantern");
+
+        // 3. Verify Deep Perimeter Shelving Units
+        let mut shelves_q = app.world_mut().query::<(&PantryShelvingUnit, &Transform)>();
+        let shelves: Vec<(String, usize, Vec3)> = shelves_q
+            .iter(app.world())
+            .map(|(s, tf)| (s.unit_name.clone(), s.tier_count, tf.translation))
+            .collect();
+
+        let north_unit = shelves.iter().find(|(n, _, _)| n == "NorthMooseTreatShelves").expect("North treat shelves must exist");
+        assert_eq!(north_unit.1, 3, "North treat shelves must have 3 tiers");
+        assert!((north_unit.2.x - (-10.0)).abs() < 0.1 && (north_unit.2.z - 12.60).abs() < 0.1);
+
+        let west_unit = shelves.iter().find(|(n, _, _)| n == "WestSupplyShelves").expect("West supply shelves must exist");
+        assert_eq!(west_unit.1, 2, "West supply shelves must have 2 tiers");
+
+        assert!(names.contains(&"PantryBakingStagingCounter".to_string()), "Must spawn South baking prep staging counter");
+
+        // 4. Verify Pantry Door & Tracker resource
+        assert!(app.world_mut().query::<&PantryDoor>().iter(app.world()).next().is_some());
+        assert!(app.world().get_resource::<PantryRestockTracker>().is_some());
+    }
+
+    #[test]
+    fn test_pantry_fully_enclosed_without_holes() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.add_systems(Startup, setup_workshop_scene);
+        app.update();
+
+        // Query colliders and transforms
+        let mut wall_colliders: Vec<(String, Vec3, Vec3)> = Vec::new();
+        for (name, tf, collider) in app.world_mut().query::<(&Name, &Transform, &Collider)>().iter(app.world()) {
+            let name_str = name.to_string();
+            if name_str.starts_with("Pantry") || name_str.starts_with("WallWest") {
+                let half_extents = match collider.as_cuboid() {
+                    Some(c) => Vec3::new(c.raw.half_extents.x, c.raw.half_extents.y, c.raw.half_extents.z),
+                    None => Vec3::ZERO,
+                };
+                wall_colliders.push((name_str, tf.translation, half_extents));
+            }
+        }
+
+        // Verify East dividing walls North and South of the door
+        let east_north = wall_colliders.iter().find(|(n, _, _)| n == "PantryEastWallNorth").expect("PantryEastWallNorth must exist");
+        assert_eq!(east_north.1.x, -13.0);
+        assert!(east_north.2.y >= 1.74, "East dividing wall North must reach full 3.5m height (half_extent >= 1.74)");
+        // Z range must cover Z from 3.5 to 4.75
+        let z_min_north = east_north.1.z - east_north.2.z;
+        let z_max_north = east_north.1.z + east_north.2.z;
+        assert!(z_min_north <= 3.55 && z_max_north >= 4.70, "PantryEastWallNorth must span Z in [3.5, 4.75]");
+
+        let east_south = wall_colliders.iter().find(|(n, _, _)| n == "PantryEastWallSouth").expect("PantryEastWallSouth must exist");
+        assert_eq!(east_south.1.x, -13.0);
+        assert!(east_south.2.y >= 1.74, "East dividing wall South must reach full 3.5m height (half_extent >= 1.74)");
+        // Z range must cover Z from 6.23 to 7.5
+        let z_min_south = east_south.1.z - east_south.2.z;
+        let z_max_south = east_south.1.z + east_south.2.z;
+        assert!(z_min_south <= 6.25 && z_max_south >= 7.45, "PantryEastWallSouth must span Z in [6.23, 7.5]");
+
+        // Verify WallWestMidSouth seals the middle height along South West wall
+        let mid_south = wall_colliders.iter().find(|(n, _, _)| n == "WallWestMidSouth").expect("WallWestMidSouth must exist");
+        assert_eq!(mid_south.1.x, -13.0);
+        assert!(mid_south.2.y >= 1.35, "WallWestMidSouth must cover height Y in [1.2, 4.0]");
+
+        // Verify that at player waist/eye height Y = 1.6, along X = -13.0 for all Z in [3.5, 7.5],
+        // every point is covered by either PantryEastWallNorth, PantryEastWallSouth, or PantryDoor
+        for z_idx in 0..40 {
+            let z = 3.55 + (z_idx as f32) * 0.10; // 3.55 to 7.45
+            let point = Vec3::new(-13.0, 1.6, z);
+
+            let inside_north = (point.x - east_north.1.x).abs() <= east_north.2.x + 0.05
+                && (point.y - east_north.1.y).abs() <= east_north.2.y
+                && (point.z - east_north.1.z).abs() <= east_north.2.z + 0.01;
+
+            let inside_south = (point.x - east_south.1.x).abs() <= east_south.2.x + 0.05
+                && (point.y - east_south.1.y).abs() <= east_south.2.y
+                && (point.z - east_south.1.z).abs() <= east_south.2.z + 0.01;
+
+            let in_doorway = z >= 4.70 && z <= 6.25;
+
+            assert!(
+                inside_north || inside_south || in_doorway,
+                "Point at Z = {z:.2} must be blocked by North wall, South wall, or Door! No holes allowed.",
+            );
+        }
+    }
+
+    #[test]
+    fn test_pantry_revolute_joint_door_and_spring_limits() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+
+        // Spawn fixed hinge post
+        let hinge_post = app.world_mut().spawn((
+            Transform::from_xyz(-13.0, 1.35, 4.75),
+            RigidBody::Fixed,
+            PantryDoorHingePost,
+        )).id();
+
+        // Spawn dynamic door leaf with RevoluteJointBuilder
+        let joint = RevoluteJointBuilder::new(Vec3::Y)
+            .local_anchor1(Vec3::ZERO)
+            .local_anchor2(Vec3::new(0.0, 0.0, -0.73))
+            .limits([0.0, 1.65])
+            .contacts_enabled(false);
+
+        let door_entity = app.world_mut().spawn((
+            Transform::from_xyz(-13.0, 1.35, 5.48),
+            RigidBody::Dynamic,
+            Velocity::zero(),
+            ExternalImpulse::default(),
+            ImpulseJoint::new(hinge_post, joint),
+            PantryDoor {
+                spring_stiffness: 20.0,
+                spring_damping: 4.0,
+                ..default()
+            },
+        )).id();
+
+        app.add_systems(Update, pantry_door_spring_system);
+
+        // 1. Verify ImpulseJoint component is attached and configured
+        let imp_joint = app.world().get::<ImpulseJoint>(door_entity).expect("Door must have ImpulseJoint");
+        assert_eq!(imp_joint.parent, hinge_post);
+
+        // 2. Displace door open by -0.80 rad (~46 deg into pantry)
+        {
+            let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+            tf.rotation = Quat::from_rotation_y(-0.80);
+        }
+
+        app.update();
+
+        // 3. Verify spring system applied positive torque impulse to swing door back toward closed (0.0 rad)
+        let ext = app.world().get::<ExternalImpulse>(door_entity).unwrap();
+        assert!(
+            ext.torque_impulse.y > 0.0,
+            "Spring torque should push door back toward 0.0 (closed), got {}",
+            ext.torque_impulse.y
+        );
+    }
+
+    #[test]
+    fn test_pantry_infinite_restock_cycle_closed_to_opened() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.add_message::<PantryRestockEvent>();
+
+        // Spawn pantry wing and initial jars
+        let mut commands = app.world_mut().commands();
+        spawn_pantry_storage_wing(&mut commands, &mut None, &mut None, None);
+        app.update();
+
+        // 1. Verify initially exactly ONE jar of Moose Treats in the pantry
+        let initial_jars_count = app.world_mut().query::<&MooseTreatJar>().iter(app.world()).count();
+        assert_eq!(initial_jars_count, 1, "The Pantry should only have one jar of Moose Treats at a time");
+
+        let tracker = app.world().resource::<PantryRestockTracker>().clone();
+        assert_eq!(tracker.slots.len(), 1);
+        assert_eq!(tracker.restock_cycle_count, 0);
+
+        app.add_systems(Update, pantry_door_restock_cycle_system);
+
+        // Find door entity
+        let Ok((door_entity, _)) = app.world_mut().query::<(Entity, &PantryDoor)>().single(app.world()) else {
+            panic!("PantryDoor must be spawned");
+        };
+
+        // 2. Door closes and reopens while the jar is still in the pantry:
+        // Should NOT refresh / spawn another jar because the jar was not removed!
+        {
+            let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+            tf.rotation = Quat::from_rotation_y(0.0);
+        }
+        app.update();
+        {
+            let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+            tf.rotation = Quat::from_rotation_y(0.55);
+        }
+        app.update();
+
+        assert_eq!(
+            app.world_mut().query::<&MooseTreatJar>().iter(app.world()).count(),
+            1,
+            "Must still only have 1 jar if not removed from pantry"
+        );
+
+        // 3. Player removes the jar from the pantry (move jar outside pantry to main room)
+        let jar_entity = app
+            .world_mut()
+            .query_filtered::<Entity, With<MooseTreatJar>>()
+            .iter(app.world())
+            .next()
+            .unwrap();
+
+        {
+            let mut jar_tf = app.world_mut().get_mut::<Transform>(jar_entity).unwrap();
+            jar_tf.translation = Vec3::new(0.0, 0.5, 0.0); // Outside pantry bounds
+        }
+        app.update();
+
+        // 4. Step with door still OPEN (yaw = 0.6 rad) -> no refresh until closed and reopened!
+        {
+            let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+            tf.rotation = Quat::from_rotation_y(0.6);
+            let mut door = app.world_mut().get_mut::<PantryDoor>(door_entity).unwrap();
+            door.was_closed = false;
+        }
+        app.update();
+
+        // 5. Close the door
+        {
+            let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+            tf.rotation = Quat::from_rotation_y(0.0);
+        }
+        app.update();
+
+        // Verify door recorded was_closed = true
+        let door = app.world().get::<PantryDoor>(door_entity).unwrap();
+        assert!(door.was_closed, "Door must record was_closed = true when closed");
+
+        // 6. Player reopens the door -> Closed -> Opened transition!
+        // Since jar was removed, pantry supplies reset to default initialized state (1 jar in pantry).
+        {
+            let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+            tf.rotation = Quat::from_rotation_y(0.55);
+        }
+        app.update();
+
+        // 7. Verify new jar was spawned at shelf slot
+        let pantry = app.world_mut().query::<&PantryWing>().single(app.world()).unwrap().clone();
+        let jars_after_restock = app.world_mut().query::<(&MooseTreatJar, &Transform)>().iter(app.world())
+            .filter(|(_, tf)| pantry.contains_point(tf.translation)) // inside pantry
+            .count();
+        assert_eq!(
+            jars_after_restock, 1,
+            "Exactly 1 jar must exist inside pantry after reset"
+        );
+
+        let updated_tracker = app.world().resource::<PantryRestockTracker>();
+        assert_eq!(updated_tracker.restock_cycle_count, 1);
+        assert_eq!(updated_tracker.total_restocked_jars, 1);
+
+        // 8. Verify PantryRestockEvent was emitted
+        let events = app.world().resource::<Messages<PantryRestockEvent>>();
+        assert_eq!(events.len(), 1, "Must emit PantryRestockEvent on restock");
+    }
+
+    #[test]
+    fn test_pantry_door_player_interaction() {
+        let mut app = App::new();
+        app.add_message::<PantryDoorInteractMessage>();
+
+        let door_entity = app.world_mut().spawn((
+            Transform::from_xyz(-13.0, 1.35, 5.48),
+            ExternalImpulse::default(),
+            PantryDoor::default(),
+        )).id();
+
+        app.add_systems(Update, pantry_door_interaction_system);
+
+        // 1. Send Open command message (must swing into the workshop room with positive torque)
+        app.world_mut().write_message(PantryDoorInteractMessage { open: true });
+
+        app.update();
+
+        let ext = app.world().get::<ExternalImpulse>(door_entity).unwrap();
+        assert!(ext.torque_impulse.y > 0.0, "Open message must impart positive Y torque to swing into room");
+
+        // 2. Send Close command message (must swing shut with negative torque)
+        app.world_mut().write_message(PantryDoorInteractMessage { open: false });
+
+        app.update();
+
+        let ext2 = app.world().get::<ExternalImpulse>(door_entity).unwrap();
+        assert!(ext2.torque_impulse.y < 0.0, "Close message must impart negative Y torque to swing shut");
+    }
+
+    #[test]
+    fn test_pantry_door_auto_close_and_fixed_hinge_alignment() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+
+        let hinge_post = app.world_mut().spawn((
+            Transform::from_xyz(-13.0, 1.35, 4.75),
+            RigidBody::Fixed,
+            PantryDoorHingePost,
+        )).id();
+
+        let joint = RevoluteJointBuilder::new(Vec3::Y)
+            .local_anchor1(Vec3::ZERO)
+            .local_anchor2(Vec3::new(0.0, 0.0, -0.73))
+            .limits([0.0, 1.65])
+            .contacts_enabled(false);
+
+        let door_entity = app.world_mut().spawn((
+            Transform::from_xyz(-13.0, 1.35, 5.48),
+            RigidBody::Dynamic,
+            Velocity::zero(),
+            ExternalImpulse::default(),
+            ImpulseJoint::new(hinge_post, joint),
+            PantryDoor {
+                close_speed: 1.0,
+                close_snap_threshold: 0.25,
+                ..default()
+            },
+        )).id();
+
+        app.add_systems(Update, pantry_door_spring_system);
+
+        // 1. Position door at yaw = 0.20 rad (< 1/4 rad = 0.25 rad)
+        {
+            let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+            tf.rotation = Quat::from_rotation_y(0.20);
+        }
+
+        // Step several frames to verify auto-close behavior
+        for _ in 0..25 {
+            app.update();
+        }
+
+        // 2. Verify door has slowly closed itself and snapped flush with the wall at 0.0 rad
+        let (tf, door, vel) = {
+            let world = app.world();
+            (
+                *world.get::<Transform>(door_entity).unwrap(),
+                world.get::<PantryDoor>(door_entity).unwrap().clone(),
+                *world.get::<Velocity>(door_entity).unwrap(),
+            )
+        };
+
+        assert_eq!(door.current_angle, 0.0, "Door must auto-close to 0.0 rad when within 1/4 rad threshold");
+        assert!((tf.translation.x - (-13.0)).abs() < 1e-4, "Door X must rest flush with wall at X = -13.0");
+        assert!((tf.translation.z - 5.48).abs() < 1e-4, "Door Z must be centered at Z = 5.48");
+        assert_eq!(tf.rotation, Quat::IDENTITY, "Door rotation must be identity when flush with wall");
+        assert_eq!(vel.angular.y, 0.0, "Door angular velocity must come to rest when flush");
+
+        // 3. Open door wide to yaw = 1.0 rad (>= 1/4 rad)
+        {
+            let mut tf = app.world_mut().get_mut::<Transform>(door_entity).unwrap();
+            tf.rotation = Quat::from_rotation_y(1.0);
+        }
+        app.update();
+
+        let (tf_open, door_open) = {
+            let world = app.world();
+            (
+                *world.get::<Transform>(door_entity).unwrap(),
+                world.get::<PantryDoor>(door_entity).unwrap().clone(),
+            )
+        };
+
+        // Door should stay open (current_angle >= 0.25 rad)
+        assert!(
+            door_open.current_angle >= 0.25,
+            "Door must NOT auto-close when opened beyond 1/4 rad threshold"
+        );
+
+        // Translation must follow exact circle around fixed hinge pivot (-13.0, 1.35, 4.75)
+        let expected_x = -13.0 + 0.73 * 1.0_f32.sin();
+        let expected_z = 4.75 + 0.73 * 1.0_f32.cos();
+        assert!(
+            (tf_open.translation.x - expected_x).abs() < 1e-3,
+            "Door X must align with fixed hinge pivot, expected {}, got {}",
+            expected_x,
+            tf_open.translation.x
+        );
+        assert!(
+            (tf_open.translation.z - expected_z).abs() < 1e-3,
+            "Door Z must align with fixed hinge pivot, expected {}, got {}",
+            expected_z,
+            tf_open.translation.z
+        );
+    }
+
+    #[test]
+    fn test_pantry_door_grab_and_swing_open_and_shut() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<ButtonInput<MouseButton>>();
+
+        let hinge_post = app.world_mut().spawn((
+            Transform::from_xyz(-13.0, 1.35, 4.75),
+            RigidBody::Fixed,
+            PantryDoorHingePost,
+        )).id();
+
+        let joint = RevoluteJointBuilder::new(Vec3::Y)
+            .local_anchor1(Vec3::ZERO)
+            .local_anchor2(Vec3::new(0.0, 0.0, -0.73))
+            .limits([0.0, 1.65])
+            .contacts_enabled(false);
+
+        let door_entity = app.world_mut().spawn((
+            Transform::from_xyz(-13.0, 1.35, 5.48),
+            RigidBody::Dynamic,
+            Velocity::zero(),
+            ExternalImpulse::default(),
+            ImpulseJoint::new(hinge_post, joint),
+            PantryDoor::default(),
+        )).id();
+
+        // Spawn player standing near the closed door (dist ~ 1.0m)
+        let player_entity = app.world_mut().spawn((
+            Transform::from_xyz(-12.0, 1.35, 5.48),
+            ElfPlayer,
+        )).id();
+
+        app.add_systems(Update, (pantry_door_interaction_system, pantry_door_spring_system).chain());
+
+        // 1. Simulate pressing E to grab the door
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyE);
+        app.update();
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().clear();
+
+        let door = app.world().get::<PantryDoor>(door_entity).unwrap();
+        assert!(door.is_grabbed, "Player must grab the door when pressing interact near it");
+
+        // 2. Player moves back into the room to swing the door open
+        // Moving in +X from -12.0 to -10.5 pulls the door into the room
+        {
+            let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            p_tf.translation = Vec3::new(-10.5, 1.35, 4.75);
+        }
+
+        for _ in 0..10 {
+            app.update();
+        }
+
+        let (swung_is_grabbed, swung_angle) = {
+            let door = app.world().get::<PantryDoor>(door_entity).unwrap();
+            (door.is_grabbed, door.current_angle)
+        };
+        assert!(swung_is_grabbed, "Door remains grabbed while player is within release distance");
+        assert!(
+            swung_angle > 0.30,
+            "Door must swing open as player pulls it into the room, got angle {}",
+            swung_angle
+        );
+
+        // 3. Player moves back toward the doorway to swing the door shut
+        {
+            let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            p_tf.translation = Vec3::new(-12.5, 1.35, 5.80);
+        }
+
+        for _ in 0..10 {
+            app.update();
+        }
+
+        let closing_angle = app.world().get::<PantryDoor>(door_entity).unwrap().current_angle;
+        assert!(
+            closing_angle < swung_angle,
+            "Door must swing toward shut as player moves toward the doorway, was {}, now {}",
+            swung_angle,
+            closing_angle
+        );
+    }
+
+    #[test]
+    fn test_pantry_door_grab_released_when_player_moves_away() {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<ButtonInput<MouseButton>>();
+
+        let door_entity = app.world_mut().spawn((
+            Transform::from_xyz(-13.0, 1.35, 5.48),
+            ExternalImpulse::default(),
+            PantryDoor {
+                is_grabbed: true,
+                grab_release_distance: 2.8,
+                ..default()
+            },
+        )).id();
+
+        // Spawn player far away from door (dist > 2.8m, e.g. at -9.0, 1.35, 5.48 -> dist = 4.0m)
+        app.world_mut().spawn((
+            Transform::from_xyz(-9.0, 1.35, 5.48),
+            ElfPlayer,
+        ));
+
+        app.add_systems(Update, pantry_door_interaction_system);
+        app.update();
+
+        let door = app.world().get::<PantryDoor>(door_entity).unwrap();
+        assert!(
+            !door.is_grabbed,
+            "Grab must be released when the player moves away beyond release distance"
+        );
+    }
+
+    #[test]
+    fn test_pantry_door_push_by_player_and_elves() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        app.insert_resource(time);
+
+        let door_entity = app.world_mut().spawn((
+            Transform::from_xyz(-13.0, 1.35, 5.48),
+            Velocity::zero(),
+            ExternalImpulse::default(),
+            PantryDoor::default(),
+        )).id();
+
+        app.add_systems(Update, (pantry_door_interaction_system, pantry_door_spring_system).chain());
+
+        // 1. Player running into the door from inside the pantry towards the room (+X)
+        let player_entity = app.world_mut().spawn((
+            Transform::from_xyz(-13.2, 1.35, 5.48),
+            ElfPlayer,
+            ElfMovement {
+                velocity: Vec3::new(3.0, 0.0, 0.0),
+                ..default()
+            },
+        )).id();
+
+        app.update();
+
+        let door = app.world().get::<PantryDoor>(door_entity).unwrap();
+        let ext = app.world().get::<ExternalImpulse>(door_entity).unwrap();
+        assert!(
+            ext.torque_impulse.y > 0.0 || door.current_angle > 0.0 || door.target_angle > 0.0,
+            "Player running into pantry door must exert push impulse/torque on door"
+        );
+
+        // Despawn player for elf test
+        app.world_mut().despawn(player_entity);
+
+        // Reset door
+        {
+            let mut d = app.world_mut().get_mut::<PantryDoor>(door_entity).unwrap();
+            d.current_angle = 0.0;
+            d.target_angle = 0.0;
+            let mut ext = app.world_mut().get_mut::<ExternalImpulse>(door_entity).unwrap();
+            ext.torque_impulse = Vec3::ZERO;
+        }
+
+        // 2. Elf running into the door from inside the pantry (+X)
+        app.world_mut().spawn((
+            Transform::from_xyz(-13.2, 1.35, 5.48),
+            Velocity {
+                linear: Vec3::new(2.5, 0.0, 0.0),
+                angular: Vec3::ZERO,
+            },
+            ElfAssistant::new(1, "RunnerElf", vec![]),
+        ));
+
+        app.update();
+
+        let door_elf = app.world().get::<PantryDoor>(door_entity).unwrap();
+        let ext_elf = app.world().get::<ExternalImpulse>(door_entity).unwrap();
+        assert!(
+            ext_elf.torque_impulse.y > 0.0 || door_elf.current_angle > 0.0 || door_elf.target_angle > 0.0,
+            "Elf running into pantry door must exert push impulse/torque on door"
+        );
+    }
+
+    #[test]
+    fn test_pantry_door_no_clipping_with_wall_or_header_and_stable_hinge() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.add_systems(Startup, setup_workshop_scene);
+        app.update();
+
+        // 1. Verify Door Header Lintel vs Door Leaf geometry:
+        // Header Lintel at Y = 2.7, half-height 0.3 -> bottom at Y = 2.40m
+        let mut header_q = app.world_mut().query::<(&Name, &Transform, &Collider)>();
+        let (_, header_tf, header_col) = header_q.iter(app.world())
+            .find(|(n, ..)| n.as_str() == "PantryDoorHeaderLintel")
+            .expect("PantryDoorHeaderLintel must exist");
+        let header_bottom = header_tf.translation.y - header_col.as_cuboid().unwrap().raw.half_extents.y;
+        assert_eq!(header_bottom, 2.40, "Header lintel bottom must be at Y = 2.40m");
+
+        // Door Leaf at Y = 1.18, half-height 1.15 -> top at Y = 2.33m (NO clipping into header lintel)
+        let mut door_q = app.world_mut().query::<(&Name, &Transform, &Collider, &PantryDoor)>();
+        let (_, door_tf, door_col, _) = door_q.iter(app.world())
+            .find(|(n, ..)| n.as_str() == "PantryPhysicsDoor")
+            .expect("PantryPhysicsDoor must exist");
+        let door_top = door_tf.translation.y + door_col.as_cuboid().unwrap().raw.half_extents.y;
+        assert!(
+            door_top < header_bottom,
+            "Door leaf top ({}) must be strictly below header lintel bottom ({}) to prevent clipping freakout",
+            door_top, header_bottom
+        );
+        assert!(
+            door_tf.translation.y - door_col.as_cuboid().unwrap().raw.half_extents.y > 0.0,
+            "Door leaf bottom must clear the floor"
+        );
+
+        // 2. Verify spring system maintains exact alignment without 90-degree frame flipping
+        let door_entity = app.world_mut().query_filtered::<Entity, With<PantryDoor>>().iter(app.world()).next().unwrap();
+        app.add_systems(Update, pantry_door_spring_system);
+
+        // Run 10 updates: door should remain at yaw 0.0 without oscillating or freaking out
+        for _ in 0..10 {
+            app.update();
+        }
+        let (final_tf, final_door) = (
+            *app.world().get::<Transform>(door_entity).unwrap(),
+            app.world().get::<PantryDoor>(door_entity).unwrap().clone(),
+        );
+        assert_eq!(final_door.current_angle, 0.0, "Door angle must stay at 0.0 when closed");
+        assert_eq!(final_tf.rotation, Quat::IDENTITY, "Door rotation must stay at Quat::IDENTITY when closed");
+    }
+}

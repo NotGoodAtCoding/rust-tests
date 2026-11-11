@@ -945,3 +945,386 @@ impl Plugin for AnchorPointPlugin {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::elf_game::{
+        player::{
+            ElfHands,
+            hands::HeldByPlayer,
+            controller::{ElfPlayer, FirstPersonCamera},
+        },
+        ui::MenuState,
+        workshop::stove::{
+            spawn_oven_stove_and_propane_scene, FlameSource, GasFurnaceStove,
+            StoveGasAnchor, GasHose, GasHoseSegment,
+        },
+    };
+
+    #[test]
+    fn test_modular_physics_door_limits_auto_close_and_player_interaction() {
+        let mut app = App::new();
+        app.init_resource::<MenuState>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.insert_resource(Time::<()>::default());
+
+        app.add_systems(
+            Update,
+            (
+                modular_door_interaction_system,
+                modular_door_physics_system,
+            ).chain(),
+        );
+
+        // 1. Spawn a ModularPhysicsDoor at origin with limits [-1.57, 1.57] and auto_close threshold 0.35
+        let door_config = ModularPhysicsDoor::new(Vec3::new(0.0, 1.0, 0.0), -1.57, 1.57)
+            .with_auto_close(true, 0.35)
+            .with_spring_damping(12.0, 4.0);
+
+        let mut commands = app.world_mut().commands();
+        let door_entity = spawn_modular_physics_door(&mut commands, door_config, 0.8, 2.0, 0.08, None, None);
+        app.world_mut().flush();
+
+        // Verify initial closed state
+        {
+            let door = app.world().get::<ModularPhysicsDoor>(door_entity).unwrap();
+            assert_eq!(door.current_angle, 0.0);
+            assert!(!door.is_grabbed);
+        }
+
+        // 2. Test angle clamping beyond max_angle
+        {
+            let mut door = app.world_mut().get_mut::<ModularPhysicsDoor>(door_entity).unwrap();
+            door.current_angle = 2.5; // Exceeds max_angle 1.57
+        }
+        app.update();
+        {
+            let door = app.world().get::<ModularPhysicsDoor>(door_entity).unwrap();
+            assert!((door.current_angle - 1.57).abs() < 0.01, "Angle must be clamped to max_angle 1.57, got {}", door.current_angle);
+        }
+
+        // 3. Test auto-close spring restoring torque: angle within threshold (0.2 rad < 0.35)
+        {
+            let mut door = app.world_mut().get_mut::<ModularPhysicsDoor>(door_entity).unwrap();
+            door.current_angle = 0.20;
+        }
+        // Advance multiple frames to allow auto-close to pull door shut
+        for _ in 0..30 {
+            app.update();
+        }
+        {
+            let door = app.world().get::<ModularPhysicsDoor>(door_entity).unwrap();
+            assert!(door.current_angle.abs() < 0.01, "Auto-close must pull door back to closed_angle 0.0, got {}", door.current_angle);
+        }
+
+        // 4. Test player grab interaction within range (< 2.5m)
+        let player_entity = app.world_mut().spawn((
+            ElfPlayer,
+            ElfHands::default(),
+            Transform::from_xyz(0.0, 1.0, 1.5),
+            GlobalTransform::from_xyz(0.0, 1.0, 1.5),
+        )).id();
+
+        let camera_entity = app.world_mut().spawn((
+            FirstPersonCamera,
+            Transform::from_xyz(0.0, 1.6, 1.5).looking_to(-Vec3::Z, Vec3::Y),
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 1.5).looking_to(-Vec3::Z, Vec3::Y)),
+        )).id();
+
+        // Press KeyQ to grab door
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyQ);
+        }
+        app.update();
+
+        {
+            let door = app.world().get::<ModularPhysicsDoor>(door_entity).unwrap();
+            assert!(door.is_grabbed, "Door must be grabbed by player pressing KeyQ within range");
+            assert_eq!(door.grabbed_hand, Some(0));
+
+            let hands = app.world().get::<ElfHands>(player_entity).unwrap();
+            assert_eq!(hands.left_grabbed, Some(door_entity), "Left hand must hold door entity");
+        }
+
+        // 5. Move player far away (> 2.8m) -> Grab must be released automatically
+        {
+            let mut tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+            tf.translation = Vec3::new(0.0, 1.0, 5.0);
+            let mut gt = app.world_mut().get_mut::<GlobalTransform>(player_entity).unwrap();
+            *gt = GlobalTransform::from_xyz(0.0, 1.0, 5.0);
+
+            let mut c_tf = app.world_mut().get_mut::<Transform>(camera_entity).unwrap();
+            c_tf.translation = Vec3::new(0.0, 1.6, 5.0);
+            let mut c_gt = app.world_mut().get_mut::<GlobalTransform>(camera_entity).unwrap();
+            *c_gt = GlobalTransform::from_xyz(0.0, 1.6, 5.0);
+
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset(KeyCode::KeyQ);
+        }
+        app.update();
+
+        {
+            let door = app.world().get::<ModularPhysicsDoor>(door_entity).unwrap();
+            assert!(!door.is_grabbed, "Grab must be released when player moves beyond 2.8m reach");
+
+            let hands = app.world().get::<ElfHands>(player_entity).unwrap();
+            assert_eq!(hands.left_grabbed, None, "Left hand must no longer hold door");
+        }
+    }
+
+    #[test]
+    fn test_modular_physics_rope_chain_constraints_anchors_and_tension() {
+        let mut app = App::new();
+        app.init_resource::<MenuState>();
+        app.insert_resource(Time::<()>::default());
+        app.add_systems(Update, modular_rope_physics_system);
+
+        // 1. Spawn a dynamic start anchor entity at (0.0, 3.0, 0.0)
+        let anchor_entity = app.world_mut().spawn((
+            Transform::from_xyz(0.0, 3.0, 0.0),
+            GlobalTransform::from_xyz(0.0, 3.0, 0.0),
+        )).id();
+
+        // 2. Spawn a ModularPhysicsRope with 6 segments, segment_length = 0.3m, attached to anchor_entity
+        let rope_config = ModularPhysicsRope::new(6, 0.3)
+            .with_anchors(Some(anchor_entity), None)
+            .with_endpoints(Vec3::new(0.0, 3.0, 0.0), Vec3::new(0.0, 3.0, 1.8))
+            .with_stiffness_damping(20.0, 4.0)
+            .with_max_chain_length(2.5);
+
+        let mut commands = app.world_mut().commands();
+        let rope_entity = spawn_modular_physics_rope(
+            &mut commands,
+            rope_config,
+            Vec3::new(0.0, 3.0, 0.0),
+            Vec3::new(0.0, 3.0, 1.8),
+            None,
+            None,
+        );
+        app.world_mut().flush();
+
+        // Verify rope initialization
+        let segment_entities = {
+            let rope = app.world().get::<ModularPhysicsRope>(rope_entity).unwrap();
+            assert_eq!(rope.segments.len(), 6, "Must spawn 6 segments");
+            rope.segments.clone()
+        };
+
+        for (i, &seg_e) in segment_entities.iter().enumerate() {
+            let seg = app.world().get::<ModularRopeSegment>(seg_e).unwrap();
+            assert_eq!(seg.rope_entity, rope_entity);
+            assert_eq!(seg.index, i);
+        }
+
+        // 3. Move anchor to (1.0, 4.0, 0.0) -> Segment 0 must be pinned and pulled towards anchor
+        {
+            let mut gt = app.world_mut().get_mut::<GlobalTransform>(anchor_entity).unwrap();
+            *gt = GlobalTransform::from_xyz(1.0, 4.0, 0.0);
+        }
+        for _ in 0..10 {
+            app.update();
+        }
+
+        {
+            let first_tf = app.world().get::<Transform>(segment_entities[0]).unwrap();
+            let dist = first_tf.translation.distance(Vec3::new(1.0, 4.0, 0.0));
+            assert!(dist < 0.1, "Segment 0 must follow moved anchor position, distance was {}", dist);
+        }
+
+        // 4. Overstretch segment 5 far away (to (10.0, 0.0, 0.0)) -> Chain tension constraint pulls it back
+        {
+            let mut last_tf = app.world_mut().get_mut::<Transform>(segment_entities[5]).unwrap();
+            last_tf.translation = Vec3::new(10.0, 4.0, 0.0);
+        }
+        app.update();
+
+        {
+            let last_tf = app.world().get::<Transform>(segment_entities[5]).unwrap();
+            assert!(last_tf.translation.x < 10.0, "Tension constraint must pull overstretched segment back, got X={}", last_tf.translation.x);
+        }
+    }
+
+    #[test]
+    fn test_generic_reusable_anchor_point_and_matching_traits() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<ButtonInput<MouseButton>>();
+
+        app.add_systems(Startup, spawn_oven_stove_and_propane_scene);
+        app.add_systems(
+            Update,
+            (
+                anchor_point_interaction_system,
+                sync_locked_anchor_objects_system,
+            ),
+        );
+        app.update();
+
+        // 1. Verify Stove and Furnace moved further away
+        let mut stove_q = app.world_mut().query::<(&GasFurnaceStove, &Transform)>();
+        let (_, stove_tf) = stove_q.iter(app.world()).next().expect("Stove must exist");
+        assert!((stove_tf.translation.x - (-6.5)).abs() < 0.1, "Stove moved to X ≈ -6.5");
+        assert!((stove_tf.translation.z - (-11.4)).abs() < 0.1, "Stove moved to Z ≈ -11.4");
+
+        let mut hose_q = app.world_mut().query::<&GasHose>();
+        let hose = hose_q.iter(app.world()).next().expect("GasHose must exist");
+        let anchor_dist = hose.stove_anchor_pos.distance(hose.wall_inlet_pos);
+        assert!(anchor_dist > 1.5, "Stove anchor must be distanced from wall inlet (> 1.5m apart), dist = {}", anchor_dist);
+
+        // 2. Verify Stove attachment point is red and has smaller active area (< 0.25)
+        let mut anchor_q = app.world_mut().query::<(&StoveGasAnchor, &MeshMaterial3d<StandardMaterial>, &Collider)>();
+        let (_, mat_handle, collider) = anchor_q.iter(app.world()).next().expect("StoveGasAnchor must exist");
+        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        let mat = materials.get(mat_handle).expect("Stove gas anchor material must exist");
+        if let Color::Srgba(srgba) = mat.base_color {
+            assert!(srgba.red > 0.8 && srgba.green < 0.3 && srgba.blue < 0.3, "Stove attachment point must be red");
+        } else {
+            panic!("Material base_color must be red");
+        }
+
+        // Active area collider radius should be small (0.22, not previous 0.45)
+        if let Some(cylinder) = collider.as_cylinder() {
+            assert!(cylinder.radius() < 0.25, "Active area collider must be smaller (< 0.25m), got {}", cylinder.radius());
+        }
+
+        // 3. Verify Candle is moved to the workshop bench (Z ≈ -4.0, Y ≈ 0.95)
+        let mut candle_q = app.world_mut().query::<(&FlameSource, &Transform, &Name)>();
+        let mut found_bench_candle = false;
+        for (_, candle_tf, name) in candle_q.iter(app.world()) {
+            if name.as_str() == "PortableBrassCandlestick" {
+                assert!((candle_tf.translation.z - (-4.0)).abs() < 0.2, "Candle must be on workshop bench at Z ≈ -4.0");
+                assert!((candle_tf.translation.y - 0.95).abs() < 0.1, "Candle must rest on workbench surface at Y ≈ 0.95");
+                found_bench_candle = true;
+            }
+        }
+        assert!(found_bench_candle, "Portable brass candlestick must exist on workshop bench");
+
+        // 4. Verify continuous yellow hose segments: link cylinder length is continuous (>= 0.35m)
+        let mut seg_mesh_q = app.world_mut().query::<(&GasHoseSegment, &Mesh3d)>();
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        for (seg, mesh_h) in seg_mesh_q.iter(app.world()) {
+            if seg.index < 6 {
+                let mesh = meshes.get(mesh_h).expect("Segment mesh must exist");
+                assert!(mesh.count_vertices() > 0, "Segment cylinder mesh must be populated");
+            }
+        }
+
+        // 5. Generic AnchorPoint mechanics:
+        let anchor_pos = Vec3::new(2.0, 1.0, 0.0);
+        let anchor_e = app.world_mut().spawn((
+            AnchorPoint::new("battery").with_radius(3.0).with_offset(Vec3::new(0.0, 0.2, 0.0)),
+            Transform::from_translation(anchor_pos),
+            GlobalTransform::from_translation(anchor_pos),
+        )).id();
+
+        let player_pos = Vec3::new(2.0, 1.0, 1.5);
+        let cam_fwd = (anchor_pos - player_pos).normalize();
+        let player_e = app.world_mut().spawn((
+            ElfPlayer,
+            Transform::from_translation(player_pos),
+            GlobalTransform::from_translation(player_pos),
+            ElfHands::default(),
+        )).id();
+
+        app.world_mut().spawn((
+            FirstPersonCamera,
+            GlobalTransform::from(Transform::from_translation(player_pos).looking_to(cam_fwd, Vec3::Y)),
+        ));
+
+        // Spawn a matching physics object with AnchorTrait("battery")
+        let battery_e = app.world_mut().spawn((
+            AnchorTrait::new("battery"),
+            RigidBody::Dynamic,
+            Velocity::zero(),
+            Transform::from_xyz(2.0, 1.0, 1.0),
+            GlobalTransform::from_xyz(2.0, 1.0, 1.0),
+        )).id();
+
+        // Set object as held by player
+        app.world_mut().entity_mut(battery_e).insert(HeldByPlayer);
+        app.world_mut().entity_mut(player_e).get_mut::<ElfHands>().unwrap().left_grabbed = Some(battery_e);
+
+        // Rule A: If the object is being held, it should NOT snap to the anchor point on proximity!
+        app.update();
+        let anchor = app.world().get::<AnchorPoint>(anchor_e).unwrap();
+        assert_eq!(anchor.locked_object, None, "Object must NOT automatically snap to anchor on proximity while held");
+        assert!(app.world().get::<HeldByPlayer>(battery_e).is_some(), "Battery must remain held by player");
+
+        // Rule B: When player interacts with KeyCode::KeyE while holding matching object, it locks the object in!
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyE);
+            keys.reset(KeyCode::KeyE);
+            keys.press(KeyCode::KeyE);
+        }
+        app.update();
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyE);
+            keys.reset(KeyCode::KeyE);
+        }
+
+        let anchor = app.world().get::<AnchorPoint>(anchor_e).unwrap();
+        assert_eq!(anchor.locked_object, Some(battery_e), "Battery must be locked into AnchorPoint");
+        assert!(app.world().get::<HeldByPlayer>(battery_e).is_none(), "HeldByPlayer must be removed on lock");
+        assert!(app.world().get::<LockedInAnchor>(battery_e).is_some(), "LockedInAnchor component must be added to object");
+        assert_eq!(*app.world().get::<RigidBody>(battery_e).unwrap(), RigidBody::Fixed, "RigidBody must become Fixed on lock");
+
+        let player_hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(player_hands.left_grabbed, None, "Player hand must be released when object locks");
+
+        let battery_tf = app.world().get::<Transform>(battery_e).unwrap();
+        assert_eq!(battery_tf.translation, anchor_pos + Vec3::new(0.0, 0.2, 0.0), "Battery snapped to anchor position + offset");
+
+        // Rule C: Interacting with KeyCode::KeyE again unlocks the object!
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyE);
+            keys.reset(KeyCode::KeyE);
+            keys.press(KeyCode::KeyE);
+        }
+        app.update();
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyE);
+            keys.reset(KeyCode::KeyE);
+        }
+
+        let anchor = app.world().get::<AnchorPoint>(anchor_e).unwrap();
+        assert_eq!(anchor.locked_object, None, "Anchor must be empty after unlocking");
+        assert!(app.world().get::<LockedInAnchor>(battery_e).is_none(), "LockedInAnchor must be removed upon unlocking");
+        assert_eq!(*app.world().get::<RigidBody>(battery_e).unwrap(), RigidBody::Dynamic, "RigidBody must be restored to Dynamic");
+
+        // Rule D: Object with non-matching trait does NOT lock
+        let wood_e = app.world_mut().spawn((
+            AnchorTrait::new("wood"),
+            RigidBody::Dynamic,
+            Velocity::zero(),
+            Transform::from_xyz(2.0, 1.0, 1.0),
+            GlobalTransform::from_xyz(2.0, 1.0, 1.0),
+            HeldByPlayer,
+        )).id();
+        app.world_mut().entity_mut(player_e).get_mut::<ElfHands>().unwrap().left_grabbed = Some(wood_e);
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyE);
+            keys.reset(KeyCode::KeyE);
+            keys.press(KeyCode::KeyE);
+        }
+        app.update();
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyE);
+            keys.reset(KeyCode::KeyE);
+        }
+
+        let anchor = app.world().get::<AnchorPoint>(anchor_e).unwrap();
+        assert_eq!(anchor.locked_object, None, "Non-matching object trait ('wood') must not be locked into 'battery' anchor");
+        assert!(app.world().get::<HeldByPlayer>(wood_e).is_some(), "Non-matching object remains held");
+    }
+}

@@ -270,3 +270,69 @@ pub fn glass_shard_particle_system(
         tf.rotate_local_z(shard.angular_velocity.z * dt);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_confetti_and_glass_shard_particles() {
+        let mut particle_app = App::new();
+        particle_app.insert_resource(Assets::<Mesh>::default());
+        particle_app.insert_resource(Assets::<StandardMaterial>::default());
+        particle_app.add_message::<SpawnConfettiEvent>();
+        particle_app.add_message::<SpawnGlassShardsEvent>();
+
+        particle_app.add_systems(
+            Update,
+            (
+                confetti_spawner_listener_system,
+                glass_shard_spawner_listener_system,
+                confetti_particle_system,
+                glass_shard_particle_system,
+            ),
+        );
+
+        // Dispatch SpawnConfettiEvent
+        {
+            let mut msgs = particle_app.world_mut().resource_mut::<bevy::ecs::message::Messages<SpawnConfettiEvent>>();
+            msgs.write(SpawnConfettiEvent {
+                position: Vec3::new(5.0, 3.8, -4.0),
+                count: 20,
+            });
+        }
+
+        // Dispatch SpawnGlassShardsEvent
+        {
+            let mut msgs = particle_app.world_mut().resource_mut::<bevy::ecs::message::Messages<SpawnGlassShardsEvent>>();
+            msgs.write(SpawnGlassShardsEvent {
+                position: Vec3::new(-6.5, 1.8, -13.0),
+                count: 25,
+            });
+        }
+
+        particle_app.update();
+
+        // Verify 20 confetti particles spawned
+        let confetti_count = particle_app.world_mut().query::<&ConfettiParticle>().iter(particle_app.world()).count();
+        assert_eq!(confetti_count, 20, "20 confetti particles must spawn from event");
+
+        // Verify 25 glass shard particles spawned
+        let shard_count = particle_app.world_mut().query::<&GlassShardParticle>().iter(particle_app.world()).count();
+        assert_eq!(shard_count, 25, "25 glass shard particles must spawn from event");
+
+        // Advance simulation and verify physics: gravity and floor bounce
+        for _ in 0..10 {
+            particle_app.update();
+        }
+
+        // All shards should be above or at floor (Y >= 0.05)
+        for tf in particle_app.world_mut().query_filtered::<&Transform, With<GlassShardParticle>>().iter(particle_app.world()) {
+            assert!(
+                tf.translation.y >= 0.04,
+                "Glass shard must bounce off the floor (Y >= 0.05), got {}",
+                tf.translation.y
+            );
+        }
+    }
+}

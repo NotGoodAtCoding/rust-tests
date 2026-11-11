@@ -682,3 +682,599 @@ pub fn dual_hand_interaction_system(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::elf_game::player::{
+        controller::FirstPersonCamera,
+        update_elf_physics, BhopConfig,
+    };
+
+    #[test]
+    fn test_toggle_grab_set_down_and_mouse1_throw() {
+        let mut app = App::new();
+        app.insert_resource(ButtonInput::<KeyCode>::default());
+        app.insert_resource(ButtonInput::<MouseButton>::default());
+        app.add_message::<UseToolOnPresentMessage>();
+        app.add_systems(Update, dual_hand_interaction_system);
+
+        let player_e = app.world_mut().spawn((
+            ElfHands::default(),
+            Transform::from_xyz(0.0, 1.0, 0.0),
+        )).id();
+
+        app.world_mut().spawn((
+            FirstPersonCamera,
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0)),
+        ));
+
+        app.world_mut().spawn((
+            LeftHandVisual,
+            GlobalTransform::from(Transform::from_xyz(-0.35, 1.0, -0.6)),
+        ));
+        app.world_mut().spawn((
+            RightHandVisual,
+            GlobalTransform::from(Transform::from_xyz(0.35, 1.0, -0.6)),
+        ));
+
+        let cube_entity = app.world_mut().spawn((
+            Grabbable,
+            Transform::from_xyz(-0.35, 1.0, -0.7),
+            Velocity::zero(),
+        )).id();
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyQ);
+        }
+        app.update();
+        {
+            let hands = app.world().get::<ElfHands>(player_e).unwrap();
+            assert_eq!(hands.left_grabbed, Some(cube_entity), "KeyQ toggle should grab nearby object");
+        }
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyQ);
+            keys.reset(KeyCode::KeyQ);
+        }
+        app.update();
+        {
+            let hands = app.world().get::<ElfHands>(player_e).unwrap();
+            assert_eq!(hands.left_grabbed, Some(cube_entity), "Object must stay grabbed without holding KeyQ");
+        }
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyQ);
+        }
+        app.update();
+        {
+            let hands = app.world().get::<ElfHands>(player_e).unwrap();
+            assert_eq!(hands.left_grabbed, None, "Pressing KeyQ again must set the object down");
+            let vel = app.world().get::<Velocity>(cube_entity).unwrap();
+            assert_eq!(vel.linear, Vec3::ZERO, "Set down object must rest with zero velocity");
+        }
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyQ);
+            keys.reset(KeyCode::KeyQ);
+            keys.press(KeyCode::KeyE);
+        }
+        app.update();
+        {
+            let hands = app.world().get::<ElfHands>(player_e).unwrap();
+            assert_eq!(hands.right_grabbed, Some(cube_entity), "KeyE toggle should grab into right hand");
+        }
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyE);
+            keys.reset(KeyCode::KeyE);
+            let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+            mouse.press(MouseButton::Left);
+        }
+        app.update();
+        {
+            let hands = app.world().get::<ElfHands>(player_e).unwrap();
+            assert_eq!(hands.right_grabbed, None, "Mouse 1 must release thrown object from right hand");
+            let vel = app.world().get::<Velocity>(cube_entity).unwrap();
+            assert!(
+                vel.linear.length() >= 9.0,
+                "Thrown object must have strong launch velocity (>= 9.0 m/s), got {}",
+                vel.linear.length()
+            );
+            assert!(
+                vel.linear.z < -8.0,
+                "Object should be launched forward in camera direction (-Z), got vz = {}",
+                vel.linear.z
+            );
+            assert!(
+                vel.linear.y > 1.0,
+                "Object should have upward throwing arc (vy > 1.0), got vy = {}",
+                vel.linear.y
+            );
+        }
+    }
+
+    #[test]
+    fn test_player_jump_throw_velocity_inheritance() {
+        let mut app = App::new();
+        app.insert_resource(ButtonInput::<KeyCode>::default());
+        app.insert_resource(ButtonInput::<MouseButton>::default());
+        app.add_message::<UseToolOnPresentMessage>();
+        app.add_systems(Update, dual_hand_interaction_system);
+
+        let player_e = app.world_mut().spawn((
+            ElfHands::default(),
+            ElfMovement {
+                velocity: Vec3::new(0.0, 5.0, -6.0),
+                is_grounded: false,
+                ..default()
+            },
+            Transform::from_xyz(0.0, 1.0, 0.0),
+        )).id();
+
+        app.world_mut().spawn((
+            FirstPersonCamera,
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0)),
+        ));
+
+        app.world_mut().spawn((
+            RightHandVisual,
+            GlobalTransform::from(Transform::from_xyz(0.35, 1.0, -0.6)),
+        ));
+
+        let cube_entity = app.world_mut().spawn((
+            Grabbable,
+            Transform::from_xyz(0.35, 1.0, -0.7),
+            Velocity::zero(),
+        )).id();
+
+        {
+            let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+            hands.right_grabbed = Some(cube_entity);
+        }
+
+        {
+            let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+            mouse.press(MouseButton::Left);
+        }
+        app.update();
+
+        let vel = app.world().get::<Velocity>(cube_entity).unwrap();
+        assert!(
+            vel.linear.z < -14.0,
+            "Forward throw velocity must inherit player forward running velocity (-6.0 m/s), got vz = {}",
+            vel.linear.z
+        );
+        assert!(
+            vel.linear.y > 6.0,
+            "Vertical throw velocity must inherit player jumping vertical velocity (+5.0 m/s), got vy = {}",
+            vel.linear.y
+        );
+        assert!(
+            vel.linear.length() > 16.0,
+            "Total launch velocity should be boosted to > 16.0 m/s on jump-throw, got {}",
+            vel.linear.length()
+        );
+    }
+
+    #[test]
+    fn test_player_vertical_velocity_reset_to_zero_on_landing_and_throw_unaffected() {
+        let mut movement = ElfMovement {
+            velocity: Vec3::new(2.0, -12.5, -4.0),
+            is_grounded: true,
+            ..default()
+        };
+        let config = BhopConfig::default();
+        let dt = 1.0 / 60.0;
+        let wish_dir = Vec3::ZERO;
+
+        update_elf_physics(dt, wish_dir, false, false, &config, &mut movement);
+        assert_eq!(
+            movement.velocity.y, 0.0,
+            "Player vertical velocity must be reset to 0.0 upon landing on ground"
+        );
+
+        let mut app = App::new();
+        app.insert_resource(ButtonInput::<KeyCode>::default());
+        app.insert_resource(ButtonInput::<MouseButton>::default());
+        app.add_message::<UseToolOnPresentMessage>();
+        app.add_systems(Update, dual_hand_interaction_system);
+
+        let player_e = app.world_mut().spawn((
+            ElfHands::default(),
+            movement,
+            Transform::from_xyz(0.0, 1.0, 0.0),
+        )).id();
+
+        app.world_mut().spawn((
+            FirstPersonCamera,
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0)),
+        ));
+
+        app.world_mut().spawn((
+            RightHandVisual,
+            GlobalTransform::from(Transform::from_xyz(0.35, 1.0, -0.6)),
+        ));
+
+        let cube_entity = app.world_mut().spawn((
+            Grabbable,
+            Transform::from_xyz(0.35, 1.0, -0.7),
+            Velocity::zero(),
+        )).id();
+
+        {
+            let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+            hands.right_grabbed = Some(cube_entity);
+        }
+
+        {
+            let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+            mouse.press(MouseButton::Left);
+        }
+        app.update();
+
+        let vel = app.world().get::<Velocity>(cube_entity).unwrap();
+        assert!(
+            vel.linear.y > 1.0,
+            "Thrown object on the ground must retain positive upward arc (vy > 1.0), got vy = {}",
+            vel.linear.y
+        );
+    }
+
+    #[test]
+    fn test_held_object_moved_out_and_no_player_collision() {
+        let mut app = App::new();
+        app.insert_resource(ButtonInput::<KeyCode>::default());
+        app.insert_resource(ButtonInput::<MouseButton>::default());
+        app.add_message::<UseToolOnPresentMessage>();
+        app.add_systems(Update, dual_hand_interaction_system);
+
+        let player_e = app.world_mut().spawn((
+            ElfHands::default(),
+            Transform::from_xyz(0.0, 1.0, 0.0),
+            Collider::capsule_y(0.5, 0.3),
+            CollisionGroups::new(GROUP_PLAYER, !GROUP_HELD_ITEM),
+            KinematicCharacterController {
+                filter_groups: Some(CollisionGroups::new(GROUP_PLAYER, !GROUP_HELD_ITEM)),
+                ..default()
+            },
+        )).id();
+
+        app.world_mut().spawn((
+            FirstPersonCamera,
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0)),
+        ));
+
+        let left_hand_pos = Vec3::new(-0.35, 1.0, -0.6);
+        app.world_mut().spawn((
+            LeftHandVisual,
+            GlobalTransform::from(Transform::from_translation(left_hand_pos)),
+        ));
+        app.world_mut().spawn((
+            RightHandVisual,
+            GlobalTransform::from(Transform::from_xyz(0.35, 1.0, -0.6)),
+        ));
+
+        let cube_entity = app.world_mut().spawn((
+            Grabbable,
+            Transform::from_xyz(-0.35, 1.0, -0.7),
+            Collider::cuboid(0.3, 0.3, 0.3),
+            CollisionGroups::new(Group::ALL, Group::ALL),
+            Velocity::zero(),
+        )).id();
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyQ);
+        }
+        app.update();
+
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.left_grabbed, Some(cube_entity));
+
+        let cube_tf = app.world().get::<Transform>(cube_entity).unwrap();
+        assert!(
+            cube_tf.translation.z <= left_hand_pos.z - 0.40,
+            "Held item must be moved out forward (z <= {}), got z = {}",
+            left_hand_pos.z - 0.40,
+            cube_tf.translation.z
+        );
+
+        assert!(
+            app.world().get::<Sensor>(cube_entity).is_some(),
+            "Held object must have Sensor attached to prevent blocking character controller"
+        );
+        assert!(
+            app.world().get::<HeldByPlayer>(cube_entity).is_some(),
+            "Held object must have HeldByPlayer marker"
+        );
+        let cg = app.world().get::<CollisionGroups>(cube_entity).unwrap();
+        assert_eq!(cg.memberships, GROUP_HELD_ITEM);
+        assert_eq!(cg.filters, !GROUP_PLAYER);
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyQ);
+            keys.reset(KeyCode::KeyQ);
+            keys.press(KeyCode::KeyQ);
+        }
+        app.update();
+
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.left_grabbed, None);
+
+        assert!(
+            app.world().get::<Sensor>(cube_entity).is_none(),
+            "Sensor must be removed when object is set down"
+        );
+        assert!(
+            app.world().get::<HeldByPlayer>(cube_entity).is_none(),
+            "HeldByPlayer must be removed when object is set down"
+        );
+        let cg_restored = app.world().get::<CollisionGroups>(cube_entity).unwrap();
+        assert_eq!(cg_restored.memberships, Group::ALL);
+        assert_eq!(cg_restored.filters, Group::ALL);
+    }
+
+    #[test]
+    fn test_two_handed_heavy_item_lifting_penalty_and_two_hand_stability() {
+        let mut app = App::new();
+        app.add_message::<UseToolOnPresentMessage>();
+        app.add_systems(Update, dual_hand_interaction_system);
+
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(500));
+        app.insert_resource(time);
+
+        let player_e = app.world_mut().spawn((
+            Transform::from_xyz(0.0, 1.0, 0.0),
+            ElfHands::default(),
+        )).id();
+
+        app.world_mut().spawn((
+            FirstPersonCamera,
+            GlobalTransform::from_xyz(0.0, 1.6, 0.0),
+        ));
+
+        app.world_mut().spawn((
+            LeftHandVisual,
+            GlobalTransform::from_xyz(-0.25, 1.4, -0.4),
+        ));
+        app.world_mut().spawn((
+            RightHandVisual,
+            GlobalTransform::from_xyz(0.25, 1.4, -0.4),
+        ));
+
+        let heavy_item_e = app.world_mut().spawn((
+            Grabbable,
+            HeavyItem {
+                mass: 20.0,
+                slip_rate: 0.30,
+                max_single_hand_duration: 1.5,
+                single_hand_timer: 0.0,
+                drag_tilt_angle: 0.35,
+                is_two_handed: false,
+            },
+            Transform::from_xyz(0.0, 1.4, -0.85),
+            Velocity::default(),
+        )).id();
+
+        {
+            let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+            hands.left_grabbed = Some(heavy_item_e);
+            app.world_mut().entity_mut(heavy_item_e).insert(HeldByPlayer);
+        }
+
+        app.update();
+
+        let heavy = app.world().get::<HeavyItem>(heavy_item_e).unwrap();
+        assert!(!heavy.is_two_handed, "Single hand carry must be marked as not two-handed");
+        assert!((heavy.single_hand_timer - 0.5).abs() < 0.01);
+
+        let tf = app.world().get::<Transform>(heavy_item_e).unwrap();
+        assert!(tf.translation.y < 1.35, "Single hand hold must sag downwards under heavy mass");
+        assert_ne!(tf.rotation, Quat::IDENTITY, "Single hand hold must tilt/drag sideways");
+
+        {
+            let mut time = Time::<()>::default();
+            time.advance_by(std::time::Duration::from_millis(1200));
+            app.insert_resource(time);
+        }
+        app.update();
+
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.left_grabbed, None, "Heavy item must slip completely out of single-hand grip");
+        assert!(app.world().get::<HeldByPlayer>(heavy_item_e).is_none(), "HeldByPlayer must be removed on slip");
+        let vel = app.world().get::<Velocity>(heavy_item_e).unwrap();
+        assert!(vel.linear.y < -1.0, "Item receives downward physics velocity on slip");
+
+        {
+            let mut hands = app.world_mut().get_mut::<ElfHands>(player_e).unwrap();
+            hands.left_grabbed = Some(heavy_item_e);
+            hands.right_grabbed = Some(heavy_item_e);
+            app.world_mut().entity_mut(heavy_item_e).insert(HeldByPlayer);
+        }
+
+        {
+            let mut time = Time::<()>::default();
+            time.advance_by(std::time::Duration::from_secs(3));
+            app.insert_resource(time);
+        }
+        app.update();
+
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(hands.left_grabbed, Some(heavy_item_e));
+        assert_eq!(hands.right_grabbed, Some(heavy_item_e), "Both hands retain grasp on heavy item");
+
+        let heavy = app.world().get::<HeavyItem>(heavy_item_e).unwrap();
+        assert!(heavy.is_two_handed, "Two-handed carry must be active");
+        assert_eq!(heavy.single_hand_timer, 0.0, "Single hand timer stays reset to zero when two-handed");
+
+        let tf = app.world().get::<Transform>(heavy_item_e).unwrap();
+        assert!((tf.translation.x).abs() < 0.01, "Two-handed hold centers item horizontally");
+        assert!((tf.translation.y - 1.4).abs() < 0.05, "Two-handed hold maintains stable height without sagging");
+        assert_eq!(tf.rotation, Quat::IDENTITY, "Two-handed hold eliminates tilt/drag");
+    }
+
+    #[test]
+    fn test_player_grab_direct_raycast_line_of_sight_reticle() {
+        let mut app = App::new();
+        app.insert_resource(ButtonInput::<KeyCode>::default());
+        app.insert_resource(ButtonInput::<MouseButton>::default());
+        app.add_message::<UseToolOnPresentMessage>();
+        app.add_systems(Update, dual_hand_interaction_system);
+
+        let player_e = app.world_mut().spawn((
+            ElfHands::default(),
+            Transform::from_xyz(0.0, 1.0, 0.0),
+        )).id();
+
+        let cam_e = app.world_mut().spawn((
+            FirstPersonCamera,
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.2, 0.0)),
+        )).id();
+
+        app.world_mut().spawn((
+            LeftHandVisual,
+            GlobalTransform::from(Transform::from_xyz(-0.35, 1.0, -0.6)),
+        ));
+        app.world_mut().spawn((
+            RightHandVisual,
+            GlobalTransform::from(Transform::from_xyz(0.35, 1.0, -0.6)),
+        ));
+
+        let obj_reticle = app.world_mut().spawn((
+            Grabbable,
+            Transform::from_xyz(0.0, 1.2, -1.5),
+            Collider::cuboid(0.15, 0.15, 0.15),
+            Velocity::zero(),
+        )).id();
+
+        let obj_cone = app.world_mut().spawn((
+            Grabbable,
+            Transform::from_xyz(-0.8, 1.0, -1.0),
+            Collider::cuboid(0.15, 0.15, 0.15),
+            Velocity::zero(),
+        )).id();
+
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyQ);
+        app.update();
+
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(
+            hands.left_grabbed,
+            Some(obj_reticle),
+            "Grabbing must target the object in direct raycasted line of sight with reticle instead of general cone"
+        );
+
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::KeyQ);
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().reset(KeyCode::KeyQ);
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyQ);
+        app.update();
+        assert_eq!(app.world().get::<ElfHands>(player_e).unwrap().left_grabbed, None);
+
+        let to_b = (Vec3::new(-0.8, 1.0, -1.0) - Vec3::new(0.0, 1.2, 0.0)).normalize();
+        let rot_b = Quat::from_rotation_arc(Vec3::NEG_Z, to_b);
+        *app.world_mut().get_mut::<GlobalTransform>(cam_e).unwrap() = GlobalTransform::from(
+            Transform::from_xyz(0.0, 1.2, 0.0).with_rotation(rot_b)
+        );
+
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::KeyQ);
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().reset(KeyCode::KeyQ);
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyQ);
+        app.update();
+
+        let hands = app.world().get::<ElfHands>(player_e).unwrap();
+        assert_eq!(
+            hands.left_grabbed,
+            Some(obj_cone),
+            "Aiming reticle directly at Object B must grab Object B"
+        );
+
+        let mut app2 = App::new();
+        app2.insert_resource(ButtonInput::<KeyCode>::default());
+        app2.insert_resource(ButtonInput::<MouseButton>::default());
+        app2.add_message::<UseToolOnPresentMessage>();
+        app2.add_systems(Update, dual_hand_interaction_system);
+
+        let player2_e = app2.world_mut().spawn((
+            ElfHands::default(),
+            Transform::from_xyz(0.0, 1.0, 0.0),
+        )).id();
+
+        app2.world_mut().spawn((
+            FirstPersonCamera,
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.2, 0.0)),
+        ));
+        app2.world_mut().spawn((
+            LeftHandVisual,
+            GlobalTransform::from(Transform::from_xyz(-0.35, 1.0, -0.6)),
+        ));
+
+        let _hidden_target = app2.world_mut().spawn((
+            Grabbable,
+            Transform::from_xyz(0.0, 1.2, -2.0),
+            Collider::cuboid(0.15, 0.15, 0.15),
+            Velocity::zero(),
+        )).id();
+
+        app2.world_mut().spawn((
+            Transform::from_xyz(0.0, 1.2, -1.0),
+            Collider::cuboid(0.5, 0.5, 0.1),
+        ));
+
+        app2.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyQ);
+        app2.update();
+
+        let hands2 = app2.world().get::<ElfHands>(player2_e).unwrap();
+        assert_eq!(
+            hands2.left_grabbed,
+            None,
+            "Cannot grab an object through a solid obstacle blocking reticle line of sight"
+        );
+    }
+
+    #[test]
+    fn test_player_throw_impulse_scaled_for_gravity() {
+        let mut app = App::new();
+        app.insert_resource(ButtonInput::<KeyCode>::default());
+        app.insert_resource(ButtonInput::<MouseButton>::default());
+        app.add_message::<UseToolOnPresentMessage>();
+        app.add_systems(Update, dual_hand_interaction_system);
+
+        let player_e = app.world_mut().spawn((
+            ElfHands::default(),
+            Transform::from_xyz(0.0, 1.0, 0.0),
+        )).id();
+        app.world_mut().spawn((
+            FirstPersonCamera,
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 0.0)),
+        ));
+        app.world_mut().spawn((
+            RightHandVisual,
+            GlobalTransform::from(Transform::from_xyz(0.35, 1.0, -0.6)),
+        ));
+
+        let thrown_cube = app.world_mut().spawn((
+            Grabbable,
+            Transform::from_xyz(0.35, 1.0, -0.7),
+            Velocity::zero(),
+        )).id();
+        app.world_mut().get_mut::<ElfHands>(player_e).unwrap().right_grabbed = Some(thrown_cube);
+
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+        app.update();
+
+        let vel = app.world().get::<Velocity>(thrown_cube).unwrap();
+        assert!(
+            vel.linear.length() >= 13.0,
+            "Player throw impulse must be scaled up (>= 13.0 m/s) to compensate for higher gravity, got {}",
+            vel.linear.length()
+        );
+    }
+}

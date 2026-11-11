@@ -1399,3 +1399,7 @@ pub fn moose_scarf_physics_system(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "toy_model_tests.rs"]
+mod tests;

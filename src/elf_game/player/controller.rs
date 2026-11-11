@@ -538,3 +538,166 @@ pub fn floaty_hands_system(
         tf.translation = hand.rest_position + hand.current_offset + Vec3::new(idle_x, idle_y, 0.0);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_floaty_hands_physics_momentum_and_sway() {
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs_f32(0.016));
+        app.insert_resource(time);
+        app.insert_resource(AccumulatedMouseMotion {
+            delta: Vec2::new(50.0, 0.0),
+        });
+
+        let player_e = app.world_mut().spawn((ElfMovement::default(), ElfPlayer)).id();
+
+        let rest_pos = Vec3::new(-0.35, -0.3, -0.6);
+        let hand_e = app.world_mut().spawn((
+            FloatyHand::new(rest_pos, 0.0),
+            Transform::from_translation(rest_pos),
+        )).id();
+
+        app.add_systems(Update, floaty_hands_system);
+
+        app.update();
+        {
+            let hand = app.world().get::<FloatyHand>(hand_e).unwrap();
+            assert!(
+                hand.velocity.x < -0.5,
+                "Hand should develop negative X velocity from rightward camera flick, got {}",
+                hand.velocity.x
+            );
+            assert!(
+                hand.current_offset.x < 0.0,
+                "Hand should sway leftward (negative X offset), got {}",
+                hand.current_offset.x
+            );
+        }
+
+        {
+            let mut mouse = app.world_mut().resource_mut::<AccumulatedMouseMotion>();
+            mouse.delta = Vec2::ZERO;
+            let mut movement = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+            movement.velocity.y = 8.0;
+        }
+        app.update();
+        {
+            let hand = app.world().get::<FloatyHand>(hand_e).unwrap();
+            assert!(
+                hand.velocity.y < 0.0,
+                "Hand should dip downward with negative Y velocity upon player jump, got {}",
+                hand.velocity.y
+            );
+        }
+
+        {
+            let mut movement = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+            movement.velocity = Vec3::ZERO;
+        }
+        for _ in 0..60 {
+            app.update();
+        }
+        {
+            let hand = app.world().get::<FloatyHand>(hand_e).unwrap();
+            assert!(
+                hand.current_offset.length() < 0.05,
+                "Floaty hand should settle back near rest position under damping, offset length was {}",
+                hand.current_offset.length()
+            );
+        }
+    }
+
+    #[test]
+    fn test_player_collision_box_spacing() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.add_systems(Startup, spawn_elf_player);
+        app.update();
+
+        let Ok((_, collider, controller)) = app
+            .world_mut()
+            .query::<(&ElfPlayer, &Collider, &KinematicCharacterController)>()
+            .single(app.world())
+        else {
+            panic!("ElfPlayer must be spawned with Collider and KinematicCharacterController");
+        };
+
+        let capsule = collider.as_capsule().expect("Player collider must be a capsule");
+        assert!(
+            capsule.radius() >= 0.45,
+            "Player collision box radius must be expanded to provide spacing before running into things, got {}",
+            capsule.radius()
+        );
+
+        let offset_val = match controller.offset {
+            CharacterLength::Absolute(v) => v,
+            CharacterLength::Relative(v) => v,
+        };
+        assert!(
+            offset_val >= 0.03,
+            "Player character controller offset cushion must be at least 0.03m (3cm), got {}",
+            offset_val
+        );
+    }
+
+    #[test]
+    fn test_player_hands_model_scale() {
+        let mut app = App::new();
+        app.insert_resource(Assets::<Mesh>::default());
+        app.insert_resource(Assets::<StandardMaterial>::default());
+        app.add_systems(Startup, spawn_elf_player);
+        app.update();
+
+        let left_mesh_handle = {
+            let mut left_hand_q = app.world_mut().query::<(&Mesh3d, &LeftHandVisual)>();
+            let (left_h, _) = left_hand_q.single(app.world()).unwrap();
+            left_h.0.clone()
+        };
+        let right_mesh_handle = {
+            let mut right_hand_q = app.world_mut().query::<(&Mesh3d, &RightHandVisual)>();
+            let (right_h, _) = right_hand_q.single(app.world()).unwrap();
+            right_h.0.clone()
+        };
+
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        let left_mesh = meshes.get(&left_mesh_handle).expect("Left hand mesh must exist");
+        let right_mesh = meshes.get(&right_mesh_handle).expect("Right hand mesh must exist");
+
+        let positions = left_mesh.attribute(Mesh::ATTRIBUTE_POSITION).expect("Mesh must have positions");
+        let max_radius = match positions {
+            bevy::render::mesh::VertexAttributeValues::Float32x3(pts) => {
+                pts.iter().map(|[x, y, z]| (x * x + y * y + z * z).sqrt()).fold(0.0f32, f32::max)
+            }
+            _ => panic!("Expected Float32x3 position values"),
+        };
+
+        assert!(
+            max_radius <= 0.08,
+            "Player hand glove radius must be scaled down to <= 0.08m (was 0.12m), got {}",
+            max_radius
+        );
+        assert!(
+            (max_radius - 0.065).abs() < 0.005,
+            "Player hand glove radius should be ~0.065m, got {}",
+            max_radius
+        );
+
+        let right_positions = right_mesh.attribute(Mesh::ATTRIBUTE_POSITION).expect("Right mesh must have positions");
+        let right_max_radius = match right_positions {
+            bevy::render::mesh::VertexAttributeValues::Float32x3(pts) => {
+                pts.iter().map(|[x, y, z]| (x * x + y * y + z * z).sqrt()).fold(0.0f32, f32::max)
+            }
+            _ => panic!("Expected Float32x3 position values"),
+        };
+        assert!(
+            (right_max_radius - 0.065).abs() < 0.005,
+            "Right player hand glove radius should be ~0.065m, got {}",
+            right_max_radius
+        );
+    }
+}

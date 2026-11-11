@@ -1995,3 +1995,7 @@ pub fn tube_travelling_lump_system(
         tf.translation = tf.translation.lerp(target_pos, 8.0 * dt);
     }
 }
+
+#[cfg(test)]
+#[path = "room_tests.rs"]
+mod tests;

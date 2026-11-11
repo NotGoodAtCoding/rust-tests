@@ -505,3 +505,164 @@ impl Plugin for AssetsPlugin {
         app.add_plugins(super::objects::ModularPhysicsObjectsPlugin);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::elf_game::{
+        diegetic_ui::{
+            hunger_dial::spawn_gas_pressure_gauge,
+            monitor::spawn_diegetic_screens_and_signs,
+        },
+        moose::toy_model::spawn_mr_moose,
+        player::{
+            bunny_ears::spawn_bunny_ears_item,
+            hands::spawn_workshop_tools_and_materials,
+        },
+        workshop::{
+            room::setup_workshop_scene,
+            stove::{
+                appliance_visual_indicators_system, spawn_oven_stove_and_propane_scene,
+                ApplianceVisualMaterials,
+            },
+        },
+    };
+
+    #[test]
+    fn test_workshop_palette_constants_and_material_assets() {
+        // 1. Verify palette constants are pure Color::Srgba values
+        assert_eq!(FESTIVE_RED, Color::srgb(0.88, 0.12, 0.14));
+        assert_eq!(PINE_GREEN, Color::srgb(0.12, 0.42, 0.20));
+        assert_eq!(SNOW_WHITE, Color::srgb(0.96, 0.96, 0.98));
+        assert_eq!(GOLD_RIBBON, Color::srgb(0.95, 0.80, 0.15));
+        assert_eq!(HAZARD_YELLOW, Color::srgb(0.92, 0.78, 0.12));
+        assert_eq!(CABIN_LOG, Color::srgb(0.40, 0.25, 0.16));
+        assert_eq!(TIMBER_BEAM, Color::srgb(0.26, 0.16, 0.10));
+        assert_eq!(WEATHERED_POST, Color::srgb(0.22, 0.14, 0.08));
+        assert_eq!(RUSTIC_PLANKS, Color::srgb(0.48, 0.30, 0.18));
+        assert_eq!(WORKBENCH_WOOD, Color::srgb(0.40, 0.25, 0.15));
+        assert_eq!(POLISHED_BRASS, Color::srgb(0.82, 0.68, 0.24));
+        assert_eq!(CAST_IRON, Color::srgb(0.18, 0.18, 0.20));
+        assert_eq!(WROUGHT_IRON, Color::srgb(0.12, 0.12, 0.14));
+        assert_eq!(SHEET_METAL, Color::srgb(0.68, 0.72, 0.76));
+        assert_eq!(MOOSE_FUR, Color::srgb(0.24, 0.16, 0.10));
+        assert_eq!(MOOSE_MUZZLE, Color::srgb(0.36, 0.26, 0.18));
+        assert_eq!(MOOSE_ANTLER, Color::srgb(0.78, 0.72, 0.60));
+        assert_eq!(CRT_PHOSPHOR_GREEN, Color::srgb(0.20, 1.00, 0.40));
+        assert_eq!(UNWRAPPED_TOY_BLUE, Color::srgb(0.20, 0.50, 0.80));
+
+        // 2. Verify palette.ron exists on disk and contains valid content
+        let ron_path = std::path::Path::new("assets/palette.ron");
+        assert!(ron_path.exists(), "assets/palette.ron must exist in repository root");
+        let ron_contents = std::fs::read_to_string(ron_path).expect("Read palette.ron");
+        assert!(ron_contents.contains("festive_red"), "palette.ron must contain festive_red");
+        assert!(ron_contents.contains("cabin_log"), "palette.ron must contain cabin_log");
+        assert!(ron_contents.contains("moose_fur"), "palette.ron must contain moose_fur");
+        assert!(ron_contents.contains("gas_hose_yellow"), "palette.ron must contain gas_hose_yellow");
+        assert!(ron_contents.contains("propane_cylinder_blue"), "palette.ron must contain propane_cylinder_blue");
+
+        // 3. Test App with AssetsPlugin and WorkshopMaterials initialization
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.add_plugins(AssetsPlugin);
+
+        app.add_systems(Startup, (
+            setup_workshop_scene,
+            spawn_mr_moose,
+            spawn_workshop_tools_and_materials,
+            spawn_gas_pressure_gauge,
+            spawn_diegetic_screens_and_signs,
+            spawn_oven_stove_and_propane_scene,
+        ));
+
+        app.update();
+
+        let wm = app.world().get_resource::<WorkshopMaterials>();
+        assert!(wm.is_some(), "WorkshopMaterials resource must be initialized in world");
+        let wm = wm.unwrap();
+
+        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        assert!(materials.get(&wm.cabin_log).is_some(), "Cabin log material must exist");
+        assert!(materials.get(&wm.timber_beam).is_some(), "Timber beam material must exist");
+        assert!(materials.get(&wm.festive_red).is_some(), "Festive red material must exist");
+        assert!(materials.get(&wm.moose_fur).is_some(), "Moose fur material must exist");
+        assert!(materials.get(&wm.crt_screen).is_some(), "CRT screen material must exist");
+        assert!(materials.get(&wm.toy_blue).is_some(), "Toy blue material must exist");
+        assert!(materials.get(&wm.vacuum_tube_glass).is_some(), "Vacuum tube glass material must exist");
+        assert!(materials.get(&wm.tractor_beam).is_some(), "Tractor beam material must exist");
+        assert!(materials.get(&wm.gas_hose).is_some(), "Gas hose material must exist");
+        assert!(materials.get(&wm.gas_anchor_red).is_some(), "Gas anchor red material must exist");
+        assert!(materials.get(&wm.propane_tank_blue).is_some(), "Propane tank blue material must exist");
+        assert!(materials.get(&wm.propane_bulk_tank).is_some(), "Propane bulk tank material must exist");
+        assert!(materials.get(&wm.stove_glowing_ember).is_some(), "Stove glowing ember material must exist");
+        assert!(materials.get(&wm.stove_cool_dark_gray).is_some(), "Stove cool dark gray material must exist");
+        assert!(materials.get(&wm.stove_blue_flame).is_some(), "Stove blue flame material must exist");
+        assert!(materials.get(&wm.bunny_ear_pink).is_some(), "Bunny ear pink material must exist");
+        assert!(materials.get(&wm.plasma_chamber).is_some(), "Plasma chamber material must exist");
+
+        let mut entity_count = 0;
+        for _ in app.world().iter_entities() {
+            entity_count += 1;
+        }
+        assert!(entity_count > 20, "Spawning systems with WorkshopMaterials must instantiate world entities (got {})", entity_count);
+    }
+
+    #[test]
+    fn test_stove_and_appliance_materials_defined_in_assets_materials_decoupled() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.add_plugins(AssetsPlugin);
+
+        app.update();
+
+        let wm = app.world().resource::<WorkshopMaterials>().clone();
+
+        assert_eq!(GAS_HOSE_YELLOW, Color::srgb(0.95, 0.78, 0.12));
+        assert_eq!(SAFETY_RED, Color::srgb(0.85, 0.15, 0.12));
+        assert_eq!(PROPANE_CYLINDER_BLUE, Color::srgb(0.20, 0.45, 0.85));
+        assert_eq!(BULK_TANK_WHITE, Color::srgb(0.88, 0.90, 0.92));
+        assert_eq!(STOVE_GLOWING_EMBER, Color::srgb(1.0, 0.35, 0.05));
+        assert_eq!(STOVE_COOL_GRAY, Color::srgb(0.12, 0.13, 0.14));
+        assert_eq!(STOVE_BLUE_FLAME, Color::srgba(0.2, 0.5, 1.0, 0.85));
+        assert_eq!(BUNNY_EAR_PINK, Color::srgb(0.98, 0.65, 0.75));
+        assert_eq!(PLASMA_CHAMBER_PURPLE, Color::srgba(0.65, 0.15, 0.95, 0.75));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(spawn_oven_stove_and_propane_scene);
+        schedule.run(app.world_mut());
+
+        let appliance_mats = app.world().get_resource::<ApplianceVisualMaterials>();
+        assert!(appliance_mats.is_some(), "ApplianceVisualMaterials must be inserted");
+        let appliance_mats = appliance_mats.unwrap();
+        assert_eq!(appliance_mats.glowing_ember, wm.stove_glowing_ember);
+        assert_eq!(appliance_mats.cool_dark_gray, wm.stove_cool_dark_gray);
+        assert_eq!(appliance_mats.blue_flame, wm.stove_blue_flame);
+
+        let mut ear_app = App::new();
+        ear_app.init_resource::<Assets<Mesh>>();
+        ear_app.init_resource::<Assets<StandardMaterial>>();
+        ear_app.insert_resource(wm.clone());
+        ear_app.add_systems(
+            Startup,
+            |mut commands: Commands,
+             mut meshes: ResMut<Assets<Mesh>>,
+             mut materials: ResMut<Assets<StandardMaterial>>,
+             wm: Res<WorkshopMaterials>| {
+                spawn_bunny_ears_item(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    Some(&wm),
+                    Vec3::ZERO,
+                );
+            },
+        );
+        ear_app.update();
+
+        let mut visual_schedule = Schedule::default();
+        visual_schedule.add_systems(appliance_visual_indicators_system);
+        visual_schedule.run(app.world_mut());
+    }
+}

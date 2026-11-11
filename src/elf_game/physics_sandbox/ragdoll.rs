@@ -9,7 +9,7 @@ use crate::elf_game::{
         hands::{Grabbable, HeldByPlayer},
     },
     workshop::pantry::{MooseTreatJar, PantryDoor},
-    wrapping::Present,
+    wrapping::{Present, WrappingFeature, WrappingSpecification},
 };
 
 /// High-level AI and physics behavior state for NPC elf assistants.
@@ -49,6 +49,10 @@ pub enum ElfNpcState {
     SeekingFlameSource,
     /// Pyro elf carrying an ignition flame source and gleefully sprinting toward the stove to ignite it.
     ChargingStoveWithFlame,
+    /// Autonomous Present Wrapper applying tools to unwrapped presents at workbench.
+    WrappingPresent,
+    /// Autonomous Present Wrapper carrying finished wrapped present to the pneumatic vacuum dispatch platform.
+    DeliveringPresentToVacuum,
 }
 
 /// Easter egg state for an elf perched asleep atop a dynamic candle chandelier.
@@ -146,6 +150,7 @@ pub enum ElfNodePurpose {
     KleptoStash,
     MirrorNode,
     FurnaceStove,
+    SendingPlatform,
 }
 
 /// Target option for dynamic waypoint navigation for Elves, Moose, and other NPCs.
@@ -219,7 +224,7 @@ impl ElfNavGraph {
                 position: Vec3::new(5.5, 0.45, -4.0),
                 radius: 1.3,
                 neighbors: vec![2, 9],
-                purpose: None,
+                purpose: Some(ElfNodePurpose::SendingPlatform),
             },
             // Node 4: Moose Feeding Trough
             ElfNavNode {
@@ -601,6 +606,23 @@ impl ElfAssistant {
     /// Clears any active dynamic navigation target, returning to graph/waypoint navigation.
     pub fn clear_dynamic_target(&mut self) {
         self.dynamic_target = None;
+    }
+
+    /// Returns the appropriate AI state to resume an elf's assigned job, if any.
+    pub fn resume_job_state(&self) -> Option<ElfNpcState> {
+        match self.assigned_job {
+            Some(ElfJob::MooseFeeder) => Some(if self.carried_treat.is_some() {
+                ElfNpcState::DeliveringMooseTreat
+            } else {
+                ElfNpcState::FetchingMooseTreat
+            }),
+            Some(ElfJob::PresentWrapper) => Some(if self.carried_present.is_some() {
+                ElfNpcState::DeliveringPresentToVacuum
+            } else {
+                ElfNpcState::WrappingPresent
+            }),
+            _ => None,
+        }
     }
 }
 
@@ -1369,6 +1391,11 @@ pub fn elf_hat_assignment_system(
                 elf.state = ElfNpcState::FetchingMooseTreat;
                 elf.path.clear();
                 elf.path_step = 0;
+            } else if hat_job == ElfJob::PresentWrapper {
+                elf.state = ElfNpcState::WrappingPresent;
+                elf.path.clear();
+                elf.path_step = 0;
+                elf.state_timer = 0.0;
             }
         }
     } else if let Some((pipe_entity, is_right)) = held_pipe_e {
@@ -1467,6 +1494,112 @@ pub fn philosopher_pipe_system(
     }
 }
 
+/// Rotates an elf smoothly in the XZ plane to face `look_pos`.
+fn face_target_flat(elf_tf: &mut Transform, look_pos: Vec3, dt: f32) {
+    let flat_diff = Vec3::new(look_pos.x - elf_tf.translation.x, 0.0, look_pos.z - elf_tf.translation.z);
+    if flat_diff.length_squared() > 0.001 {
+        let dir = flat_diff.normalize();
+        let target_rot = Quat::from_rotation_y(dir.x.atan2(dir.z));
+        elf_tf.rotation = elf_tf.rotation.slerp(target_rot, (dt * 8.0).min(1.0));
+    }
+}
+
+/// Navigates an elf step-by-step along `ElfNavGraph` toward `goal_node`.
+/// Returns `true` once the elf has arrived within `arrival_dist` of `goal_node` (or final path node).
+fn step_elf_toward_node(
+    elf: &mut ElfAssistant,
+    elf_tf: &mut Transform,
+    vel: &mut Velocity,
+    nav_graph: Option<&ElfNavGraph>,
+    goal_node: usize,
+    arrival_dist: f32,
+    dt: f32,
+) -> (bool, Vec3) {
+    elf.walk_timer += dt;
+    if elf.path.is_empty() || elf.target_node != goal_node {
+        if let Some(graph) = nav_graph {
+            if let Some(path) = graph.find_path(elf.current_node, goal_node) {
+                elf.path = path;
+                elf.path_step = 0;
+                elf.target_node = goal_node;
+            }
+        }
+    }
+
+    let dest_pos = if let Some(graph) = nav_graph {
+        graph.nodes.get(goal_node).map(|n| n.position).unwrap_or(elf.target_waypoint)
+    } else {
+        elf.target_waypoint
+    };
+
+    let target_pos = if let Some(graph) = nav_graph {
+        if elf.path_step < elf.path.len() {
+            graph.nodes[elf.path[elf.path_step]].position
+        } else {
+            dest_pos
+        }
+    } else {
+        dest_pos
+    };
+
+    let flat_diff = Vec3::new(
+        target_pos.x - elf_tf.translation.x,
+        0.0,
+        target_pos.z - elf_tf.translation.z,
+    );
+    let dist = flat_diff.length();
+    let dist_to_dest = Vec3::new(
+        dest_pos.x - elf_tf.translation.x,
+        0.0,
+        dest_pos.z - elf_tf.translation.z,
+    )
+    .length();
+
+    if dist_to_dest < arrival_dist || (dist < 0.7 && elf.path_step + 1 >= elf.path.len()) {
+        elf.current_node = goal_node;
+        vel.linear.x = 0.0;
+        vel.linear.z = 0.0;
+        return (true, dest_pos);
+    }
+
+    if dist < 0.7 {
+        if elf.path_step + 1 < elf.path.len() {
+            elf.current_node = elf.path[elf.path_step];
+            elf.path_step += 1;
+        }
+        return (false, dest_pos);
+    }
+
+    let dir = flat_diff / dist;
+    vel.linear.x = dir.x * elf.walk_speed;
+    vel.linear.z = dir.z * elf.walk_speed;
+    if dir.length_squared() > 0.001 {
+        let target_rot = Quat::from_rotation_y(dir.x.atan2(dir.z));
+        elf_tf.rotation = elf_tf.rotation.slerp(target_rot, (dt * 8.0).min(1.0));
+    }
+    (false, dest_pos)
+}
+
+/// Applies required wrapping features from `WrappingSpecification` (or defaults) and marks completed.
+fn complete_present_wrapping(present: &mut Present, spec_opt: Option<&WrappingSpecification>) {
+    if let Some(spec) = spec_opt {
+        for &req in &spec.required_features {
+            present.features.insert(req);
+        }
+        if spec.required_features.contains(&WrappingFeature::GiftTagAttached)
+            && present.recipient_tag.is_none()
+        {
+            present.recipient_tag = Some("From: Santa's Elves".to_string());
+        }
+    } else {
+        present.features.insert(WrappingFeature::PaperSized);
+        present.features.insert(WrappingFeature::PaperWrapped);
+        present.features.insert(WrappingFeature::TapedCorners);
+        present.features.insert(WrappingFeature::DecorativeBow);
+    }
+    present.is_completed = true;
+}
+
 /// AI system managing autonomous task navigation via `ElfNavGraph`, pathfinding,
 /// Lazy slacking traits, Klepto present stashing, high-speed player collisions,
 /// dynamic physics impacts, and dynamic ragdoll tumbling.
@@ -1506,9 +1639,15 @@ pub fn elf_assistant_ai_system(
         ),
     >,
     mut q_presents: Query<
-        (Entity, &mut Transform, &mut Velocity),
         (
-            With<Present>,
+            Entity,
+            &mut Transform,
+            &mut Velocity,
+            &mut Present,
+            Option<&WrappingSpecification>,
+            Option<&HeldByPlayer>,
+        ),
+        (
             Without<MooseSnack>,
             Without<MooseTreatJar>,
             Without<ElfAssistant>,
@@ -1565,6 +1704,11 @@ pub fn elf_assistant_ai_system(
         .iter()
         .map(|(e, tf, _, _, _, _, _)| (e, tf.translation))
         .collect();
+    let carried_presents: Vec<(Entity, Entity)> = q_elves
+        .iter()
+        .filter_map(|(e, _, _, _, _, elf, _)| elf.carried_present.map(|p| (e, p)))
+        .collect();
+    let mut newly_claimed_presents: Vec<Entity> = Vec::new();
     let mut recruited_elves: Vec<(Entity, Entity)> = Vec::new();
 
     for (_elf_entity, mut elf_tf, mut vel, mut impulse, mut locked_axes, mut elf, opt_comp_target) in &mut q_elves {
@@ -1574,9 +1718,9 @@ pub fn elf_assistant_ai_system(
         if let Some(comp_dyn) = opt_comp_target {
             elf.dynamic_target = Some(comp_dyn.clone());
         }
-        // Carry present follow if Klepto is currently stashing
+        // Carry present follow if Klepto is stashing or Present Wrapper is delivering
         if let Some(pres_e) = elf.carried_present {
-            if let Ok((_, mut pres_tf, mut pres_vel)) = q_presents.get_mut(pres_e) {
+            if let Ok((_, mut pres_tf, mut pres_vel, ..)) = q_presents.get_mut(pres_e) {
                 let forward = elf_tf.forward();
                 pres_tf.translation = elf_tf.translation + forward * 0.45 + Vec3::Y * 0.1;
                 pres_vel.linear = Vec3::ZERO;
@@ -1605,7 +1749,9 @@ pub fn elf_assistant_ai_system(
             | ElfNpcState::TamperingWithStove
             | ElfNpcState::SeekingFlameSource
             | ElfNpcState::ChargingStoveWithFlame
-            | ElfNpcState::Philosophizing => {
+            | ElfNpcState::Philosophizing
+            | ElfNpcState::WrappingPresent
+            | ElfNpcState::DeliveringPresentToVacuum => {
                 // If Moose is agitated or rampaging, panic immediately!
                 if moose_breached || moose_agitated {
                     elf.state = ElfNpcState::Panicking;
@@ -1699,14 +1845,19 @@ pub fn elf_assistant_ai_system(
                 // 2. Klepto Trait Present Finding & Stashing Logic
                 if elf.mischief_trait == ElfMischiefTrait::Klepto && elf.carried_present.is_none() && elf.assigned_job.is_none() && elf.klepto_cooldown <= 0.0 {
                     // Check if there is an unheld present nearby to steal
-                    for (pres_e, pres_tf, _) in &q_presents {
-                        if Some(pres_e) == elf.last_stashed_present {
+                    for (pres_e, pres_tf, _, _, _, held_opt) in &q_presents {
+                        if Some(pres_e) == elf.last_stashed_present
+                            || held_opt.is_some()
+                            || carried_presents.iter().any(|&(_, p)| p == pres_e)
+                            || newly_claimed_presents.contains(&pres_e)
+                        {
                             continue;
                         }
                         let dist = pres_tf.translation.distance(elf_tf.translation);
                         if dist < 1.2 {
                             // Pick up present!
                             elf.carried_present = Some(pres_e);
+                            newly_claimed_presents.push(pres_e);
                             elf.state = ElfNpcState::StashingPresent;
                             if let Some(ref graph) = nav_graph {
                                 elf.current_node = graph.closest_node(elf_tf.translation);
@@ -1733,11 +1884,18 @@ pub fn elf_assistant_ai_system(
                     }
                 }
 
-                // 3. Moose Feeder job activation from Wandering
-                if elf.assigned_job == Some(ElfJob::MooseFeeder) && elf.state == ElfNpcState::Wandering {
-                    elf.state = ElfNpcState::FetchingMooseTreat;
-                    elf.path.clear();
-                    elf.path_step = 0;
+                // 3. Job activation from Wandering
+                if elf.state == ElfNpcState::Wandering {
+                    if elf.assigned_job == Some(ElfJob::MooseFeeder) {
+                        elf.state = ElfNpcState::FetchingMooseTreat;
+                        elf.path.clear();
+                        elf.path_step = 0;
+                    } else if elf.assigned_job == Some(ElfJob::PresentWrapper) {
+                        elf.state = ElfNpcState::WrappingPresent;
+                        elf.path.clear();
+                        elf.path_step = 0;
+                        elf.state_timer = 0.0;
+                    }
                 }
 
                 // 4. Philosopher Trait Mirror Navigation & Contemplation Logic
@@ -2134,7 +2292,7 @@ pub fn elf_assistant_ai_system(
                             let drop_offset = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero() * 0.6;
                             let drop_pos = elf_tf.translation + drop_offset + Vec3::Y * 0.15;
                             if let Some(pres_e) = elf.carried_present {
-                                if let Ok((_, mut pres_tf, mut pres_vel)) = q_presents.get_mut(pres_e) {
+                                if let Ok((_, mut pres_tf, mut pres_vel, ..)) = q_presents.get_mut(pres_e) {
                                     pres_tf.translation = drop_pos;
                                     pres_vel.linear = Vec3::ZERO;
                                     pres_vel.angular = Vec3::ZERO;
@@ -2465,6 +2623,136 @@ pub fn elf_assistant_ai_system(
                             vel.linear.z = 0.0;
                         }
                     }
+                } else if elf.state == ElfNpcState::WrappingPresent {
+                    if elf.carried_present.is_some() {
+                        elf.state = ElfNpcState::DeliveringPresentToVacuum;
+                        elf.state_timer = 0.0;
+                        continue;
+                    }
+
+                    let workbench_node_idx = nav_graph
+                        .as_ref()
+                        .and_then(|g| g.find_node_by_purpose(ElfNodePurpose::Workbench))
+                        .unwrap_or(0);
+                    let sending_node_idx = nav_graph
+                        .as_ref()
+                        .and_then(|g| g.find_node_by_purpose(ElfNodePurpose::SendingPlatform))
+                        .unwrap_or(3);
+                    let sending_pos = nav_graph
+                        .as_ref()
+                        .and_then(|g| g.nodes.get(sending_node_idx))
+                        .map(|n| n.position)
+                        .unwrap_or(Vec3::new(5.5, 0.45, -4.0));
+
+                    let (arrived, workbench_pos) = step_elf_toward_node(
+                        &mut elf,
+                        &mut elf_tf,
+                        &mut vel,
+                        nav_graph.as_deref(),
+                        workbench_node_idx,
+                        1.2,
+                        dt,
+                    );
+
+                    if arrived {
+                        let scan_radius = 4.5;
+                        let mut target_unwrap: Option<(Entity, Vec3, f32)> = None;
+                        let mut target_ready: Option<(Entity, Vec3, f32)> = None;
+
+                        for (pres_e, pres_tf, _, pres, _, held_opt) in &q_presents {
+                            if held_opt.is_some()
+                                || carried_presents.iter().any(|&(owner, p)| p == pres_e && owner != _elf_entity)
+                                || newly_claimed_presents.contains(&pres_e)
+                            {
+                                continue;
+                            }
+                            let dist_wb = pres_tf.translation.distance(workbench_pos)
+                                .min(pres_tf.translation.distance(elf_tf.translation));
+                            if dist_wb <= scan_radius {
+                                if !pres.is_completed {
+                                    if target_unwrap.is_none() || dist_wb < target_unwrap.unwrap().2 {
+                                        target_unwrap = Some((pres_e, pres_tf.translation, dist_wb));
+                                    }
+                                } else if pres_tf.translation.distance(sending_pos) > 2.2 {
+                                    if target_ready.is_none() || dist_wb < target_ready.unwrap().2 {
+                                        target_ready = Some((pres_e, pres_tf.translation, dist_wb));
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some((pres_e, pres_pos, _)) = target_unwrap {
+                            face_target_flat(&mut elf_tf, pres_pos, dt);
+                            elf.state_timer += dt;
+                            if elf.state_timer >= 1.2 {
+                                if let Ok((_, _, _, mut present, spec_opt, _)) = q_presents.get_mut(pres_e) {
+                                    complete_present_wrapping(&mut present, spec_opt);
+                                }
+                                target_ready = Some((pres_e, pres_pos, 0.0));
+                            }
+                        }
+
+                        if let Some((pres_e, _, _)) = target_ready {
+                            elf.carried_present = Some(pres_e);
+                            newly_claimed_presents.push(pres_e);
+                            elf.state_timer = 0.0;
+                            elf.state = ElfNpcState::DeliveringPresentToVacuum;
+                            if let Some(ref graph) = nav_graph {
+                                if let Some(path) = graph.find_path(workbench_node_idx, sending_node_idx) {
+                                    elf.path = path;
+                                    elf.path_step = 0;
+                                    elf.target_node = sending_node_idx;
+                                }
+                            }
+                        } else if target_unwrap.is_none() {
+                            elf.state_timer = 0.0;
+                        }
+                    } else {
+                        elf.state_timer = 0.0;
+                    }
+                } else if elf.state == ElfNpcState::DeliveringPresentToVacuum {
+                    let Some(pres_e) = elf.carried_present else {
+                        elf.state = ElfNpcState::WrappingPresent;
+                        elf.state_timer = 0.0;
+                        continue;
+                    };
+
+                    let sending_node_idx = nav_graph
+                        .as_ref()
+                        .and_then(|g| g.find_node_by_purpose(ElfNodePurpose::SendingPlatform))
+                        .unwrap_or(3);
+                    let workbench_node_idx = nav_graph
+                        .as_ref()
+                        .and_then(|g| g.find_node_by_purpose(ElfNodePurpose::Workbench))
+                        .unwrap_or(0);
+
+                    let (arrived, sending_pos) = step_elf_toward_node(
+                        &mut elf,
+                        &mut elf_tf,
+                        &mut vel,
+                        nav_graph.as_deref(),
+                        sending_node_idx,
+                        1.0,
+                        dt,
+                    );
+
+                    if arrived {
+                        if let Ok((_, mut pres_tf, mut pres_vel, ..)) = q_presents.get_mut(pres_e) {
+                            pres_tf.translation = Vec3::new(sending_pos.x, 0.35, sending_pos.z);
+                            pres_vel.linear = Vec3::ZERO;
+                            pres_vel.angular = Vec3::ZERO;
+                        }
+                        elf.carried_present = None;
+                        elf.state_timer = 0.0;
+                        elf.state = ElfNpcState::WrappingPresent;
+                        if let Some(ref graph) = nav_graph {
+                            if let Some(path) = graph.find_path(sending_node_idx, workbench_node_idx) {
+                                elf.path = path;
+                                elf.path_step = 0;
+                                elf.target_node = workbench_node_idx;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2575,15 +2863,7 @@ pub fn elf_assistant_ai_system(
                 }
 
                 if !moose_breached && !moose_agitated {
-                    elf.state = if elf.assigned_job == Some(ElfJob::MooseFeeder) {
-                        if elf.carried_treat.is_some() {
-                            ElfNpcState::DeliveringMooseTreat
-                        } else {
-                            ElfNpcState::FetchingMooseTreat
-                        }
-                    } else {
-                        ElfNpcState::Wandering
-                    };
+                    elf.state = elf.resume_job_state().unwrap_or(ElfNpcState::Wandering);
                     continue;
                 }
 
@@ -2677,18 +2957,10 @@ pub fn elf_assistant_ai_system(
                     *locked_axes = LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z;
                     // Reset slacking cooldown after recovering from a slapstick knockdown!
                     elf.slacking_cooldown = 12.0;
-                    elf.state = if moose_breached || moose_agitated {
+                    elf.state = if moose_breached || moose_agitated || elf.missing_treats_panic {
                         ElfNpcState::Panicking
-                    } else if elf.missing_treats_panic {
-                        ElfNpcState::Panicking
-                    } else if elf.assigned_job == Some(ElfJob::MooseFeeder) {
-                        if elf.carried_treat.is_some() {
-                            ElfNpcState::DeliveringMooseTreat
-                        } else {
-                            ElfNpcState::FetchingMooseTreat
-                        }
                     } else {
-                        ElfNpcState::Wandering
+                        elf.resume_job_state().unwrap_or(ElfNpcState::Wandering)
                     };
                 }
             }
@@ -2708,6 +2980,49 @@ pub fn elf_assistant_ai_system(
                 r_elf.path.clear();
                 r_elf.path_step = 0;
             }
+        }
+    }
+}
+
+/// Applies standard walking (or carrying) gait animation to an elf limb transform.
+fn animate_walking_limbs(limb: &ElfRagdollLimb, limb_tf: &mut Transform, elf: &ElfAssistant) {
+    let walk_t = elf.walk_timer;
+    let gait_sin = (walk_t * 7.5).sin();
+    let carrying = elf.carried_present.is_some() || elf.carried_treat.is_some();
+
+    limb_tf.translation = limb.rest_local_translation;
+    match limb.limb_type {
+        ElfLimbType::Torso => {
+            let bounce = (walk_t * 15.0).sin().abs() * 0.03;
+            limb_tf.translation += Vec3::Y * bounce;
+            limb_tf.rotation = limb.rest_local_rotation;
+        }
+        ElfLimbType::LeftArm => {
+            limb_tf.rotation = if carrying {
+                Quat::from_rotation_x(-0.8) * Quat::from_rotation_y(0.3)
+            } else {
+                Quat::from_rotation_x(gait_sin * 0.45)
+            };
+        }
+        ElfLimbType::RightArm => {
+            limb_tf.rotation = if carrying {
+                Quat::from_rotation_x(-0.8) * Quat::from_rotation_y(-0.3)
+            } else {
+                Quat::from_rotation_x(-gait_sin * 0.45)
+            };
+        }
+        ElfLimbType::LeftLeg => {
+            limb_tf.rotation = Quat::from_rotation_x(-gait_sin * 0.50);
+        }
+        ElfLimbType::RightLeg => {
+            limb_tf.rotation = Quat::from_rotation_x(gait_sin * 0.50);
+        }
+        ElfLimbType::Head => {
+            let bob = (walk_t * 7.5).sin() * 0.05;
+            limb_tf.rotation = Quat::from_rotation_z(bob);
+        }
+        ElfLimbType::ElfHat | ElfLimbType::HatPompom => {
+            limb_tf.rotation = limb.rest_local_rotation;
         }
     }
 }
@@ -2741,53 +3056,40 @@ pub fn elf_ragdoll_limb_animation_system(
             | ElfNpcState::OpeningPantryDoor
             | ElfNpcState::TamperingWithStove
             | ElfNpcState::SeekingFlameSource
-            | ElfNpcState::ChargingStoveWithFlame => {
-                let walk_t = elf.walk_timer;
-                let gait_sin = (walk_t * 7.5).sin();
+            | ElfNpcState::ChargingStoveWithFlame
+            | ElfNpcState::DeliveringPresentToVacuum => {
+                animate_walking_limbs(limb, &mut limb_tf, elf);
+            }
 
-                match limb.limb_type {
-                    ElfLimbType::Torso => {
-                        let bounce = (walk_t * 15.0).sin().abs() * 0.03;
-                        limb_tf.translation = limb.rest_local_translation + Vec3::Y * bounce;
-                        limb_tf.rotation = limb.rest_local_rotation;
-                    }
-                    ElfLimbType::LeftArm => {
-                        if elf.carried_present.is_some() || elf.carried_treat.is_some() {
-                            // Holding present or treat in front
-                            limb_tf.translation = limb.rest_local_translation;
-                            limb_tf.rotation = Quat::from_rotation_x(-0.8) * Quat::from_rotation_y(0.3);
-                        } else {
-                            limb_tf.translation = limb.rest_local_translation;
-                            limb_tf.rotation = Quat::from_rotation_x(gait_sin * 0.45);
+            ElfNpcState::WrappingPresent => {
+                if elf.state_timer > 0.0 {
+                    let work_sin = (total_time * 10.0).sin();
+                    let work_cos = (total_time * 10.0).cos();
+                    limb_tf.translation = limb.rest_local_translation;
+                    match limb.limb_type {
+                        ElfLimbType::Torso => {
+                            limb_tf.rotation = Quat::from_rotation_x(0.14);
+                        }
+                        ElfLimbType::Head => {
+                            limb_tf.rotation = Quat::from_rotation_x(0.25 + work_sin * 0.06);
+                        }
+                        ElfLimbType::LeftArm => {
+                            limb_tf.rotation = Quat::from_rotation_x(-0.9 + work_sin * 0.35)
+                                * Quat::from_rotation_y(0.25);
+                        }
+                        ElfLimbType::RightArm => {
+                            limb_tf.rotation = Quat::from_rotation_x(-0.9 + work_cos * 0.35)
+                                * Quat::from_rotation_y(-0.25);
+                        }
+                        ElfLimbType::LeftLeg | ElfLimbType::RightLeg => {
+                            limb_tf.rotation = Quat::IDENTITY;
+                        }
+                        ElfLimbType::ElfHat | ElfLimbType::HatPompom => {
+                            limb_tf.rotation = limb.rest_local_rotation;
                         }
                     }
-                    ElfLimbType::RightArm => {
-                        if elf.carried_present.is_some() || elf.carried_treat.is_some() {
-                            // Holding present or treat in front
-                            limb_tf.translation = limb.rest_local_translation;
-                            limb_tf.rotation = Quat::from_rotation_x(-0.8) * Quat::from_rotation_y(-0.3);
-                        } else {
-                            limb_tf.translation = limb.rest_local_translation;
-                            limb_tf.rotation = Quat::from_rotation_x(-gait_sin * 0.45);
-                        }
-                    }
-                    ElfLimbType::LeftLeg => {
-                        limb_tf.translation = limb.rest_local_translation;
-                        limb_tf.rotation = Quat::from_rotation_x(-gait_sin * 0.50);
-                    }
-                    ElfLimbType::RightLeg => {
-                        limb_tf.translation = limb.rest_local_translation;
-                        limb_tf.rotation = Quat::from_rotation_x(gait_sin * 0.50);
-                    }
-                    ElfLimbType::Head => {
-                        let bob = (walk_t * 7.5).sin() * 0.05;
-                        limb_tf.translation = limb.rest_local_translation;
-                        limb_tf.rotation = Quat::from_rotation_z(bob);
-                    }
-                    ElfLimbType::ElfHat | ElfLimbType::HatPompom => {
-                        limb_tf.translation = limb.rest_local_translation;
-                        limb_tf.rotation = limb.rest_local_rotation;
-                    }
+                } else {
+                    animate_walking_limbs(limb, &mut limb_tf, elf);
                 }
             }
 

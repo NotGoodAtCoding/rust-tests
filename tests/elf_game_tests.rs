@@ -14001,3 +14001,94 @@ fn test_toy_wrapping_specification_fulfillment_and_forbidden_violations() {
     assert!(!p.meets_specification(&bear_spec), "Plasma wrap violates teddy bear forbidden specification!");
     assert!(p.specification_satisfaction(&bear_spec) < 1.0);
 }
+
+#[test]
+fn test_present_wrapper_elf_wrapping_and_vacuum_delivery() {
+    use rust_tests::elf_game::physics_sandbox::{
+        elf_assistant_ai_system, elf_ragdoll_limb_animation_system, ElfAssistant, ElfJob,
+        ElfLimbType, ElfNavGraph, ElfNpcState, ElfNodePurpose, ElfRagdollLimb,
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(200));
+    app.insert_resource(time);
+    let graph = ElfNavGraph::default_workshop_graph();
+    let workbench_pos = graph.nodes[graph.find_node_by_purpose(ElfNodePurpose::Workbench).unwrap()].position;
+    let sending_pos = graph.nodes[graph.find_node_by_purpose(ElfNodePurpose::SendingPlatform).unwrap()].position;
+    app.insert_resource(graph);
+    app.add_systems(Update, (elf_assistant_ai_system, elf_ragdoll_limb_animation_system));
+
+    let mut wrapper_elf = ElfAssistant::new(10, "WrapperElf", vec![workbench_pos]);
+    wrapper_elf.assigned_job = Some(ElfJob::PresentWrapper);
+    wrapper_elf.state = ElfNpcState::Wandering;
+
+    let elf_e = app.world_mut().spawn((
+        wrapper_elf,
+        Transform::from_translation(workbench_pos),
+        Velocity::default(),
+        ExternalImpulse::default(),
+        LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
+    )).id();
+
+    let arm_limb_e = app.world_mut().spawn((
+        ElfRagdollLimb {
+            elf_entity: elf_e,
+            elf_id: 10,
+            limb_type: ElfLimbType::RightArm,
+            rest_local_translation: Vec3::new(-0.22, 0.0, 0.0),
+            rest_local_rotation: Quat::IDENTITY,
+            current_wobble: Vec3::ZERO,
+        },
+        Transform::from_xyz(-0.22, 0.0, 0.0),
+    )).id();
+
+    let bear_spec = WrappingSpecification::for_toy(ToyType::TeddyBear);
+    let present_e = app.world_mut().spawn((
+        Present::new(ToyType::TeddyBear),
+        bear_spec.clone(),
+        Transform::from_translation(workbench_pos + Vec3::new(0.4, 0.4, -0.6)),
+        Velocity::default(),
+    )).id();
+
+    // Step 1: Wandering activates WrappingPresent
+    app.update();
+    assert_eq!(app.world().get::<ElfAssistant>(elf_e).unwrap().state, ElfNpcState::WrappingPresent);
+
+    // Step 2: Advance time across 1.2s wrap work duration
+    for _ in 0..7 {
+        app.world_mut().resource_mut::<Time<()>>().advance_by(std::time::Duration::from_millis(200));
+        app.update();
+    }
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        let present = app.world().get::<Present>(present_e).unwrap();
+        assert!(present.is_completed, "Wrapper elf must complete present wrapping at workbench");
+        assert!(present.meets_specification(&bear_spec), "Present must satisfy toy-specific WrappingSpecification");
+        assert_eq!(elf.carried_present, Some(present_e), "Elf must pick up completed present");
+        assert_eq!(elf.state, ElfNpcState::DeliveringPresentToVacuum);
+        assert_ne!(
+            app.world().get::<Transform>(arm_limb_e).unwrap().rotation,
+            Quat::IDENTITY,
+            "Limb animation must run cleanly while wrapping/carrying"
+        );
+    }
+
+    // Step 3: Move elf to SendingPlatform and verify present deposition and loop back
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(elf_e).unwrap();
+        tf.translation = sending_pos;
+    }
+    app.update();
+
+    {
+        let elf = app.world().get::<ElfAssistant>(elf_e).unwrap();
+        let pres_tf = app.world().get::<Transform>(present_e).unwrap();
+        assert_eq!(elf.carried_present, None, "Elf must release present at SendingPlatform");
+        assert_eq!(elf.state, ElfNpcState::WrappingPresent, "Elf must loop back to WrappingPresent");
+        let dist_flat = Vec2::new(pres_tf.translation.x - sending_pos.x, pres_tf.translation.z - sending_pos.z).length();
+        assert!(dist_flat < 0.25, "Present must be deposited on SendingPlatform center");
+    }
+}

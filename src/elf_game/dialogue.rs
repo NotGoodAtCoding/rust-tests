@@ -948,8 +948,8 @@ fn execute_back_action(
         if let Some(elf_e) = active_dialogue.elf_entity.take() {
             if let Ok((_, _, mut elf)) = q_elves.get_mut(elf_e) {
                 if elf.state == ElfNpcState::InDialogue {
-                    elf.state = if elf.assigned_job == Some(ElfJob::MooseFeeder) {
-                        ElfNpcState::FetchingMooseTreat
+                    elf.state = if let Some(job_state) = elf.resume_job_state() {
+                        job_state
                     } else if elf.mischief_trait == ElfMischiefTrait::Philosopher {
                         ElfNpcState::Philosophizing
                     } else {

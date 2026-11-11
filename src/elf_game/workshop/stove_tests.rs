@@ -43,6 +43,13 @@ fn test_oven_stove_models_and_gas_hose_attachment() {
     let (_, station_tf) = station_q.iter(app.world()).next().expect("Main bulk tank must exist");
     assert!((station_tf.translation.x - (-16.0)).abs() < 0.2, "Main bulk tank at X ≈ -16.0");
     assert!((station_tf.translation.z - (-26.0)).abs() < 0.2, "Main bulk tank at distance Z ≈ -26.0 in snow");
+
+    // 5. Propane refill gauge mounted beside the refill platform
+    let mut gauge_q = app.world_mut().query::<(&PropaneRefillGauge, &crate::elf_game::diegetic_ui::Gauge, &Transform)>();
+    let (_, gauge, gauge_tf) = gauge_q.iter(app.world()).next().expect("Propane refill gauge must exist");
+    assert_eq!(gauge.value, 0.0, "Refill gauge should start at 0.0 without attached tank");
+    assert!((gauge_tf.translation.x - (-15.35)).abs() < 0.2);
+    assert!((gauge_tf.translation.z - (-23.5)).abs() < 0.2);
 }
 
 #[test]
@@ -1158,4 +1165,136 @@ fn test_gas_hose_grabbing_cooldown_collision_disabled_and_max_distance_drop() {
         let dist = n_tf.translation.distance(wall_inlet);
         assert!(dist <= 2.67, "Nozzle position must be clamped to max_hose_length (2.66m), got {}", dist);
     }
+}
+
+#[test]
+fn test_propane_refill_gauge_scene_spawn_and_components() {
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_systems(Startup, spawn_oven_stove_and_propane_scene);
+    app.update();
+
+    // Verify PropaneRefillGauge entity exists
+    let mut gauge_q = app.world_mut().query::<(Entity, &PropaneRefillGauge, &crate::elf_game::diegetic_ui::Gauge, &Transform)>();
+    let (gauge_e, refill_gauge, gauge, tf) = gauge_q.iter(app.world()).next().expect("PropaneRefillGauge must be spawned");
+    assert!(refill_gauge.platform.is_some(), "Refill gauge should link to refill platform");
+    assert_eq!(gauge.value, 0.0, "Initial gauge value must be 0.0 (empty)");
+    assert_eq!(gauge.is_critical, true, "Initial gauge value 0.0 is below critical threshold");
+    assert!((tf.translation.x - (-15.35)).abs() < 0.2);
+    assert!((tf.translation.y - 1.25).abs() < 0.2);
+    assert!((tf.translation.z - (-23.5)).abs() < 0.2);
+
+    // Verify mounting post exists
+    let mut post_q = app.world_mut().query::<(&Name, &Transform, &RigidBody)>();
+    let post = post_q.iter(app.world()).find(|(name, _, _)| name.as_str() == "PropaneRefillGaugeMountingPost");
+    assert!(post.is_some(), "PropaneRefillGaugeMountingPost must exist");
+    assert_eq!(*post.unwrap().2, RigidBody::Fixed);
+
+    // Verify children (GaugeNeedle and GaugeWarningBeacon) exist
+    let mut needle_q = app.world_mut().query::<(&crate::elf_game::diegetic_ui::GaugeNeedle, &ChildOf)>();
+    let needle = needle_q.iter(app.world()).find(|(_, child_of)| child_of.parent() == gauge_e);
+    assert!(needle.is_some(), "GaugeNeedle must be a child of PropaneRefillGauge");
+
+    let mut beacon_q = app.world_mut().query::<(&crate::elf_game::diegetic_ui::GaugeWarningBeacon, &ChildOf)>();
+    let beacon = beacon_q.iter(app.world()).find(|(_, child_of)| child_of.parent() == gauge_e);
+    assert!(beacon.is_some(), "GaugeWarningBeacon must be a child of PropaneRefillGauge");
+}
+
+#[test]
+fn test_propane_refill_gauge_tracks_attached_tank_fuel_level() {
+    let mut app = App::new();
+
+    // Spawn Refill platform
+    let refill_pos = Vec3::new(-16.0, 0.15, -23.5);
+    let platform_e = app.world_mut().spawn((
+        PropaneReceptaclePlatform {
+            kind: PropanePlatformKind::MainTankRefill,
+            activation_radius: 1.4,
+            locked_tank: None,
+        },
+        AnchorPoint::new("propane_tank")
+            .with_offset(Vec3::new(0.0, 0.45, 0.0))
+            .with_radius(2.5),
+        Transform::from_translation(refill_pos),
+        GlobalTransform::from_translation(refill_pos),
+    )).id();
+
+    // Spawn Gauge pointing to platform
+    let gauge_e = app.world_mut().spawn((
+        PropaneRefillGauge { platform: Some(platform_e) },
+        crate::elf_game::diegetic_ui::Gauge::new(0.0).with_critical_threshold(0.15),
+        Transform::from_xyz(-15.35, 1.25, -23.5),
+    )).id();
+
+    app.add_systems(Update, update_propane_refill_gauge_system);
+
+    // 1. No tank attached: gauge must read 0.0
+    app.update();
+    assert_eq!(app.world().get::<crate::elf_game::diegetic_ui::Gauge>(gauge_e).unwrap().value, 0.0);
+    assert!(app.world().get::<crate::elf_game::diegetic_ui::Gauge>(gauge_e).unwrap().is_critical);
+
+    // 2. Attach tank with 45.0 / 100.0 fuel
+    let tank_e = app.world_mut().spawn((
+        PropaneTank {
+            fuel_amount: 45.0,
+            capacity: 100.0,
+            is_connected: false,
+        },
+        Transform::from_xyz(-16.0, 0.60, -23.5),
+    )).id();
+
+    app.world_mut().get_mut::<PropaneReceptaclePlatform>(platform_e).unwrap().locked_tank = Some(tank_e);
+    app.world_mut().get_mut::<AnchorPoint>(platform_e).unwrap().locked_object = Some(tank_e);
+
+    app.update();
+    assert_eq!(app.world().get::<crate::elf_game::diegetic_ui::Gauge>(gauge_e).unwrap().value, 0.45);
+    assert!(!app.world().get::<crate::elf_game::diegetic_ui::Gauge>(gauge_e).unwrap().is_critical);
+
+    // 3. Tank refilled to 100.0 (full)
+    app.world_mut().get_mut::<PropaneTank>(tank_e).unwrap().fuel_amount = 100.0;
+    app.update();
+    assert_eq!(app.world().get::<crate::elf_game::diegetic_ui::Gauge>(gauge_e).unwrap().value, 1.0);
+    assert!(!app.world().get::<crate::elf_game::diegetic_ui::Gauge>(gauge_e).unwrap().is_critical);
+
+    // 4. Detach tank: gauge must drop back to 0.0
+    app.world_mut().get_mut::<PropaneReceptaclePlatform>(platform_e).unwrap().locked_tank = None;
+    app.world_mut().get_mut::<AnchorPoint>(platform_e).unwrap().locked_object = None;
+    app.update();
+    assert_eq!(app.world().get::<crate::elf_game::diegetic_ui::Gauge>(gauge_e).unwrap().value, 0.0);
+    assert!(app.world().get::<crate::elf_game::diegetic_ui::Gauge>(gauge_e).unwrap().is_critical);
+}
+
+#[test]
+fn test_propane_refill_gauge_hud_interactive_name() {
+    let mut app = App::new();
+    app.init_resource::<crate::elf_game::ui::CurrentInteractiveTarget>();
+    app.add_systems(Update, crate::elf_game::ui::update_interactive_object_name_display_system);
+
+    let prompt_e = app.world_mut().spawn((
+        crate::elf_game::ui::InteractionPromptText,
+        crate::elf_game::ui::InteractiveObjectNameText,
+        Text::new(""),
+    )).id();
+
+    // Player camera looking at the refill gauge from 1.5m away
+    let gauge_pos = Vec3::new(-15.35, 1.25, -23.5);
+    let cam_pos = gauge_pos + Vec3::new(0.0, 0.0, 1.5);
+    app.world_mut().spawn((
+        FirstPersonCamera,
+        Transform::from_translation(cam_pos).looking_at(gauge_pos, Vec3::Y),
+        GlobalTransform::from(Transform::from_translation(cam_pos).looking_at(gauge_pos, Vec3::Y)),
+    ));
+
+    app.world_mut().spawn((
+        PropaneRefillGauge::default(),
+        crate::elf_game::diegetic_ui::Gauge::new(0.0),
+        Transform::from_translation(gauge_pos),
+        Name::new("PropaneRefillGauge"),
+    ));
+
+    app.update();
+
+    let prompt_text = app.world().get::<Text>(prompt_e).unwrap();
+    assert_eq!(prompt_text.0, "Propane Refill Gauge", "Looking at PropaneRefillGauge must display 'Propane Refill Gauge' on HUD");
 }

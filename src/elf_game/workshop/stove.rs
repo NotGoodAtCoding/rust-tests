@@ -285,17 +285,17 @@ pub fn spawn_oven_stove_and_propane_scene(
         return;
     };
 
-    let wm = match workshop_mats {
+    let wm = match workshop_mats.as_deref() {
         Some(mats) => mats.clone(),
         None => WorkshopMaterials::new(&mut materials),
     };
 
-    let iron_mat = wm.cast_iron;
-    let brass_mat = wm.polished_brass;
-    let _leather_mat = wm.walnut_leather;
-    let snow_mat = wm.snow_white;
-    let dark_mat = wm.industrial_dark;
-    let warning_mat = wm.warning_lantern;
+    let iron_mat = wm.cast_iron.clone();
+    let brass_mat = wm.polished_brass.clone();
+    let _leather_mat = wm.walnut_leather.clone();
+    let snow_mat = wm.snow_white.clone();
+    let dark_mat = wm.industrial_dark.clone();
+    let warning_mat = wm.warning_lantern.clone();
 
     // Centralized workshop materials for gas apparatus & indicators from WorkshopMaterials
     let yellow_hose_mat = wm.gas_hose.clone();
@@ -584,7 +584,7 @@ pub fn spawn_oven_stove_and_propane_scene(
 
     // Refill receptacle platform near the outside larger propane main tank
     let refill_platform_pos = Vec3::new(-16.0, 0.15, -23.5);
-    commands.spawn((
+    let refill_platform_e = commands.spawn((
         PropaneReceptaclePlatform {
             kind: PropanePlatformKind::MainTankRefill,
             activation_radius: 1.4,
@@ -600,6 +600,27 @@ pub fn spawn_oven_stove_and_propane_scene(
         Collider::cuboid(0.50, 0.075, 0.50),
         RigidBody::Fixed,
         Name::new("MainTankRefillReceptaclePlatform"),
+    )).id();
+
+    // Propane Refill Gauge: physical mechanical dial instrument mounted on a post beside the refill platform
+    let gauge_tf = Transform::from_xyz(-15.35, 1.25, -23.5);
+    crate::elf_game::diegetic_ui::spawn_propane_refill_gauge(
+        &mut commands,
+        gauge_tf,
+        Some(refill_platform_e),
+        Some(&mut meshes),
+        Some(&mut materials),
+        Some(&wm),
+    );
+
+    // Gauge mounting post
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(0.08, 1.15, 0.08))),
+        MeshMaterial3d(dark_mat.clone()),
+        Transform::from_xyz(-15.35, 0.65, -23.5),
+        RigidBody::Fixed,
+        Collider::cuboid(0.04, 0.575, 0.04),
+        Name::new("PropaneRefillGaugeMountingPost"),
     ));
 
     // -------------------------------------------------------------------------
@@ -718,6 +739,7 @@ pub fn spawn_oven_stove_and_propane_scene(
 }
 
 pub use spawn_oven_stove_and_propane_scene as spawn_stove_and_propane_scene;
+pub use crate::elf_game::diegetic_ui::{PropaneRefillGauge, spawn_propane_refill_gauge, update_propane_refill_gauge_system};
 
 /// Updates the workshop temperature based on active heating (stove burning gas) vs ambient Arctic cooling.
 /// If temperature drops to or below 0.0 C, marks `is_frozen = true` which halts present spawning.

@@ -536,3 +536,100 @@ fn test_philosopher_dialogue_tree_resolution_gets_elf_back_to_work() {
     assert_eq!(helper_after.state, ElfNpcState::Wandering, "Recruited elf must return to work");
     assert!(!helper_after.is_recruited, "Recruited status must be cleared");
 }
+
+#[test]
+fn test_dialogue_initiation_key_x_not_e() {
+    let mut app = App::new();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.init_resource::<ActiveDialogue>();
+
+    // Spawn window
+    app.world_mut().spawn((
+        Window::default(),
+        PrimaryWindow,
+        CursorOptions::default(),
+    ));
+
+    // Spawn camera looking at the elf
+    let cam_tf = Transform::from_xyz(0.0, 0.45, 0.0).looking_at(Vec3::new(0.0, 0.45, 2.0), Vec3::Y);
+    app.world_mut().spawn((
+        FirstPersonCamera,
+        cam_tf,
+        GlobalTransform::from(cam_tf),
+    ));
+
+    // Spawn elf within 2.0m ahead
+    let elf_e = app.world_mut().spawn((
+        Transform::from_xyz(0.0, 0.0, 2.0),
+        ElfAssistant::new(1, "Sparky", vec![Vec3::ZERO]),
+    )).id();
+
+    app.add_systems(Update, elf_dialogue_interaction_system);
+
+    // 1. Press E: should NOT initiate dialogue
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyE);
+    app.update();
+    assert!(!app.world().resource::<ActiveDialogue>().is_active, "KeyE must NOT initiate dialogue with elf");
+    assert_ne!(app.world().get::<ElfAssistant>(elf_e).unwrap().state, ElfNpcState::InDialogue);
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().clear();
+
+    // 2. Press Q: should NOT initiate dialogue
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyQ);
+    app.update();
+    assert!(!app.world().resource::<ActiveDialogue>().is_active, "KeyQ must NOT initiate dialogue with elf");
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().clear();
+
+    // 3. Press Left Mouse: should NOT initiate dialogue
+    app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+    app.update();
+    assert!(!app.world().resource::<ActiveDialogue>().is_active, "Left Click must NOT initiate dialogue with elf");
+    app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+
+    // 4. Press X: MUST initiate dialogue
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyX);
+    app.update();
+    assert!(app.world().resource::<ActiveDialogue>().is_active, "KeyX must initiate dialogue with elf");
+    assert_eq!(app.world().get::<ElfAssistant>(elf_e).unwrap().state, ElfNpcState::InDialogue, "Elf state must transition to InDialogue");
+}
+
+#[test]
+fn test_detect_elf_interaction_prompt_displays_x_key() {
+    let mut app = App::new();
+    app.init_resource::<ActiveDialogue>();
+
+    // Spawn camera looking at the elf
+    let cam_tf = Transform::from_xyz(0.0, 0.45, 0.0).looking_at(Vec3::new(0.0, 0.45, 2.0), Vec3::Y);
+    app.world_mut().spawn((
+        FirstPersonCamera,
+        cam_tf,
+        GlobalTransform::from(cam_tf),
+    ));
+
+    // Spawn elf
+    app.world_mut().spawn((
+        Transform::from_xyz(0.0, 0.0, 2.0),
+        ElfAssistant::new(1, "Tinsel", vec![Vec3::ZERO]),
+    ));
+
+    // Spawn reticle prompt
+    let text_child = app.world_mut().spawn((
+        Text::new(""),
+        TextFont::default(),
+        TextColor(Color::WHITE),
+    )).id();
+
+    let prompt_e = app.world_mut().spawn((
+        DialogueReticlePrompt,
+        Visibility::Hidden,
+    )).add_child(text_child).id();
+
+    app.add_systems(Update, detect_elf_interaction_prompt_system);
+    app.update();
+
+    let vis = app.world().get::<Visibility>(prompt_e).unwrap();
+    assert_eq!(*vis, Visibility::Visible, "Prompt must be visible when looking at elf");
+
+    let prompt_text = app.world().get::<Text>(text_child).unwrap();
+    assert_eq!(prompt_text.0, "[X] Talk to Tinsel", "Prompt must specify [X] to talk to elf");
+}

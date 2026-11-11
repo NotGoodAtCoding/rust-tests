@@ -536,7 +536,7 @@ pub fn spawn_dialogue_ui(mut commands: Commands) {
         BackgroundColor(Color::srgba(0.06, 0.08, 0.12, 0.85)),
         Visibility::Hidden,
         children![(
-            Text::new("[Q / E / Mouse1] Talk to Elf"),
+            Text::new("[X] Talk to Elf"),
             TextFont {
                 font_size: FontSize::Px(14.0),
                 ..default()
@@ -655,7 +655,7 @@ pub fn spawn_dialogue_ui(mut commands: Commands) {
                 ));
 
                 prompt_box.spawn((
-                    Text::new("WASD / Mouse Aim • Q/E/M1 to Select • ESC/Backspace to Go Back"),
+                    Text::new("WASD / Mouse Aim • Q/E/X/M1 to Select • ESC/Backspace to Go Back"),
                     TextFont {
                         font_size: FontSize::Px(11.0),
                         ..default()
@@ -718,7 +718,7 @@ pub fn detect_elf_interaction_prompt_system(
         *prompt_vis = Visibility::Visible;
         for child in children.iter() {
             if let Ok(mut text) = q_text.get_mut(child) {
-                text.0 = format!("[Q / E / Mouse1] Talk to {}", elf.name);
+                text.0 = format!("[X] Talk to {}", elf.name);
             }
         }
     } else {
@@ -726,7 +726,7 @@ pub fn detect_elf_interaction_prompt_system(
     }
 }
 
-/// Handles player interaction to trigger dialogue, mouse angle aiming, WASD navigation, and Q/E selection.
+/// Handles player interaction to trigger dialogue (via X), mouse angle aiming, WASD navigation, and selection.
 pub fn elf_dialogue_interaction_system(
     keyboard_input: Option<Res<ButtonInput<KeyCode>>>,
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
@@ -749,12 +749,9 @@ pub fn elf_dialogue_interaction_system(
         return;
     };
 
-    // 1. If NOT in dialogue: Check for player interaction with Q, E, or Mouse1
+    // 1. If NOT in dialogue: Check for player interaction with X to initiate dialogue
     if !active_dialogue.is_active {
-        let interact_pressed = keys.just_pressed(KeyCode::KeyE)
-            || keys.just_pressed(KeyCode::KeyQ)
-            || keys.just_pressed(KeyCode::KeyF)
-            || mouse.just_pressed(MouseButton::Left);
+        let interact_pressed = keys.just_pressed(KeyCode::KeyX);
 
         if !interact_pressed {
             return;
@@ -847,9 +844,10 @@ pub fn elf_dialogue_interaction_system(
         }
     }
 
-    // C. Selection input with Q, E, Enter, Space, or Left Mouse click
+    // C. Selection input with Q, E, X, Enter, Space, or Left Mouse click
     let select_pressed = keys.just_pressed(KeyCode::KeyQ)
         || keys.just_pressed(KeyCode::KeyE)
+        || keys.just_pressed(KeyCode::KeyX)
         || keys.just_pressed(KeyCode::Enter)
         || keys.just_pressed(KeyCode::Space)
         || mouse.just_pressed(MouseButton::Left);

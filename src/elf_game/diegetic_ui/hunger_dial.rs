@@ -418,6 +418,74 @@ pub fn update_gas_pressure_gauge_system(
     }
 }
 
+/// Marker component for the outdoor propane refill platform dial gauge.
+/// Displays the fuel level (0.0..1.0) of any propane tank locked into the refill platform's AnchorPoint.
+#[derive(Component, Debug, Clone, Default)]
+pub struct PropaneRefillGauge {
+    pub platform: Option<Entity>,
+}
+
+/// Spawns the physical mechanical Propane Refill Gauge beside the refill platform.
+pub fn spawn_propane_refill_gauge(
+    commands: &mut Commands,
+    transform: Transform,
+    refill_platform: Option<Entity>,
+    meshes: Option<&mut Assets<Mesh>>,
+    materials: Option<&mut Assets<StandardMaterial>>,
+    workshop_mats: Option<&WorkshopMaterials>,
+) -> Entity {
+    let gauge_e = spawn_gauge(
+        commands,
+        transform,
+        0.0,
+        0.15,
+        meshes,
+        materials,
+        workshop_mats,
+    );
+    commands.entity(gauge_e).insert((
+        PropaneRefillGauge { platform: refill_platform },
+        Name::new("PropaneRefillGauge"),
+    ));
+    gauge_e
+}
+
+/// Updates any PropaneRefillGauge instances with the normalized fuel level of the propane tank locked in the platform's AnchorPoint.
+/// If no tank is attached to the AnchorPoint, sets the gauge value to 0.0 (empty).
+pub fn update_propane_refill_gauge_system(
+    q_platforms: Query<(Entity, &crate::elf_game::workshop::stove::PropaneReceptaclePlatform, Option<&crate::elf_game::assets::objects::AnchorPoint>)>,
+    q_tanks: Query<&crate::elf_game::workshop::stove::PropaneTank>,
+    mut q_gauges: Query<(&PropaneRefillGauge, &mut Gauge)>,
+) {
+    for (refill_gauge, mut gauge) in &mut q_gauges {
+        let mut fill_level: f32 = 0.0;
+        let mut target_tank: Option<Entity> = None;
+
+        if let Some(target_platform_e) = refill_gauge.platform {
+            if let Ok((_, platform, anchor_opt)) = q_platforms.get(target_platform_e) {
+                target_tank = platform.locked_tank.or_else(|| anchor_opt.and_then(|a| a.locked_object));
+            }
+        } else {
+            for (_, platform, anchor_opt) in &q_platforms {
+                if platform.kind == crate::elf_game::workshop::stove::PropanePlatformKind::MainTankRefill {
+                    target_tank = platform.locked_tank.or_else(|| anchor_opt.and_then(|a| a.locked_object));
+                    break;
+                }
+            }
+        }
+
+        if let Some(tank_e) = target_tank {
+            if let Ok(tank) = q_tanks.get(tank_e) {
+                if tank.capacity > 0.0 {
+                    fill_level = (tank.fuel_amount / tank.capacity).clamp(0.0, 1.0);
+                }
+            }
+        }
+
+        gauge.set_value(fill_level);
+    }
+}
+
 /// Animates any generic Gauge object's needle and warning beacon based on its normalized value (0.0..1.0).
 pub fn animate_gauge_system(
     time: Option<Res<Time>>,

@@ -13,7 +13,7 @@ use crate::elf_game::{
     player::{BhopConfig, controller::FirstPersonCamera, hands::{ToolItem, Grabbable}},
     wrapping::{Present, WrappingTool},
     workshop::{
-        stove::{GasFurnaceStove, GasHoseCouplerNozzle, PropaneTank, PropaneReceptaclePlatform},
+        stove::{GasFurnaceStove, GasHoseCouplerNozzle, PropaneTank, PropaneReceptaclePlatform, PropaneRefillGauge},
         pantry::{PantryDoor, MooseTreatJar},
         stable_door::{StableDoorTopHalf, StableDoorBottomHalf},
         baking::BakingSheet,
@@ -259,7 +259,7 @@ pub fn spawn_ui(mut commands: Commands) {
                 font.clone()
             ),
             (
-                Text::new("[Q]: Left Hand Grab | [E]: Right Hand Grab (Two hands for tape & ribbons)"),
+                Text::new("[Q]: Left Hand Grab | [E]: Right Hand Grab | [X]: Talk to Elf"),
                 font.clone()
             ),
             (
@@ -1351,6 +1351,7 @@ pub fn clean_interactive_name(raw: &str) -> String {
         "PantryPhysicsDoor" | "PantryDoor" => "Pantry Door".to_string(),
         "StableDoorTopHalf" | "StableDoorBottomHalf" | "StableDoor" => "Stable Door".to_string(),
         "YellowHoseCouplerNozzle" | "GasHose" => "Gas Hose".to_string(),
+        "PropaneRefillGauge" | "PropaneGauge" => "Propane Refill Gauge".to_string(),
         "PropaneWallValve" | "PropaneGasValve" => "Propane Gas Valve".to_string(),
         "PropaneTank" | "HouseConnectedPropaneTank" => "Propane Tank".to_string(),
         "PantryMooseTreatJar" | "MooseSnackJar" | "MooseTreatJar" => "Moose Treat Jar".to_string(),
@@ -1387,6 +1388,7 @@ type InteractiveQueryData = (
     (
         Option<&'static PropaneReceptaclePlatform>,
         Option<&'static PropaneTank>,
+        Option<&'static PropaneRefillGauge>,
         Option<&'static BakingSheet>,
         Option<&'static MooseSnackJar>,
     ),
@@ -1434,7 +1436,7 @@ pub fn update_interactive_object_name_display_system(
         tf,
         (opt_name, opt_custom, opt_present, opt_stove),
         (opt_pantry_door, opt_top_door, opt_bottom_door, opt_nozzle),
-        (opt_platform, opt_tank, opt_baking, opt_snack_jar),
+        (opt_platform, opt_tank, opt_refill_gauge, opt_baking, opt_snack_jar),
         (opt_treat_jar, opt_hat_rack, opt_elf, opt_tool, opt_grabbable),
     ) in &q_interactive {
         // Must be an interactive object
@@ -1447,6 +1449,7 @@ pub fn update_interactive_object_name_display_system(
             || opt_nozzle.is_some()
             || opt_platform.is_some()
             || opt_tank.is_some()
+            || opt_refill_gauge.is_some()
             || opt_baking.is_some()
             || opt_snack_jar.is_some()
             || opt_treat_jar.is_some()
@@ -1488,6 +1491,8 @@ pub fn update_interactive_object_name_display_system(
             "Propane Platform".to_string()
         } else if opt_tank.is_some() {
             "Propane Tank".to_string()
+        } else if opt_refill_gauge.is_some() {
+            "Propane Refill Gauge".to_string()
         } else if opt_baking.is_some() {
             "Baking Sheet".to_string()
         } else if opt_snack_jar.is_some() || opt_treat_jar.is_some() {

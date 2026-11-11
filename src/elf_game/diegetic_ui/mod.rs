@@ -5,8 +5,9 @@ pub mod monitor;
 pub mod text_renderer;
 
 pub use hunger_dial::{
-    Gauge, GasPressureGauge, GaugeNeedle, GaugeWarningBeacon,
-    spawn_gas_pressure_gauge, spawn_gauge, update_gas_pressure_gauge_system, animate_gauge_system,
+    Gauge, GasPressureGauge, GaugeNeedle, GaugeWarningBeacon, PropaneRefillGauge,
+    spawn_gas_pressure_gauge, spawn_gauge, spawn_propane_refill_gauge,
+    update_gas_pressure_gauge_system, update_propane_refill_gauge_system, animate_gauge_system,
 };
 
 pub struct DiegeticUiPlugin;
@@ -26,6 +27,7 @@ impl Plugin for DiegeticUiPlugin {
                 monitor::update_diegetic_monitor_text,
                 monitor::animate_crt_scanlines,
                 hunger_dial::update_gas_pressure_gauge_system,
+                hunger_dial::update_propane_refill_gauge_system,
                 hunger_dial::animate_gauge_system,
             ),
         );

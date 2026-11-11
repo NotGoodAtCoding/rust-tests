@@ -82,6 +82,7 @@ pub struct ElfMovement {
     pub ground_accel: f32,
     pub air_strain_accel: f32,
     pub has_bunny_ears: bool,
+    pub moose_non_collision_timer: f32,
 }
 
 impl Default for ElfMovement {
@@ -96,6 +97,7 @@ impl Default for ElfMovement {
             ground_accel: 40.0,
             air_strain_accel: 5.0, // ~12.5% of ground accel
             has_bunny_ears: false,
+            moose_non_collision_timer: 0.0,
         }
     }
 }

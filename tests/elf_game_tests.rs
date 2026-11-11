@@ -14092,3 +14092,815 @@ fn test_present_wrapper_elf_wrapping_and_vacuum_delivery() {
         assert!(dist_flat < 0.25, "Present must be deposited on SendingPlatform center");
     }
 }
+
+#[test]
+fn test_moose_rampage_randomized_waypoints_mezzanine_and_player_targeting() {
+    use rust_tests::elf_game::{
+        moose::{toy_model::MrMoose, MooseHunger, MooseHungerStage},
+        player::ElfMovement,
+        workshop::events::{
+            moose_rampage_path_and_physics_impulse_system, MooseRampageTracker,
+            MOOSE_ALL_WAYPOINTS, MOOSE_GROUND_WAYPOINTS, MOOSE_MEZZANINE_WAYPOINTS,
+        },
+    };
+
+    // 1. Verify ground waypoints do not go through new back wall subrooms (Z >= 9.0)
+    assert_eq!(
+        MOOSE_ALL_WAYPOINTS.len(),
+        MOOSE_GROUND_WAYPOINTS.len() + MOOSE_MEZZANINE_WAYPOINTS.len()
+    );
+    for wp in MOOSE_GROUND_WAYPOINTS {
+        assert!(
+            wp.z <= 6.5,
+            "Ground waypoints must not enter back wall subrooms (Z >= 9.0), got Z = {}",
+            wp.z
+        );
+        assert_eq!(wp.y, 1.4, "Ground waypoints must be at Moose ground height Y = 1.4");
+    }
+
+    // 2. Verify mezzanine waypoints are elevated at Y = 4.4 and in mezzanine bounds (Z >= 9.0)
+    for wp in MOOSE_MEZZANINE_WAYPOINTS {
+        assert_eq!(wp.y, 4.4, "Mezzanine waypoints must be elevated at Y = 4.4");
+        assert!(wp.z >= 9.0, "Mezzanine waypoints must be on mezzanine (Z >= 9.0)");
+    }
+
+    // 3. Verify choose_rampage_waypoints chooses 5 to 7 waypoints
+    for count in 5..=7 {
+        let chosen = MooseRampageTracker::choose_rampage_waypoints(count);
+        assert_eq!(chosen.len(), count, "Must choose requested count in 5..=7");
+    }
+
+    // 4. Verify randomized tracker path generation includes 5-7 chosen waypoints
+    let randomized_tracker = MooseRampageTracker::new_randomized(-2.0);
+    assert!(
+        randomized_tracker.chosen_waypoints.len() >= 5 && randomized_tracker.chosen_waypoints.len() <= 7,
+        "Randomized tracker must choose 5 to 7 waypoints, got {}",
+        randomized_tracker.chosen_waypoints.len()
+    );
+
+    // 5. Verify Moose does NOT target player when player is on the mezzanine above (Y = 3.45m vs Moose Y = 1.4m)
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(50));
+    app.insert_resource(time);
+    app.insert_resource(MooseHunger {
+        value: 60.0,
+        stage: MooseHungerStage::BreachedRampage,
+        is_breached: true,
+        ..default()
+    });
+    app.add_systems(Update, moose_rampage_path_and_physics_impulse_system);
+
+    let moose_entity = app.world_mut().spawn((
+        MrMoose,
+        MooseRampageTracker {
+            current_waypoint_index: 1,
+            speed: 8.5,
+            base_speed: 8.5,
+            waypoints: vec![
+                Vec3::new(0.0, 1.4, -10.0),
+                Vec3::new(0.0, 1.4, 0.0),
+                Vec3::new(0.0, 1.8, -17.0),
+            ],
+            ..default()
+        },
+        Transform::from_xyz(0.0, 1.4, 0.0),
+    )).id();
+
+    // Spawn player on the mezzanine directly above Moose (X = 3.5, Y = 3.45, Z = 0.0, flat dist = 3.5m <= 5m)
+    let player_entity = app.world_mut().spawn((
+        Transform::from_xyz(3.5, 3.45, 0.0),
+        ElfMovement {
+            velocity: Vec3::ZERO,
+            base_speed: 6.0,
+            ..default()
+        },
+    )).id();
+
+    app.update();
+
+    let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+    assert!(
+        !tracker.is_targeting_player,
+        "Moose must NOT target player when player is elevated on the mezzanine above"
+    );
+
+    // If player drops down to main floor (Y = 0.45m), Moose targets player
+    {
+        let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+        p_tf.translation = Vec3::new(3.5, 0.45, 0.0);
+    }
+    app.update();
+
+    let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+    assert!(
+        tracker.is_targeting_player,
+        "Moose must target player once player is on ground floor within 5m"
+    );
+
+    // If player climbs back to mezzanine (Y = 3.45m), targeting is immediately cancelled
+    {
+        let mut p_tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+        p_tf.translation = Vec3::new(3.5, 3.45, 0.0);
+    }
+    app.update();
+
+    let tracker = app.world().get::<MooseRampageTracker>(moose_entity).unwrap();
+    assert!(
+        !tracker.is_targeting_player,
+        "Moose targeting must immediately disengage when player escapes to mezzanine"
+    );
+}
+
+#[test]
+fn test_pantry_door_no_clipping_with_wall_or_header_and_stable_hinge() {
+    use rust_tests::elf_game::workshop::{
+        room::setup_workshop_scene,
+        pantry::{PantryDoor, pantry_door_spring_system},
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.add_systems(Startup, setup_workshop_scene);
+    app.update();
+
+    // 1. Verify Door Header Lintel vs Door Leaf geometry:
+    // Header Lintel at Y = 2.7, half-height 0.3 -> bottom at Y = 2.40m
+    let mut header_q = app.world_mut().query::<(&Name, &Transform, &Collider)>();
+    let (_, header_tf, header_col) = header_q.iter(app.world())
+        .find(|(n, ..)| n.as_str() == "PantryDoorHeaderLintel")
+        .expect("PantryDoorHeaderLintel must exist");
+    let header_bottom = header_tf.translation.y - header_col.as_cuboid().unwrap().raw.half_extents.y;
+    assert_eq!(header_bottom, 2.40, "Header lintel bottom must be at Y = 2.40m");
+
+    // Door Leaf at Y = 1.18, half-height 1.15 -> top at Y = 2.33m (NO clipping into header lintel)
+    let mut door_q = app.world_mut().query::<(&Name, &Transform, &Collider, &PantryDoor)>();
+    let (_, door_tf, door_col, _) = door_q.iter(app.world())
+        .find(|(n, ..)| n.as_str() == "PantryPhysicsDoor")
+        .expect("PantryPhysicsDoor must exist");
+    let door_top = door_tf.translation.y + door_col.as_cuboid().unwrap().raw.half_extents.y;
+    assert!(
+        door_top < header_bottom,
+        "Door leaf top ({}) must be strictly below header lintel bottom ({}) to prevent clipping freakout",
+        door_top, header_bottom
+    );
+    assert!(
+        door_tf.translation.y - door_col.as_cuboid().unwrap().raw.half_extents.y > 0.0,
+        "Door leaf bottom must clear the floor"
+    );
+
+    // 2. Verify spring system maintains exact alignment without 90-degree frame flipping
+    let door_entity = app.world_mut().query_filtered::<Entity, With<PantryDoor>>().iter(app.world()).next().unwrap();
+    app.add_systems(Update, pantry_door_spring_system);
+
+    // Run 10 updates: door should remain at yaw 0.0 without oscillating or freaking out
+    for _ in 0..10 {
+        app.update();
+    }
+    let (final_tf, final_door) = (
+        *app.world().get::<Transform>(door_entity).unwrap(),
+        app.world().get::<PantryDoor>(door_entity).unwrap().clone(),
+    );
+    assert_eq!(final_door.current_angle, 0.0, "Door angle must stay at 0.0 when closed");
+    assert_eq!(final_tf.rotation, Quat::IDENTITY, "Door rotation must stay at Quat::IDENTITY when closed");
+}
+
+#[test]
+fn test_interactive_object_text_name_display() {
+    use rust_tests::elf_game::{
+        ui::{
+            InteractiveObjectNameText, InteractionPromptText, CurrentInteractiveTarget,
+            update_interactive_object_name_display_system,
+        },
+        player::controller::FirstPersonCamera,
+        wrapping::Present,
+        workshop::stove::GasFurnaceStove,
+    };
+
+    let mut app = App::new();
+    app.init_resource::<CurrentInteractiveTarget>();
+    app.add_systems(Update, update_interactive_object_name_display_system);
+
+    // Spawn HUD prompt text
+    let prompt_e = app.world_mut().spawn((
+        InteractionPromptText,
+        InteractiveObjectNameText,
+        Text::new("[Q] / [E] to grab presents & tools"),
+    )).id();
+
+    // Spawn camera at origin looking along -Z
+    let cam_e = app.world_mut().spawn((
+        FirstPersonCamera,
+        Transform::from_xyz(0.0, 1.5, 0.0).looking_at(Vec3::new(0.0, 1.5, -5.0), Vec3::Y),
+        GlobalTransform::from(Transform::from_xyz(0.0, 1.5, 0.0).looking_at(Vec3::new(0.0, 1.5, -5.0), Vec3::Y)),
+    )).id();
+
+    // Step 1: No interactive objects nearby -> default prompt
+    app.update();
+    assert_eq!(
+        app.world().get::<Text>(prompt_e).unwrap().0,
+        "[Q] / [E] to grab presents & tools"
+    );
+    assert!(app.world().resource::<CurrentInteractiveTarget>().name.is_none());
+
+    // Step 2: Spawn an Oven within 2.0m along camera view
+    let oven_e = app.world_mut().spawn((
+        GasFurnaceStove {
+            is_on: true,
+            is_lit: true,
+            heat_output: 1.5,
+            is_heated: true,
+            internal_temp: 20.0,
+        },
+        Transform::from_xyz(0.0, 1.5, -2.0),
+    )).id();
+
+    app.update();
+    assert_eq!(
+        app.world().get::<Text>(prompt_e).unwrap().0,
+        "Oven",
+        "Must display 'Oven' when near stove/oven"
+    );
+    assert_eq!(
+        app.world().resource::<CurrentInteractiveTarget>().name.as_deref(),
+        Some("Oven")
+    );
+
+    // Despawn oven
+    app.world_mut().entity_mut(oven_e).despawn();
+
+    // Step 3: Spawn a Present within 1.5m
+    let _present_e = app.world_mut().spawn((
+        Present::default(),
+        Transform::from_xyz(0.0, 1.5, -1.5),
+    )).id();
+
+    app.update();
+    assert_eq!(
+        app.world().get::<Text>(prompt_e).unwrap().0,
+        "Present",
+        "Must display 'Present' when near a present"
+    );
+    assert_eq!(
+        app.world().resource::<CurrentInteractiveTarget>().name.as_deref(),
+        Some("Present")
+    );
+
+    // Step 4: Move camera far away (> 3.5m) -> reverts to default
+    {
+        let mut cam_tf = app.world_mut().get_mut::<Transform>(cam_e).unwrap();
+        cam_tf.translation = Vec3::new(0.0, 1.5, 10.0);
+    }
+    let cam_tf = *app.world().get::<Transform>(cam_e).unwrap();
+    let mut cam_gt = app.world_mut().get_mut::<GlobalTransform>(cam_e).unwrap();
+    *cam_gt = GlobalTransform::from(cam_tf);
+    app.update();
+    assert_eq!(
+        app.world().get::<Text>(prompt_e).unwrap().0,
+        "[Q] / [E] to grab presents & tools",
+        "Must revert to default text when no interactive object is within interaction distance"
+    );
+}
+
+#[test]
+fn test_gas_hose_grabbing_cooldown_collision_disabled_and_max_distance_drop() {
+    use rust_tests::elf_game::workshop::stove::{
+        GasHose, GasHoseSegment, GasHoseCouplerNozzle, HoseAttachment,
+        gas_hose_chain_physics_system,
+    };
+    use rust_tests::elf_game::player::ElfHands;
+    use rust_tests::elf_game::player::hands::{Grabbable, HeldByPlayer};
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(16));
+    app.insert_resource(time);
+    app.add_systems(Update, gas_hose_chain_physics_system);
+
+    let stove_anchor = Vec3::new(-7.34, 0.85, -11.4);
+    let wall_inlet = Vec3::new(-9.05, 1.15, -12.85);
+
+    // Coupler nozzle with ColliderDisabled and CollisionGroups::new(Group::NONE, Group::NONE)
+    let nozzle_e = app.world_mut().spawn((
+        GasHoseSegment { index: 6, velocity: Vec3::ZERO },
+        GasHoseCouplerNozzle,
+        Grabbable,
+        ColliderDisabled,
+        CollisionGroups::new(Group::NONE, Group::NONE),
+        Transform::from_translation(stove_anchor),
+    )).id();
+
+    // Verify collision is disabled on the nozzle
+    assert!(app.world().get::<ColliderDisabled>(nozzle_e).is_some(), "Collision must be disabled on coupler nozzle end");
+
+    let hose_e = app.world_mut().spawn(GasHose {
+        attached_to: HoseAttachment::Stove,
+        wall_inlet_pos: wall_inlet,
+        stove_anchor_pos: stove_anchor,
+        loose_nozzle_pos: stove_anchor,
+        is_venting_gas: false,
+        snap_distance: 0.85,
+        nozzle_entity: Some(nozzle_e),
+        disconnected_timer: 0.0,
+        reconnect_cooldown: 0.0,
+        max_segment_length: 0.40,
+        max_hose_length: 2.66,
+        ..default()
+    }).id();
+
+    // Player grabs the nozzle off the stove
+    app.world_mut().entity_mut(nozzle_e).insert(HeldByPlayer);
+    let player_hands_e = app.world_mut().spawn(ElfHands {
+        left_grabbed: Some(nozzle_e),
+        right_grabbed: None,
+        ..default()
+    }).id();
+
+    app.update();
+
+    // 1. Verify nozzle is detached and reconnect_cooldown is activated (preventing it from immediately reconnecting)
+    {
+        let hose = app.world().get::<GasHose>(hose_e).unwrap();
+        assert_eq!(hose.attached_to, HoseAttachment::Neither, "Hose must detach when grabbed");
+        assert!(hose.reconnect_cooldown > 0.5, "Reconnect cooldown must be activated upon grab, got {}", hose.reconnect_cooldown);
+        let hands = app.world().get::<ElfHands>(player_hands_e).unwrap();
+        assert_eq!(hands.left_grabbed, Some(nozzle_e), "Player must remain holding nozzle during cooldown");
+    }
+
+    // 2. Player pulls nozzle further than max_hose_length (2.66m) -> hose pulled out of hand!
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(nozzle_e).unwrap();
+        // Distance from wall_inlet (-9.05, 1.15, -12.85) to (-5.0, 1.15, -12.85) is 4.05m (> 2.66m)
+        tf.translation = wall_inlet + Vec3::new(4.05, 0.0, 0.0);
+    }
+
+    app.update();
+
+    {
+        let hands = app.world().get::<ElfHands>(player_hands_e).unwrap();
+        assert!(hands.left_grabbed.is_none(), "Nozzle must be pulled out of player's hand when exceeding max hose length");
+        assert!(app.world().get::<HeldByPlayer>(nozzle_e).is_none(), "HeldByPlayer must be removed");
+        let n_tf = app.world().get::<Transform>(nozzle_e).unwrap();
+        let dist = n_tf.translation.distance(wall_inlet);
+        assert!(dist <= 2.67, "Nozzle position must be clamped to max_hose_length (2.66m), got {}", dist);
+    }
+}
+
+#[test]
+fn test_moose_all_parts_launch_player_and_non_collision_window() {
+    use rust_tests::elf_game::{
+        moose::{toy_model::MrMoose, MooseHunger, MooseHungerStage, MoosePart},
+        workshop::events::{
+            moose_rampage_path_and_physics_impulse_system, MooseNonCollision, MooseRampageTracker,
+        },
+        player::{
+            hands::{GROUP_HELD_ITEM, GROUP_MOOSE, GROUP_PLAYER},
+            ElfMovement,
+        },
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_secs_f32(0.016));
+    app.insert_resource(time);
+    app.insert_resource(MooseHunger {
+        value: 60.0,
+        stage: MooseHungerStage::BreachedRampage,
+        is_breached: true,
+        ..default()
+    });
+    app.add_systems(Update, moose_rampage_path_and_physics_impulse_system);
+
+    // Spawn Moose at (0.0, 1.4, -4.0)
+    let moose_tf = Transform::from_xyz(0.0, 1.4, -4.0);
+    let moose_e = app.world_mut().spawn((
+        MrMoose,
+        MoosePart,
+        MooseRampageTracker {
+            current_waypoint_index: 0,
+            speed: 8.5,
+            waypoints: vec![Vec3::new(0.0, 1.4, 10.0)],
+            ..default()
+        },
+        moose_tf,
+    )).id();
+
+    // 1. Antler part contact test:
+    // Right antler is at offset (0.85, 1.8, 1.85) from Moose origin => world (0.85, 3.2, -2.15)
+    let antler_offset = Vec3::new(0.85, 1.8, 1.85);
+    let antler_world_pos = moose_tf.transform_point(antler_offset);
+    app.world_mut().spawn((
+        MoosePart,
+        Transform::from_translation(antler_offset),
+        ChildOf(moose_e),
+    ));
+
+    let player_e = app.world_mut().spawn((
+        ElfMovement {
+            velocity: Vec3::ZERO,
+            is_grounded: true,
+            ..default()
+        },
+        Transform::from_translation(antler_world_pos),
+        CollisionGroups::new(GROUP_PLAYER, !GROUP_HELD_ITEM),
+        KinematicCharacterController {
+            filter_groups: Some(CollisionGroups::new(GROUP_PLAYER, !GROUP_HELD_ITEM)),
+            ..default()
+        },
+    )).id();
+
+    app.update();
+
+    // Verify player is launched by antler contact
+    {
+        let mov = app.world().get::<ElfMovement>(player_e).unwrap();
+        assert!(mov.velocity.y >= 10.0, "Antler must launch player upwards (>= 10.0), got {}", mov.velocity.y);
+        assert!(!mov.is_grounded, "Player must become airborne on antler contact");
+        let h_speed = Vec2::new(mov.velocity.x, mov.velocity.z).length();
+        assert!(h_speed >= 5.0, "Player must have horizontal momentum from launch");
+
+        // Verify short non-collision window is activated
+        assert!(mov.moose_non_collision_timer > 0.8, "Non-collision timer must be initialized to ~1.0s, got {}", mov.moose_non_collision_timer);
+        let nc = app.world().get::<MooseNonCollision>(player_e);
+        assert!(nc.is_some(), "MooseNonCollision component must be attached to player");
+
+        // Verify Rapier collision groups filter out GROUP_MOOSE during non-collision
+        let groups = app.world().get::<CollisionGroups>(player_e).unwrap();
+        assert_eq!(*groups, CollisionGroups::new(GROUP_PLAYER, !(GROUP_HELD_ITEM | GROUP_MOOSE)));
+        let kcc = app.world().get::<KinematicCharacterController>(player_e).unwrap();
+        assert_eq!(kcc.filter_groups, Some(CollisionGroups::new(GROUP_PLAYER, !(GROUP_HELD_ITEM | GROUP_MOOSE))));
+    }
+
+    // 2. Next frame: with non-collision active, reset velocity to zero and verify player is NOT re-launched
+    {
+        let mut mov = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+        mov.velocity = Vec3::ZERO;
+        mov.is_grounded = true;
+    }
+
+    app.update();
+
+    {
+        let mov = app.world().get::<ElfMovement>(player_e).unwrap();
+        assert_eq!(mov.velocity, Vec3::ZERO, "Player must NOT be re-launched while in non-collision window");
+        assert!(mov.is_grounded, "Player must remain grounded if non-collision ignores contact");
+        assert!(mov.moose_non_collision_timer < 1.0 && mov.moose_non_collision_timer > 0.5, "Timer must tick down");
+    }
+
+    // 3. Fast-forward past non-collision duration (1.0s) -> collision is restored
+    {
+        let mut mov = app.world_mut().get_mut::<ElfMovement>(player_e).unwrap();
+        mov.moose_non_collision_timer = 0.01;
+    }
+
+    app.update();
+
+    {
+        let mov = app.world().get::<ElfMovement>(player_e).unwrap();
+        assert_eq!(mov.moose_non_collision_timer, 0.0, "Non-collision timer must expire to 0");
+        assert!(app.world().get::<MooseNonCollision>(player_e).is_none(), "MooseNonCollision component must be removed");
+
+        // Rapier collision restored
+        let groups = app.world().get::<CollisionGroups>(player_e).unwrap();
+        assert_eq!(*groups, CollisionGroups::new(GROUP_PLAYER, !GROUP_HELD_ITEM));
+        let kcc = app.world().get::<KinematicCharacterController>(player_e).unwrap();
+        assert_eq!(kcc.filter_groups, Some(CollisionGroups::new(GROUP_PLAYER, !GROUP_HELD_ITEM)));
+    }
+}
+
+#[test]
+fn test_debug_overlay_player_xyz_and_crosshair_raycast_collision_point() {
+    use rust_tests::elf_game::{
+        ui::{
+            DebugOverlayData, DebugOverlayHud, DebugOverlayText, MenuState,
+            toggle_debug_overlay_system, update_debug_overlay_system, sync_hud_visibility,
+        },
+        player::controller::{ElfPlayer, FirstPersonCamera},
+    };
+    use bevy_rapier3d::prelude::*;
+
+    let mut app = App::new();
+    app.init_resource::<MenuState>();
+    app.init_resource::<DebugOverlayData>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.add_systems(
+        Update,
+        (
+            toggle_debug_overlay_system,
+            sync_hud_visibility,
+            update_debug_overlay_system,
+        ).chain(),
+    );
+
+    // Spawn Debug Overlay UI
+    let hud_entity = app.world_mut().spawn((
+        DebugOverlayHud,
+        Visibility::Hidden,
+    )).id();
+
+    let text_entity = app.world_mut().spawn((
+        DebugOverlayText,
+        Text::new(""),
+    )).id();
+
+    // 1. Initially disabled: HUD is hidden
+    app.update();
+    assert_eq!(*app.world().get::<Visibility>(hud_entity).unwrap(), Visibility::Hidden);
+    assert!(!app.world().resource::<DebugOverlayData>().is_active);
+
+    // 2. Press F3 to toggle debug overlay mode ON
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::F3);
+    }
+    app.update();
+
+    assert!(app.world().resource::<MenuState>().debug_overlay, "F3 must enable debug_overlay in MenuState");
+    assert_eq!(*app.world().get::<Visibility>(hud_entity).unwrap(), Visibility::Visible, "DebugOverlayHud must become Visible");
+    assert!(app.world().resource::<DebugOverlayData>().is_active, "DebugOverlayData must become active");
+
+    // Clear just_pressed and pressed
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.reset(KeyCode::F3);
+    }
+
+    // 3. Spawn player at (2.5, 1.2, -4.0) and camera at head height (2.5, 1.8, -4.0) looking along -Z
+    let player_entity = app.world_mut().spawn((
+        ElfPlayer,
+        Transform::from_xyz(2.5, 1.2, -4.0),
+    )).id();
+
+    let camera_entity = app.world_mut().spawn((
+        FirstPersonCamera,
+        Transform::from_xyz(2.5, 1.8, -4.0),
+        GlobalTransform::from(Transform::from_xyz(2.5, 1.8, -4.0)),
+    )).id();
+
+    // Spawn a solid wall collider at (2.5, 1.8, -10.0) with thickness 0.4 (front face at Z = -9.8)
+    let wall_entity = app.world_mut().spawn((
+        Transform::from_xyz(2.5, 1.8, -10.0),
+        GlobalTransform::from(Transform::from_xyz(2.5, 1.8, -10.0)),
+        Collider::cuboid(5.0, 5.0, 0.2),
+    )).id();
+
+    app.update();
+
+    // 4. Verify player position and raycast hit coordinates in DebugOverlayData and DebugOverlayText
+    {
+        let data = app.world().resource::<DebugOverlayData>();
+        assert_eq!(data.player_position, Vec3::new(2.5, 1.2, -4.0), "Player position must match player XYZ");
+        assert!(data.crosshair_raycast_hit.is_some(), "Raycast must hit the wall directly in front");
+        let hit = data.crosshair_raycast_hit.unwrap();
+        assert!((hit.x - 2.5).abs() < 0.01, "Hit X must be 2.5, got {}", hit.x);
+        assert!((hit.y - 1.8).abs() < 0.01, "Hit Y must be 1.8, got {}", hit.y);
+        assert!((hit.z - (-9.8)).abs() < 0.02, "Hit Z must hit front face (-9.8), got {}", hit.z);
+
+        let text = app.world().get::<Text>(text_entity).unwrap();
+        assert!(text.0.contains("Player Pos: X: 2.50, Y: 1.20, Z: -4.00"), "Text must display player XYZ coordinates: {}", text.0);
+        assert!(text.0.contains("Crosshair Raycast: X: 2.50, Y: 1.80, Z: -9.80"), "Text must display raycast hit XYZ coordinates: {}", text.0);
+    }
+
+    // 5. Look away into empty space (rotate camera to look upwards +Y) -> No hit
+    {
+        let up_tf = Transform::from_xyz(2.5, 1.8, -4.0).looking_to(Vec3::Y, Vec3::NEG_Z);
+        let mut cam_tf = app.world_mut().get_mut::<Transform>(camera_entity).unwrap();
+        *cam_tf = up_tf;
+        let mut cam_gt = app.world_mut().get_mut::<GlobalTransform>(camera_entity).unwrap();
+        *cam_gt = GlobalTransform::from(up_tf);
+    }
+
+    app.update();
+
+    {
+        let data = app.world().resource::<DebugOverlayData>();
+        assert_eq!(data.crosshair_raycast_hit, None, "Raycast into empty sky must return None");
+        let text = app.world().get::<Text>(text_entity).unwrap();
+        assert!(text.0.contains("Crosshair Raycast: No Hit"), "Text must display 'No Hit' when raycast misses: {}", text.0);
+    }
+
+    // 6. Press F3 again to toggle debug overlay mode OFF
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.reset(KeyCode::F3);
+        keys.press(KeyCode::F3);
+    }
+    app.update();
+
+    assert!(!app.world().resource::<MenuState>().debug_overlay, "F3 must disable debug_overlay in MenuState");
+    assert_eq!(*app.world().get::<Visibility>(hud_entity).unwrap(), Visibility::Hidden, "DebugOverlayHud must become Hidden");
+    assert!(!app.world().resource::<DebugOverlayData>().is_active, "DebugOverlayData must become inactive");
+
+    // Clean up entities
+    app.world_mut().despawn(player_entity);
+    app.world_mut().despawn(camera_entity);
+    app.world_mut().despawn(wall_entity);
+}
+
+#[test]
+fn test_modular_physics_door_limits_auto_close_and_player_interaction() {
+    use rust_tests::elf_game::{
+        assets::objects::{
+            ModularPhysicsDoor, spawn_modular_physics_door,
+            modular_door_physics_system, modular_door_interaction_system,
+        },
+        player::{
+            ElfHands,
+            controller::{ElfPlayer, FirstPersonCamera},
+        },
+        ui::MenuState,
+    };
+
+    let mut app = App::new();
+    app.init_resource::<MenuState>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.insert_resource(Time::<()>::default());
+
+    app.add_systems(
+        Update,
+        (
+            modular_door_interaction_system,
+            modular_door_physics_system,
+        ).chain(),
+    );
+
+    // 1. Spawn a ModularPhysicsDoor at origin with limits [-1.57, 1.57] and auto_close threshold 0.35
+    let door_config = ModularPhysicsDoor::new(Vec3::new(0.0, 1.0, 0.0), -1.57, 1.57)
+        .with_auto_close(true, 0.35)
+        .with_spring_damping(12.0, 4.0);
+
+    let mut commands = app.world_mut().commands();
+    let door_entity = spawn_modular_physics_door(&mut commands, door_config, 0.8, 2.0, 0.08, None, None);
+    app.world_mut().flush();
+
+    // Verify initial closed state
+    {
+        let door = app.world().get::<ModularPhysicsDoor>(door_entity).unwrap();
+        assert_eq!(door.current_angle, 0.0);
+        assert!(!door.is_grabbed);
+    }
+
+    // 2. Test angle clamping beyond max_angle
+    {
+        let mut door = app.world_mut().get_mut::<ModularPhysicsDoor>(door_entity).unwrap();
+        door.current_angle = 2.5; // Exceeds max_angle 1.57
+    }
+    app.update();
+    {
+        let door = app.world().get::<ModularPhysicsDoor>(door_entity).unwrap();
+        assert!((door.current_angle - 1.57).abs() < 0.01, "Angle must be clamped to max_angle 1.57, got {}", door.current_angle);
+    }
+
+    // 3. Test auto-close spring restoring torque: angle within threshold (0.2 rad < 0.35)
+    {
+        let mut door = app.world_mut().get_mut::<ModularPhysicsDoor>(door_entity).unwrap();
+        door.current_angle = 0.20;
+    }
+    // Advance multiple frames to allow auto-close to pull door shut
+    for _ in 0..30 {
+        app.update();
+    }
+    {
+        let door = app.world().get::<ModularPhysicsDoor>(door_entity).unwrap();
+        assert!(door.current_angle.abs() < 0.01, "Auto-close must pull door back to closed_angle 0.0, got {}", door.current_angle);
+    }
+
+    // 4. Test player grab interaction within range (< 2.5m)
+    let player_entity = app.world_mut().spawn((
+        ElfPlayer,
+        ElfHands::default(),
+        Transform::from_xyz(0.0, 1.0, 1.5),
+        GlobalTransform::from_xyz(0.0, 1.0, 1.5),
+    )).id();
+
+    let camera_entity = app.world_mut().spawn((
+        FirstPersonCamera,
+        Transform::from_xyz(0.0, 1.6, 1.5).looking_to(-Vec3::Z, Vec3::Y),
+        GlobalTransform::from(Transform::from_xyz(0.0, 1.6, 1.5).looking_to(-Vec3::Z, Vec3::Y)),
+    )).id();
+
+    // Press KeyQ to grab door
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::KeyQ);
+    }
+    app.update();
+
+    {
+        let door = app.world().get::<ModularPhysicsDoor>(door_entity).unwrap();
+        assert!(door.is_grabbed, "Door must be grabbed by player pressing KeyQ within range");
+        assert_eq!(door.grabbed_hand, Some(0));
+
+        let hands = app.world().get::<ElfHands>(player_entity).unwrap();
+        assert_eq!(hands.left_grabbed, Some(door_entity), "Left hand must hold door entity");
+    }
+
+    // 5. Move player far away (> 2.8m) -> Grab must be released automatically
+    {
+        let mut tf = app.world_mut().get_mut::<Transform>(player_entity).unwrap();
+        tf.translation = Vec3::new(0.0, 1.0, 5.0);
+        let mut gt = app.world_mut().get_mut::<GlobalTransform>(player_entity).unwrap();
+        *gt = GlobalTransform::from_xyz(0.0, 1.0, 5.0);
+
+        let mut c_tf = app.world_mut().get_mut::<Transform>(camera_entity).unwrap();
+        c_tf.translation = Vec3::new(0.0, 1.6, 5.0);
+        let mut c_gt = app.world_mut().get_mut::<GlobalTransform>(camera_entity).unwrap();
+        *c_gt = GlobalTransform::from_xyz(0.0, 1.6, 5.0);
+
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.reset(KeyCode::KeyQ);
+    }
+    app.update();
+
+    {
+        let door = app.world().get::<ModularPhysicsDoor>(door_entity).unwrap();
+        assert!(!door.is_grabbed, "Grab must be released when player moves beyond 2.8m reach");
+
+        let hands = app.world().get::<ElfHands>(player_entity).unwrap();
+        assert_eq!(hands.left_grabbed, None, "Left hand must no longer hold door");
+    }
+}
+
+#[test]
+fn test_modular_physics_rope_chain_constraints_anchors_and_tension() {
+    use rust_tests::elf_game::{
+        assets::objects::{
+            ModularPhysicsRope, ModularRopeSegment, spawn_modular_physics_rope,
+            modular_rope_physics_system,
+        },
+        ui::MenuState,
+    };
+
+    let mut app = App::new();
+    app.init_resource::<MenuState>();
+    app.insert_resource(Time::<()>::default());
+    app.add_systems(Update, modular_rope_physics_system);
+
+    // 1. Spawn a dynamic start anchor entity at (0.0, 3.0, 0.0)
+    let anchor_entity = app.world_mut().spawn((
+        Transform::from_xyz(0.0, 3.0, 0.0),
+        GlobalTransform::from_xyz(0.0, 3.0, 0.0),
+    )).id();
+
+    // 2. Spawn a ModularPhysicsRope with 6 segments, segment_length = 0.3m, attached to anchor_entity
+    let rope_config = ModularPhysicsRope::new(6, 0.3)
+        .with_anchors(Some(anchor_entity), None)
+        .with_endpoints(Vec3::new(0.0, 3.0, 0.0), Vec3::new(0.0, 3.0, 1.8))
+        .with_stiffness_damping(20.0, 4.0)
+        .with_max_chain_length(2.5);
+
+    let mut commands = app.world_mut().commands();
+    let rope_entity = spawn_modular_physics_rope(
+        &mut commands,
+        rope_config,
+        Vec3::new(0.0, 3.0, 0.0),
+        Vec3::new(0.0, 3.0, 1.8),
+        None,
+        None,
+    );
+    app.world_mut().flush();
+
+    // Verify rope initialization
+    let segment_entities = {
+        let rope = app.world().get::<ModularPhysicsRope>(rope_entity).unwrap();
+        assert_eq!(rope.segments.len(), 6, "Must spawn 6 segments");
+        rope.segments.clone()
+    };
+
+    for (i, &seg_e) in segment_entities.iter().enumerate() {
+        let seg = app.world().get::<ModularRopeSegment>(seg_e).unwrap();
+        assert_eq!(seg.rope_entity, rope_entity);
+        assert_eq!(seg.index, i);
+    }
+
+    // 3. Move anchor to (1.0, 4.0, 0.0) -> Segment 0 must be pinned and pulled towards anchor
+    {
+        let mut gt = app.world_mut().get_mut::<GlobalTransform>(anchor_entity).unwrap();
+        *gt = GlobalTransform::from_xyz(1.0, 4.0, 0.0);
+    }
+    for _ in 0..10 {
+        app.update();
+    }
+
+    {
+        let first_tf = app.world().get::<Transform>(segment_entities[0]).unwrap();
+        let dist = first_tf.translation.distance(Vec3::new(1.0, 4.0, 0.0));
+        assert!(dist < 0.1, "Segment 0 must follow moved anchor position, distance was {}", dist);
+    }
+
+    // 4. Overstretch segment 5 far away (to (10.0, 0.0, 0.0)) -> Chain tension constraint pulls it back
+    {
+        let mut last_tf = app.world_mut().get_mut::<Transform>(segment_entities[5]).unwrap();
+        last_tf.translation = Vec3::new(10.0, 4.0, 0.0);
+    }
+    app.update();
+
+    {
+        let last_tf = app.world().get::<Transform>(segment_entities[5]).unwrap();
+        assert!(last_tf.translation.x < 10.0, "Tension constraint must pull overstretched segment back, got X={}", last_tf.translation.x);
+    }
+}

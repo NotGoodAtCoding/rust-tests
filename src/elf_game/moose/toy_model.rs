@@ -16,6 +16,9 @@ pub struct MooseHead;
 #[derive(Component)]
 pub struct WindowShutters;
 
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MoosePart;
+
 #[derive(Component)]
 pub struct LeftWindowShutter;
 
@@ -217,8 +220,10 @@ pub fn spawn_mr_moose(
             MeshMaterial3d(moose_fur_primary.clone()),
             Transform::from_xyz(-2.0, 1.8, -17.0),
             Collider::cuboid(0.85, 0.68, 1.35),
+            CollisionGroups::new(crate::elf_game::player::hands::GROUP_MOOSE, Group::ALL),
             RigidBody::KinematicPositionBased,
             MrMoose,
+            MoosePart,
             MooseScarfMount::default(),
             Name::new("RealisticMrMoose"),
         ))
@@ -227,6 +232,7 @@ pub fn spawn_mr_moose(
             parent.spawn((
                 Transform::from_xyz(0.0, 0.85, 1.45),
                 MooseScarfMountPoint,
+                MoosePart,
                 Name::new("MooseScarfMountPoint"),
             ));
 
@@ -235,6 +241,7 @@ pub fn spawn_mr_moose(
                 Mesh3d(withers_hump_mesh),
                 MeshMaterial3d(moose_fur_primary.clone()),
                 Transform::from_xyz(0.0, 0.85, 0.35),
+                MoosePart,
                 Name::new("MooseWithersHump"),
             ));
 
@@ -243,6 +250,7 @@ pub fn spawn_mr_moose(
                 Mesh3d(neck_mesh),
                 MeshMaterial3d(moose_fur_primary.clone()),
                 Transform::from_xyz(0.0, 0.55, 1.35).with_rotation(Quat::from_rotation_x(0.25)),
+                MoosePart,
                 Name::new("MooseNeck"),
             ));
 
@@ -251,6 +259,7 @@ pub fn spawn_mr_moose(
                 Mesh3d(bell_mesh),
                 MeshMaterial3d(moose_fur_primary.clone()),
                 Transform::from_xyz(0.0, 0.05, 1.55).with_rotation(Quat::from_rotation_x(std::f32::consts::PI)),
+                MoosePart,
                 Name::new("MooseThroatBell"),
             ));
 
@@ -285,6 +294,7 @@ pub fn spawn_mr_moose(
                     Mesh3d(upper_leg_mesh.clone()),
                     MeshMaterial3d(moose_fur_primary.clone()),
                     Transform::from_xyz(lx, -0.55, lz),
+                    MoosePart,
                     Name::new("MooseUpperThigh"),
                 )).with_children(|thigh| {
                     // Lower leg / cannon bone
@@ -292,6 +302,7 @@ pub fn spawn_mr_moose(
                         Mesh3d(lower_leg_mesh.clone()),
                         MeshMaterial3d(moose_fur_secondary.clone()),
                         Transform::from_xyz(0.0, -0.65, 0.0),
+                        MoosePart,
                         Name::new("MooseCannonBone"),
                     )).with_children(|lower| {
                         // Cloven hoof
@@ -299,6 +310,7 @@ pub fn spawn_mr_moose(
                             Mesh3d(hoof_mesh.clone()),
                             MeshMaterial3d(moose_hoof_mat.clone()),
                             Transform::from_xyz(0.0, -0.45, 0.05),
+                            MoosePart,
                             Name::new("MooseClovenHoof"),
                         ));
                     });
@@ -310,7 +322,10 @@ pub fn spawn_mr_moose(
                 Mesh3d(cranium_mesh),
                 MeshMaterial3d(moose_fur_primary.clone()),
                 Transform::from_xyz(0.0, 1.1, 1.6),
+                Collider::cuboid(0.40, 0.35, 0.60),
+                CollisionGroups::new(crate::elf_game::player::hands::GROUP_MOOSE, Group::ALL),
                 MooseHead,
+                MoosePart,
                 Name::new("MooseHead"),
             )).with_children(|head| {
                 // Arched Roman snout / drooping upper lip
@@ -318,6 +333,7 @@ pub fn spawn_mr_moose(
                     Mesh3d(roman_snout_mesh),
                     MeshMaterial3d(moose_fur_secondary.clone()),
                     Transform::from_xyz(0.0, 0.05, 0.85),
+                    MoosePart,
                     Name::new("MooseRomanSnout"),
                 ));
 
@@ -326,6 +342,7 @@ pub fn spawn_mr_moose(
                     Mesh3d(nose_pad_mesh),
                     MeshMaterial3d(moose_snout_leather.clone()),
                     Transform::from_xyz(0.0, 0.0, 1.35),
+                    MoosePart,
                     Name::new("MooseNosePad"),
                 ));
 

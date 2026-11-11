@@ -463,16 +463,16 @@ pub fn spawn_pantry_storage_wing(
         ));
     }
 
-    // Front North Wall: West of doorway (X in [-13.0, -10.5], Z = 9.0)
+    // Front North Wall: West of doorway (X in [-13.0, -10.55], Z = 9.0)
     let mut north_wall_west = commands.spawn((
-        Transform::from_xyz(-11.75, 1.5, 9.0),
-        Collider::cuboid(1.25, 1.5, 0.15),
+        Transform::from_xyz(-11.78, 1.5, 9.0),
+        Collider::cuboid(1.22, 1.5, 0.15),
         RigidBody::Fixed,
         Name::new("PantryNorthWall"),
     ));
     if let (Some(m), Some(mat)) = (meshes.as_mut(), wall_mat.clone()) {
         north_wall_west.insert((
-            Mesh3d(m.add(Cuboid::new(2.5, 3.0, 0.3))),
+            Mesh3d(m.add(Cuboid::new(2.44, 3.0, 0.3))),
             MeshMaterial3d(mat),
         ));
     }
@@ -605,11 +605,11 @@ pub fn spawn_pantry_storage_wing(
         ));
     }
 
-    // Door Hinge Post at X = -10.5, Z = 9.0, Y = 1.35
+    // Door Hinge Post at X = -10.5, Z = 9.0, Y = 1.18
     let hinge_post = commands
         .spawn((
-            Transform::from_xyz(-10.5, 1.35, 9.0),
-            Collider::cuboid(0.04, 1.35, 0.04),
+            Transform::from_xyz(-10.5, 1.18, 9.0),
+            Collider::cuboid(0.04, 1.18, 0.04),
             RigidBody::Fixed,
             PantryDoorHingePost,
             Name::new("PantryDoorHingePost"),
@@ -617,6 +617,8 @@ pub fn spawn_pantry_storage_wing(
         .id();
 
     // Door Leaf entity: dynamic rigidbody hinged at X = -10.5, Z = 9.0
+    // Sized to cleanly fit the doorway opening (height 2.30m, half-height 1.15m at Y = 1.18)
+    // without clipping into the Door Header Lintel (Y in [2.40, 3.0]) or floor.
     let joint = RevoluteJointBuilder::new(Vec3::Y)
         .local_anchor1(Vec3::ZERO)
         .local_anchor2(Vec3::new(-0.73, 0.0, 0.0))
@@ -624,8 +626,8 @@ pub fn spawn_pantry_storage_wing(
         .contacts_enabled(false);
 
     let mut door_cmd = commands.spawn((
-        Transform::from_xyz(-9.77, 1.35, 9.0),
-        Collider::cuboid(0.73, 1.275, 0.04),
+        Transform::from_xyz(-9.77, 1.18, 9.0),
+        Collider::cuboid(0.73, 1.15, 0.04),
         RigidBody::Dynamic,
         Velocity::zero(),
         ExternalImpulse::default(),
@@ -636,7 +638,7 @@ pub fn spawn_pantry_storage_wing(
         },
         ImpulseJoint::new(hinge_post, joint),
         PantryDoor {
-            hinge_anchor_pos: Vec3::new(-10.5, 1.35, 9.0),
+            hinge_anchor_pos: Vec3::new(-10.5, 1.18, 9.0),
             hinge_forward: Vec3::new(1.0, 0.0, 0.0),
             hinge_swing_out: Vec3::new(0.0, 0.0, -1.0),
             ..default()
@@ -645,7 +647,7 @@ pub fn spawn_pantry_storage_wing(
     ));
     if let (Some(m), Some(mat)) = (meshes.as_mut(), door_wood_mat.clone()) {
         door_cmd.insert((
-            Mesh3d(m.add(Cuboid::new(1.46, 2.55, 0.08))),
+            Mesh3d(m.add(Cuboid::new(1.46, 2.30, 0.08))),
             MeshMaterial3d(mat),
         ));
     }
@@ -1021,11 +1023,9 @@ pub fn pantry_door_spring_system(
             hinge.y,
             hinge.z + r * cur_offset.z,
         );
-        let base_rot = if (forward - Vec3::Z).length_squared() < 0.01 {
-            Quat::IDENTITY
-        } else {
-            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)
-        };
+        // When closed at yaw = 0, the door is aligned flat with the wall (along X or Z)
+        // with Quat::IDENTITY, eliminating 90-degree frame flipping and jitter.
+        let base_rot = Quat::IDENTITY;
         tf.rotation = base_rot * Quat::from_rotation_y(yaw);
     }
 }

@@ -87,6 +87,14 @@ pub struct GasHose {
     pub nozzle_entity: Option<Entity>,
     /// Accumulated time in seconds that the hose has been disconnected and venting gas (maxed at 30.0s).
     pub disconnected_timer: f32,
+    /// Cooldown timer in seconds from grabbing during which the coupler nozzle cannot reconnect.
+    pub reconnect_cooldown: f32,
+    /// Maximum distance allowed per chain segment (including the end nozzle).
+    pub max_segment_length: f32,
+    /// Maximum total extension length of the gas hose from the wall inlet.
+    pub max_hose_length: f32,
+    /// Tracks whether nozzle was held in previous frame to detect initial grab.
+    pub was_held: bool,
 }
 
 impl GasHose {
@@ -118,6 +126,10 @@ impl Default for GasHose {
             snap_distance: 0.85,
             nozzle_entity: None,
             disconnected_timer: 0.0,
+            reconnect_cooldown: 0.0,
+            max_segment_length: 0.40,
+            max_hose_length: 2.66,
+            was_held: false,
         }
     }
 }
@@ -467,7 +479,9 @@ pub fn spawn_oven_stove_and_propane_scene(
             crate::elf_game::assets::objects::AnchorTrait::new("gas_hose"),
             Transform::from_translation(stove_anchor_pos),
             RigidBody::Fixed, // Starts securely docked to Stove
-            Collider::cylinder(0.08, 0.05),
+            // Collision disabled on the gas hose nozzle end to prevent clipping and getting stuck
+            ColliderDisabled,
+            CollisionGroups::new(Group::NONE, Group::NONE),
             Damping {
                 linear_damping: 1.5,
                 angular_damping: 1.5,
@@ -492,6 +506,7 @@ pub fn spawn_oven_stove_and_propane_scene(
             snap_distance: 0.85,
             nozzle_entity: Some(nozzle_e),
             disconnected_timer: 0.0,
+            ..default()
         },
         Transform::from_translation(wall_inlet_pos),
         Visibility::default(),
@@ -873,7 +888,7 @@ pub fn propane_gas_flow_system(
 /// This system updates nozzle attachment docking, player grab transitions, and synchronizes
 /// segment state with Rapier.
 pub fn gas_hose_chain_physics_system(
-    _time: Option<Res<Time>>,
+    time: Option<Res<Time>>,
     menu_state: Option<Res<crate::elf_game::ui::MenuState>>,
     game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
     mut commands: Commands,
@@ -925,31 +940,69 @@ pub fn gas_hose_chain_physics_system(
         }
     }
 
-    // 1. Coupler Nozzle Snapping and Attachment Transitions
-    if is_nozzle_held {
-        let dist_to_stove = nozzle_pos.distance(stove_anchor);
+    let dt = time.as_ref().map(|t| t.delta_secs()).unwrap_or(0.016);
+    if hose.reconnect_cooldown > 0.0 {
+        hose.reconnect_cooldown = (hose.reconnect_cooldown - dt).max(0.0);
+    }
 
-        if dist_to_stove <= snap_dist {
-            // Snap to Stove!
-            hose.attached_to = HoseAttachment::Stove;
-            hose.is_venting_gas = false;
-            nozzle_pos = stove_anchor;
-            if let Some(nozzle_e) = nozzle_entity_opt {
-                commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
-                for mut hands in &mut q_hands {
-                    if hands.left_grabbed == Some(nozzle_e) {
-                        hands.left_grabbed = None;
-                    }
-                    if hands.right_grabbed == Some(nozzle_e) {
-                        hands.right_grabbed = None;
-                    }
-                }
-            }
-        } else {
-            // Held and carried in open space -> detached to Neither
+    // 1. Coupler Nozzle Snapping, Range Limits, and Attachment Transitions
+    if is_nozzle_held {
+        if hose.attached_to == HoseAttachment::Stove {
+            // Player is grabbing/pulling the nozzle off the stove anchor!
+            // Implement a cooldown from grabbing that prevents it from immediately reconnecting.
             hose.attached_to = HoseAttachment::Neither;
+            hose.reconnect_cooldown = 1.0;
             hose.is_venting_gas = true;
             hose.loose_nozzle_pos = nozzle_pos;
+        }
+
+        let dist_from_wall = nozzle_pos.distance(wall_pos);
+
+        // "Make the Gas Hose have a max distance per chain including for the end nozzle.
+        // If the player gets further than the hose length, it should pull it out of their hand and they should drop it."
+        if dist_from_wall > hose.max_hose_length {
+            if let Some(nozzle_e) = nozzle_entity_opt {
+                commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
+            }
+            for mut hands in &mut q_hands {
+                if hands.left_grabbed == nozzle_entity_opt {
+                    hands.left_grabbed = None;
+                }
+                if hands.right_grabbed == nozzle_entity_opt {
+                    hands.right_grabbed = None;
+                }
+            }
+            // Clamp nozzle to max hose length from wall inlet
+            let dir = (nozzle_pos - wall_pos).normalize_or_zero();
+            nozzle_pos = wall_pos + dir * hose.max_hose_length;
+            hose.loose_nozzle_pos = nozzle_pos;
+            hose.attached_to = HoseAttachment::Neither;
+            hose.is_venting_gas = true;
+        } else {
+            let dist_to_stove = nozzle_pos.distance(stove_anchor);
+
+            if dist_to_stove <= snap_dist && hose.reconnect_cooldown <= 0.0 {
+                // Snap to Stove!
+                hose.attached_to = HoseAttachment::Stove;
+                hose.is_venting_gas = false;
+                nozzle_pos = stove_anchor;
+                if let Some(nozzle_e) = nozzle_entity_opt {
+                    commands.entity(nozzle_e).remove::<(crate::elf_game::player::hands::HeldByPlayer, Sensor)>();
+                    for mut hands in &mut q_hands {
+                        if hands.left_grabbed == Some(nozzle_e) {
+                            hands.left_grabbed = None;
+                        }
+                        if hands.right_grabbed == Some(nozzle_e) {
+                            hands.right_grabbed = None;
+                        }
+                    }
+                }
+            } else {
+                // Held and carried in open space -> detached to Neither
+                hose.attached_to = HoseAttachment::Neither;
+                hose.is_venting_gas = true;
+                hose.loose_nozzle_pos = nozzle_pos;
+            }
         }
     } else {
         match hose.attached_to {
@@ -993,6 +1046,13 @@ pub fn gas_hose_chain_physics_system(
                             **rb = RigidBody::Dynamic;
                         }
                     }
+                    // Max distance per chain constraint for end nozzle from preceding segment
+                    let p_prev = seg_translations[5].unwrap_or(wall_pos);
+                    let dist_to_prev = tf.translation.distance(p_prev);
+                    if dist_to_prev > hose.max_segment_length && dist_to_prev > 0.001 {
+                        let dir = (tf.translation - p_prev).normalize();
+                        tf.translation = p_prev + dir * hose.max_segment_length;
+                    }
                     hose.loose_nozzle_pos = tf.translation;
                 }
             }
@@ -1010,6 +1070,14 @@ pub fn gas_hose_chain_physics_system(
             } else {
                 wall_pos
             };
+
+            // Max distance per chain constraint
+            let dist_to_prev = tf.translation.distance(p_prev);
+            if dist_to_prev > hose.max_segment_length && dist_to_prev > 0.001 {
+                let dir = (tf.translation - p_prev).normalize();
+                tf.translation = p_prev + dir * hose.max_segment_length;
+            }
+
             let p_next = if i < 5 {
                 seg_translations[i + 1].unwrap_or(nozzle_pos)
             } else {

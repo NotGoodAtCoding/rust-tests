@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::ecs::message::{Message, MessageReader, MessageWriter};
 
 pub mod toy_model;
+pub use toy_model::{MrMoose, MooseHead, MoosePart};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MooseHungerStage {

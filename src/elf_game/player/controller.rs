@@ -391,6 +391,19 @@ pub fn elf_player_controller_system(
             }
         }
 
+        // If moose non-collision is active, filter out GROUP_MOOSE so player passes through moose
+        if movement.moose_non_collision_timer > 0.0 {
+            controller.filter_groups = Some(CollisionGroups::new(
+                crate::elf_game::player::hands::GROUP_PLAYER,
+                !(crate::elf_game::player::hands::GROUP_HELD_ITEM | crate::elf_game::player::hands::GROUP_MOOSE),
+            ));
+        } else {
+            controller.filter_groups = Some(CollisionGroups::new(
+                crate::elf_game::player::hands::GROUP_PLAYER,
+                !crate::elf_game::player::hands::GROUP_HELD_ITEM,
+            ));
+        }
+
         let displacement = movement.velocity * dt + conveyor_drift;
         controller.translation = Some(displacement);
     }

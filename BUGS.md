@@ -3,8 +3,23 @@ Bug descriptions will be added to the ACTIVE section. Fix the bug and move them 
 
 ACTIVE:
 
+Refactor: Tests should be co-located with the file containing the logic so that they can be run on update to the file itself rather than running the entire test file for every change. If the tests get too big for the file, then they can be separated out into a different file in the same directory and mod. label unit tests with `#[cfg(test)]` in a mod tests and label each test with `#[test]`. 
 
 DONE:
+
+In debug overlay mode, display the XYZ coordinates of the player's current position and the raycast collision point of the crosshair.
+
+The moose will attempt to target the player even when the player is on the mezzanine above. Change the Moose to have waypoint based navigation and a randomized path across waypoints. The moose rampage should choose 5-7 waypoints. Add waypoints to the top mezzanine, and reorganize the existing waypoints so they don't go through the new rooms in the back of the cabin
+
+Feature: Let's make small modular physics objects in assets/objects that are self-contained, well-tested, and able to be reused. e.g. Doors, Ropes, attachment points
+
+The Pantry door is glitching and freaking out, likely due to it clipping into the wall. Fix the pantry door.
+
+All parts of the Moose should launch the player, and after contact with the moose have a short time of non-collision with the player after contact.
+
+When the player is within interation distance of an interactive object, display a text name of the object. e.g. Oven, Present
+
+The Oven gas hookup is not held by the player properly, it gets stuck. Implement a cooldown from grabbing that prevents it from reconnecting. Disable collision on the gas hose nozzle end. Make the Gas Hose have a max distance per chain including for the end nozzle. If the player gets further than the hose length, it should pull it out of their hand and they should drop it.
 
 Feature: Propane tank fixes: Make the outside propane receptacles a platform with the AnchorPoint function with an activation area that locks the propane tank in a specific fixed place until the player interacts with it. The platform near the house supplies the stove. The platform near the outside larger propane main tank refills the smaller propane tanks. The Stove inside should be able to be turned off and on separately from the gas supply. While off AND connected, propane is not consumed. If disconnected, then propane is consumed since it's leaking. 
 

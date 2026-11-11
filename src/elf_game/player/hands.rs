@@ -12,6 +12,7 @@ pub const GROUP_HELD_ITEM: Group = Group::GROUP_2;
 pub const GROUP_ELF: Group = Group::GROUP_3;
 pub const GROUP_RAMP: Group = Group::GROUP_4;
 pub const GROUP_STAIRS: Group = Group::GROUP_5;
+pub const GROUP_MOOSE: Group = Group::GROUP_6;
 
 #[derive(Component)]
 pub struct Grabbable;

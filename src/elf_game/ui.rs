@@ -10,8 +10,16 @@ use bevy::{
 use bevy_rapier3d::prelude::*;
 
 use crate::elf_game::{
-    player::BhopConfig,
-    wrapping::Present,
+    player::{BhopConfig, controller::FirstPersonCamera, hands::{ToolItem, Grabbable}},
+    wrapping::{Present, WrappingTool},
+    workshop::{
+        stove::{GasFurnaceStove, GasHoseCouplerNozzle, PropaneTank, PropaneReceptaclePlatform},
+        pantry::{PantryDoor, MooseTreatJar},
+        stable_door::{StableDoorTopHalf, StableDoorBottomHalf},
+        baking::BakingSheet,
+    },
+    moose::toy_model::MooseSnackJar,
+    physics_sandbox::{HatRack, ElfAssistant},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -30,6 +38,8 @@ pub struct MenuState {
     pub show_physics_stats: bool,
     pub show_crosshair: bool,
     pub show_wireframes: bool,
+    pub debug_overlay: bool,
+    pub show_debug_overlay: bool,
     pub noclip: bool,
     pub mouse_sensitivity: f32,
 }
@@ -44,6 +54,8 @@ impl Default for MenuState {
             show_physics_stats: true,
             show_crosshair: true,
             show_wireframes: false,
+            debug_overlay: false,
+            show_debug_overlay: false,
             noclip: false,
             mouse_sensitivity: 1.0,
         }
@@ -126,8 +138,45 @@ pub struct FpsText;
 #[derive(Debug, Component)]
 pub struct PhysicsStatsText;
 
+#[derive(Debug, Component, Clone)]
+pub struct DebugOverlayHud;
+
+#[derive(Debug, Component, Clone)]
+pub struct DebugOverlayText;
+
+#[derive(Resource, Debug, Default, Clone, PartialEq)]
+pub struct DebugOverlayData {
+    pub player_position: Vec3,
+    pub crosshair_raycast_hit: Option<Vec3>,
+    pub is_active: bool,
+}
+
 #[derive(Debug, Component)]
 pub struct InteractionPromptText;
+
+/// Marker component for UI text elements that display the current interactive object name.
+#[derive(Debug, Component, Clone)]
+pub struct InteractiveObjectNameText;
+
+/// Optional custom interactive name tag on entities (overrides procedural name lookup).
+#[derive(Component, Debug, Clone)]
+pub struct InteractiveObject {
+    pub name: String,
+}
+
+impl InteractiveObject {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
+    }
+}
+
+/// Tracks the active interactive object within interaction range of the player.
+#[derive(Resource, Debug, Default, Clone)]
+pub struct CurrentInteractiveTarget {
+    pub entity: Option<Entity>,
+    pub name: Option<String>,
+    pub distance: f32,
+}
 
 #[derive(Debug, Component, Clone, Copy, PartialEq, Eq)]
 pub enum MenuButtonAction {
@@ -138,6 +187,7 @@ pub enum MenuButtonAction {
     ToggleCrosshair,
     ToggleWireframes,
     ToggleNoclip,
+    ToggleDebugOverlay,
     CycleBhopWindow,
     DecreaseSensitivity,
     IncreaseSensitivity,
@@ -217,7 +267,7 @@ pub fn spawn_ui(mut commands: Commands) {
                 font.clone()
             ),
             (
-                Text::new("[TAB]: Toggle Options & Debug Menu (Free Cursor) | [V]: Toggle Noclip"),
+                Text::new("[TAB]: Toggle Options & Debug Menu (Free Cursor) | [V]: Toggle Noclip | [F3]: Debug Overlay"),
                 TextFont {
                     font_size: FontSize::Px(14.0),
                     ..default()
@@ -252,6 +302,35 @@ pub fn spawn_ui(mut commands: Commands) {
                     ..default()
                 },
                 TextColor(Color::from(tailwind::EMERALD_300)),
+            ),
+        ],
+    ));
+
+    // 2b. Debug Overlay HUD (Player XYZ & Crosshair Raycast Target)
+    commands.spawn((
+        DebugOverlayHud,
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(68),
+            left: px(16),
+            padding: UiRect::all(px(10)),
+            flex_direction: FlexDirection::Column,
+            border: UiRect::all(px(1)),
+            border_radius: BorderRadius::all(px(6)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.04, 0.07, 0.12, 0.85)),
+        BorderColor::all(Color::from(tailwind::AMBER_600)),
+        Visibility::Hidden,
+        children![
+            (
+                DebugOverlayText,
+                Text::new("Player Pos: X: 0.00, Y: 0.00, Z: 0.00\nCrosshair Raycast: No Hit"),
+                TextFont {
+                    font_size: FontSize::Px(13.0),
+                    ..default()
+                },
+                TextColor(Color::from(tailwind::AMBER_300)),
             ),
         ],
     ));
@@ -298,6 +377,7 @@ pub fn spawn_ui(mut commands: Commands) {
         children![
             (
                 InteractionPromptText,
+                InteractiveObjectNameText,
                 Text::new("[Q] / [E] to grab presents & tools"),
                 TextFont {
                     font_size: FontSize::Px(15.0),
@@ -657,6 +737,7 @@ pub fn spawn_ui(mut commands: Commands) {
                     menu_button("BHOP Timing: 1/60s (Strict)", MenuButtonAction::CycleBhopWindow),
                     menu_button("Noclip Mode: OFF", MenuButtonAction::ToggleNoclip),
                     menu_button("Wireframe Mode: OFF", MenuButtonAction::ToggleWireframes),
+                    menu_button("Debug Overlay (XYZ / Raycast): OFF", MenuButtonAction::ToggleDebugOverlay),
                     menu_button("<- Back to Options", MenuButtonAction::SwitchSubmenu(MenuSubmenu::Main)),
                     menu_button("Resume Game", MenuButtonAction::ResumeGame),
                 ],
@@ -772,6 +853,10 @@ pub fn on_button_activate(
             }
             MenuButtonAction::ToggleCrosshair => {
                 menu_state.show_crosshair = !menu_state.show_crosshair;
+            }
+            MenuButtonAction::ToggleDebugOverlay => {
+                menu_state.debug_overlay = !menu_state.debug_overlay;
+                menu_state.show_debug_overlay = menu_state.debug_overlay;
             }
             MenuButtonAction::DecreaseSensitivity => {
                 menu_state.mouse_sensitivity = (menu_state.mouse_sensitivity - 0.1).max(MIN_SENSITIVITY);
@@ -989,6 +1074,9 @@ pub fn update_menu_button_labels(
                     MenuButtonAction::ToggleCrosshair => {
                         text.0 = format!("Crosshair & Prompts: {}", if menu_state.show_crosshair { "ON" } else { "OFF" });
                     }
+                    MenuButtonAction::ToggleDebugOverlay => {
+                        text.0 = format!("Debug Overlay (XYZ / Raycast): {}", if menu_state.debug_overlay || menu_state.show_debug_overlay { "ON" } else { "OFF" });
+                    }
                     _ => {}
                 }
             }
@@ -1059,11 +1147,12 @@ pub fn sync_hud_visibility(
     menu_state: Res<MenuState>,
     wireframe_config: Option<ResMut<bevy::pbr::wireframe::WireframeConfig>>,
     debug_render_context: Option<ResMut<DebugRenderContext>>,
-    mut menu_query: Query<&mut Visibility, (With<MenuRoot>, Without<FpsHud>, Without<ControlsHud>, Without<PhysicsHud>, Without<CrosshairHud>)>,
-    mut fps_query: Query<&mut Visibility, (With<FpsHud>, Without<MenuRoot>, Without<ControlsHud>, Without<PhysicsHud>, Without<CrosshairHud>)>,
-    mut controls_query: Query<&mut Visibility, (With<ControlsHud>, Without<MenuRoot>, Without<FpsHud>, Without<PhysicsHud>, Without<CrosshairHud>)>,
-    mut physics_query: Query<&mut Visibility, (With<PhysicsHud>, Without<MenuRoot>, Without<FpsHud>, Without<ControlsHud>, Without<CrosshairHud>)>,
-    mut crosshair_query: Query<&mut Visibility, (With<CrosshairHud>, Without<MenuRoot>, Without<FpsHud>, Without<ControlsHud>, Without<PhysicsHud>)>,
+    mut menu_query: Query<&mut Visibility, (With<MenuRoot>, Without<FpsHud>, Without<ControlsHud>, Without<PhysicsHud>, Without<CrosshairHud>, Without<DebugOverlayHud>)>,
+    mut fps_query: Query<&mut Visibility, (With<FpsHud>, Without<MenuRoot>, Without<ControlsHud>, Without<PhysicsHud>, Without<CrosshairHud>, Without<DebugOverlayHud>)>,
+    mut controls_query: Query<&mut Visibility, (With<ControlsHud>, Without<MenuRoot>, Without<FpsHud>, Without<PhysicsHud>, Without<CrosshairHud>, Without<DebugOverlayHud>)>,
+    mut physics_query: Query<&mut Visibility, (With<PhysicsHud>, Without<MenuRoot>, Without<FpsHud>, Without<ControlsHud>, Without<CrosshairHud>, Without<DebugOverlayHud>)>,
+    mut crosshair_query: Query<&mut Visibility, (With<CrosshairHud>, Without<MenuRoot>, Without<FpsHud>, Without<ControlsHud>, Without<PhysicsHud>, Without<DebugOverlayHud>)>,
+    mut debug_overlay_query: Query<&mut Visibility, (With<DebugOverlayHud>, Without<MenuRoot>, Without<FpsHud>, Without<ControlsHud>, Without<PhysicsHud>, Without<CrosshairHud>)>,
 ) {
     if !menu_state.is_changed() {
         return;
@@ -1095,6 +1184,10 @@ pub fn sync_hud_visibility(
 
     for mut vis in crosshair_query.iter_mut() {
         *vis = if menu_state.show_crosshair { Visibility::Visible } else { Visibility::Hidden };
+    }
+
+    for mut vis in debug_overlay_query.iter_mut() {
+        *vis = if menu_state.debug_overlay || menu_state.show_debug_overlay { Visibility::Visible } else { Visibility::Hidden };
     }
 }
 
@@ -1134,11 +1227,333 @@ pub fn update_hud_stats(
     }
 }
 
+/// Keybinding system toggling debug overlay mode when F3 is pressed.
+pub fn toggle_debug_overlay_system(
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    menu_state: Option<ResMut<MenuState>>,
+) {
+    let (Some(keys), Some(mut menu_state)) = (keys, menu_state) else {
+        return;
+    };
+    if keys.just_pressed(KeyCode::F3) {
+        menu_state.debug_overlay = !menu_state.debug_overlay;
+        menu_state.show_debug_overlay = menu_state.debug_overlay;
+    }
+}
+
+/// Updates the debug overlay HUD, calculating the player's XYZ coordinates
+/// and raycasting along the crosshair forward vector to find the collision point.
+pub fn update_debug_overlay_system(
+    menu_state: Option<Res<MenuState>>,
+    mut overlay_data: Option<ResMut<DebugOverlayData>>,
+    q_player: Query<
+        &Transform,
+        (
+            Or<(With<crate::elf_game::player::controller::ElfPlayer>, With<crate::elf_game::player::ElfMovement>)>,
+            Without<FirstPersonCamera>,
+        ),
+    >,
+    q_camera: Query<(&GlobalTransform, Option<&Transform>), With<FirstPersonCamera>>,
+    q_colliders: Query<
+        (Entity, &Transform, Option<&GlobalTransform>, &Collider),
+        (
+            Without<crate::elf_game::player::controller::ElfPlayer>,
+            Without<crate::elf_game::player::ElfMovement>,
+            Without<Sensor>,
+            Without<ColliderDisabled>,
+            Without<FirstPersonCamera>,
+        ),
+    >,
+    mut text_query: Query<&mut Text, With<DebugOverlayText>>,
+) {
+    let is_enabled = menu_state
+        .as_ref()
+        .map(|m| m.debug_overlay || m.show_debug_overlay)
+        .unwrap_or(false);
+
+    if let Some(ref mut data) = overlay_data {
+        data.is_active = is_enabled;
+    }
+
+    if !is_enabled && text_query.is_empty() {
+        return;
+    }
+
+    let player_pos = q_player.iter().next().map(|tf| tf.translation).unwrap_or(Vec3::ZERO);
+
+    // Compute ray origin and direction from first person camera
+    let (ray_origin, ray_dir) = if let Some((cam_gt, opt_tf)) = q_camera.iter().next() {
+        let origin = cam_gt.translation();
+        let fwd = cam_gt.forward();
+        let dir = if fwd.length_squared() > 0.001 {
+            Vec3::from(fwd).normalize()
+        } else if let Some(tf) = opt_tf {
+            Vec3::from(tf.forward()).normalize()
+        } else {
+            Vec3::NEG_Z
+        };
+        (origin, dir)
+    } else {
+        (player_pos + Vec3::new(0.0, 0.6, 0.0), Vec3::NEG_Z)
+    };
+
+    // Cast ray against colliders
+    let max_reach = 100.0;
+    let mut closest_hit: Option<(f32, Vec3)> = None;
+
+    for (_e, tf, opt_gt, collider) in &q_colliders {
+        let (pos, rot) = if let Some(gt) = opt_gt {
+            let comp = gt.compute_transform();
+            if comp.translation.length_squared() > 0.0001 || tf.translation.length_squared() < 0.0001 {
+                (gt.translation(), comp.rotation)
+            } else {
+                (tf.translation, tf.rotation)
+            }
+        } else {
+            (tf.translation, tf.rotation)
+        };
+
+        if let Some(toi) = collider.cast_ray(pos, rot, ray_origin, ray_dir, max_reach, true) {
+            if toi > 0.001 {
+                if closest_hit.as_ref().map(|(min_t, _)| toi < *min_t).unwrap_or(true) {
+                    let hit_point = ray_origin + ray_dir * toi;
+                    closest_hit = Some((toi, hit_point));
+                }
+            }
+        }
+    }
+
+    let hit_point_opt = closest_hit.map(|(_, pt)| pt);
+
+    if let Some(ref mut data) = overlay_data {
+        data.player_position = player_pos;
+        data.crosshair_raycast_hit = hit_point_opt;
+    }
+
+    for mut text in &mut text_query {
+        let hit_str = if let Some(hit) = hit_point_opt {
+            format!("X: {:.2}, Y: {:.2}, Z: {:.2}", hit.x, hit.y, hit.z)
+        } else {
+            "No Hit".to_string()
+        };
+
+        text.0 = format!(
+            "Player Pos: X: {:.2}, Y: {:.2}, Z: {:.2}\nCrosshair Raycast: {}",
+            player_pos.x, player_pos.y, player_pos.z, hit_str
+        );
+    }
+}
+
+pub fn clean_interactive_name(raw: &str) -> String {
+    match raw {
+        "WorkbenchToyPresent" | "Present" => "Present".to_string(),
+        "GasFurnaceStove" | "Stove" | "Oven" | "StoveBodyIron" => "Oven".to_string(),
+        "PantryPhysicsDoor" | "PantryDoor" => "Pantry Door".to_string(),
+        "StableDoorTopHalf" | "StableDoorBottomHalf" | "StableDoor" => "Stable Door".to_string(),
+        "YellowHoseCouplerNozzle" | "GasHose" => "Gas Hose".to_string(),
+        "PropaneWallValve" | "PropaneGasValve" => "Propane Gas Valve".to_string(),
+        "PropaneTank" | "HouseConnectedPropaneTank" => "Propane Tank".to_string(),
+        "PantryMooseTreatJar" | "MooseSnackJar" | "MooseTreatJar" => "Moose Treat Jar".to_string(),
+        "BakingSheet" | "CookieBakingSheet" => "Baking Sheet".to_string(),
+        "HatRack" => "Hat Rack".to_string(),
+        "VacuumActivationButton" | "VacuumButton" => "Vacuum Button".to_string(),
+        "AutoWrapperTool" => "Auto Wrapper".to_string(),
+        "TinselHandCannon" => "Tinsel Hand Cannon".to_string(),
+        "BunnyEarsItem" => "Bunny Ears".to_string(),
+        other => {
+            let s = other
+                .trim_start_matches("Pantry")
+                .trim_start_matches("Workshop");
+            s.to_string()
+        }
+    }
+}
+
+type InteractiveQueryData = (
+    Entity,
+    &'static Transform,
+    (
+        Option<&'static Name>,
+        Option<&'static InteractiveObject>,
+        Option<&'static Present>,
+        Option<&'static GasFurnaceStove>,
+    ),
+    (
+        Option<&'static PantryDoor>,
+        Option<&'static StableDoorTopHalf>,
+        Option<&'static StableDoorBottomHalf>,
+        Option<&'static GasHoseCouplerNozzle>,
+    ),
+    (
+        Option<&'static PropaneReceptaclePlatform>,
+        Option<&'static PropaneTank>,
+        Option<&'static BakingSheet>,
+        Option<&'static MooseSnackJar>,
+    ),
+    (
+        Option<&'static MooseTreatJar>,
+        Option<&'static HatRack>,
+        Option<&'static ElfAssistant>,
+        Option<&'static ToolItem>,
+        Option<&'static Grabbable>,
+    ),
+);
+
+/// Detects interactive objects within reach of the player and displays the object's text name on the HUD.
+pub fn update_interactive_object_name_display_system(
+    menu_state: Option<Res<MenuState>>,
+    active_dialogue: Option<Res<crate::elf_game::dialogue::ActiveDialogue>>,
+    game_state: Option<Res<State<crate::elf_game::core::GameState>>>,
+    mut target_res: Option<ResMut<CurrentInteractiveTarget>>,
+    q_camera: Query<&GlobalTransform, With<FirstPersonCamera>>,
+    q_player: Query<&Transform, With<crate::elf_game::player::controller::ElfPlayer>>,
+    mut q_prompts: Query<&mut Text, Or<(With<InteractionPromptText>, With<InteractiveObjectNameText>)>>,
+    q_interactive: Query<InteractiveQueryData>,
+) {
+    if crate::elf_game::core::is_game_paused(menu_state.as_deref(), game_state.as_deref()) {
+        return;
+    }
+    if active_dialogue.as_ref().map(|d| d.is_active).unwrap_or(false) {
+        return;
+    }
+
+    // Determine ray origin and forward direction
+    let (cam_pos, cam_fwd) = if let Ok(cam_gt) = q_camera.single() {
+        (cam_gt.translation(), cam_gt.forward().as_vec3())
+    } else if let Some(p_tf) = q_player.iter().next() {
+        (p_tf.translation + Vec3::Y * 1.5, *p_tf.forward())
+    } else {
+        return;
+    };
+
+    let max_reach: f32 = 2.8;
+    let mut best_target: Option<(Entity, String, f32)> = None;
+
+    for (
+        entity,
+        tf,
+        (opt_name, opt_custom, opt_present, opt_stove),
+        (opt_pantry_door, opt_top_door, opt_bottom_door, opt_nozzle),
+        (opt_platform, opt_tank, opt_baking, opt_snack_jar),
+        (opt_treat_jar, opt_hat_rack, opt_elf, opt_tool, opt_grabbable),
+    ) in &q_interactive {
+        // Must be an interactive object
+        let is_interactive = opt_custom.is_some()
+            || opt_present.is_some()
+            || opt_stove.is_some()
+            || opt_pantry_door.is_some()
+            || opt_top_door.is_some()
+            || opt_bottom_door.is_some()
+            || opt_nozzle.is_some()
+            || opt_platform.is_some()
+            || opt_tank.is_some()
+            || opt_baking.is_some()
+            || opt_snack_jar.is_some()
+            || opt_treat_jar.is_some()
+            || opt_hat_rack.is_some()
+            || opt_elf.is_some()
+            || opt_tool.is_some()
+            || opt_grabbable.is_some();
+
+        if !is_interactive {
+            continue;
+        }
+
+        let obj_pos = tf.translation;
+        let dist = cam_pos.distance(obj_pos);
+        if dist > max_reach {
+            continue;
+        }
+
+        let to_obj = if dist > 0.001 { (obj_pos - cam_pos) / dist } else { cam_fwd };
+        let dot = cam_fwd.dot(to_obj);
+        if dot < 0.20 && dist > 1.2 {
+            continue;
+        }
+
+        // Determine object display name
+        let name = if let Some(custom) = opt_custom {
+            custom.name.clone()
+        } else if opt_stove.is_some() {
+            "Oven".to_string()
+        } else if opt_present.is_some() {
+            "Present".to_string()
+        } else if opt_pantry_door.is_some() {
+            "Pantry Door".to_string()
+        } else if opt_top_door.is_some() || opt_bottom_door.is_some() {
+            "Stable Door".to_string()
+        } else if opt_nozzle.is_some() {
+            "Gas Hose".to_string()
+        } else if opt_platform.is_some() {
+            "Propane Platform".to_string()
+        } else if opt_tank.is_some() {
+            "Propane Tank".to_string()
+        } else if opt_baking.is_some() {
+            "Baking Sheet".to_string()
+        } else if opt_snack_jar.is_some() || opt_treat_jar.is_some() {
+            "Moose Treat Jar".to_string()
+        } else if opt_hat_rack.is_some() {
+            "Hat Rack".to_string()
+        } else if let Some(elf) = opt_elf {
+            elf.name.clone()
+        } else if let Some(tool) = opt_tool {
+            match tool.tool {
+                WrappingTool::Scissors => "Scissors".to_string(),
+                WrappingTool::WrappingPaperRoll => "Wrapping Paper Roll".to_string(),
+                WrappingTool::TapeDispenser => "Tape Dispenser".to_string(),
+                WrappingTool::RibbonSpool => "Ribbon Spool".to_string(),
+                WrappingTool::DecorativeBowBox => "Bow Box".to_string(),
+                WrappingTool::GiftTagPen => "Gift Tag Pen".to_string(),
+                WrappingTool::ForbiddenPlasmaShrink => "Plasma Shrink Wrapper".to_string(),
+                WrappingTool::AutoWrapper => "Auto Wrapper".to_string(),
+            }
+        } else if let Some(n) = opt_name {
+            clean_interactive_name(n.as_str())
+        } else {
+            "Item".to_string()
+        };
+
+        // Score prioritizing alignment and closer distance
+        let score = dot + (1.0 - (dist / max_reach));
+        let is_better = match &best_target {
+            None => true,
+            Some((_, _, best_score)) => score > *best_score,
+        };
+
+        if is_better {
+            best_target = Some((entity, name, score));
+        }
+    }
+
+    if let Some((entity, name, _)) = best_target {
+        let dist = cam_pos.distance(q_interactive.get(entity).map(|(_, tf, ..)| tf.translation).unwrap_or(cam_pos));
+        if let Some(ref mut res) = target_res {
+            res.entity = Some(entity);
+            res.name = Some(name.clone());
+            res.distance = dist;
+        }
+        for mut prompt in &mut q_prompts {
+            prompt.0 = name.clone();
+        }
+    } else {
+        if let Some(ref mut res) = target_res {
+            res.entity = None;
+            res.name = None;
+            res.distance = 0.0;
+        }
+        for mut prompt in &mut q_prompts {
+            prompt.0 = "[Q] / [E] to grab presents & tools".to_string();
+        }
+    }
+}
+
 pub struct ElfUiPlugin;
 
 impl Plugin for ElfUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MenuState>()
+            .init_resource::<CurrentInteractiveTarget>()
+            .init_resource::<DebugOverlayData>()
             .add_observer(on_button_activate)
             .add_observer(on_slider_thumb_drag)
             .add_observer(on_slider_thumb_over)
@@ -1148,6 +1563,7 @@ impl Plugin for ElfUiPlugin {
                 Update,
                 (
                     toggle_menu,
+                    toggle_debug_overlay_system,
                     sync_pause_state_system,
                     sync_submenu_visibility,
                     handle_mouse_grab,
@@ -1157,7 +1573,9 @@ impl Plugin for ElfUiPlugin {
                     sync_sensitivity_slider,
                     update_fps,
                     update_hud_stats,
+                    update_debug_overlay_system,
                 ),
-            );
+            )
+            .add_systems(Update, update_interactive_object_name_display_system);
     }
 }

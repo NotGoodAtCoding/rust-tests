@@ -64,12 +64,17 @@ pub fn spawn_stable_door(
     materials: &mut Option<ResMut<Assets<StandardMaterial>>>,
     workshop_mats: Option<&WorkshopMaterials>,
 ) {
-    let (wood_mat, iron_mat) = if let Some(wm) = workshop_mats {
-        (wm.workbench_wood.clone(), wm.cast_iron.clone())
+    let (green_painted_wood, wood_mat, iron_mat) = if let Some(wm) = workshop_mats {
+        (wm.pine_green.clone(), wm.workbench_wood.clone(), wm.cast_iron.clone())
     } else if let Some(mats) = materials.as_deref_mut() {
         (
             mats.add(StandardMaterial {
                 base_color: PINE_GREEN,
+                perceptual_roughness: 0.75,
+                ..default()
+            }),
+            mats.add(StandardMaterial {
+                base_color: WORKBENCH_WOOD,
                 perceptual_roughness: 0.75,
                 ..default()
             }),
@@ -150,7 +155,7 @@ pub fn spawn_stable_door(
             // Main solid timber plank body (Height: 1.74m)
             door.spawn((
                 Mesh3d(m.add(Cuboid::new(width, 1.74, thickness))),
-                MeshMaterial3d(wood_mat.clone()),
+                MeshMaterial3d(green_painted_wood.clone()),
                 Transform::default(),
                 Name::new("DoorBottomPlanks"),
             ));
@@ -158,7 +163,7 @@ pub fn spawn_stable_door(
             // Diagonal Z-brace crossbeam
             door.spawn((
                 Mesh3d(m.add(Cuboid::new(width * 0.95, 0.14, 0.04))),
-                MeshMaterial3d(wood_mat.clone()),
+                MeshMaterial3d(green_painted_wood.clone()),
                 Transform::from_xyz(0.0, 0.0, thickness * 0.55).with_rotation(Quat::from_rotation_z(0.45)),
                 Name::new("DoorBottomZBrace"),
             ));
@@ -211,7 +216,7 @@ pub fn spawn_stable_door(
             // Main solid timber plank body (Height: 1.74m)
             door.spawn((
                 Mesh3d(m.add(Cuboid::new(width, 1.74, thickness))),
-                MeshMaterial3d(wood_mat.clone()),
+                MeshMaterial3d(green_painted_wood.clone()),
                 Transform::default(),
                 Name::new("DoorTopPlanks"),
             ));
@@ -219,7 +224,7 @@ pub fn spawn_stable_door(
             // Diagonal Z-brace crossbeam
             door.spawn((
                 Mesh3d(m.add(Cuboid::new(width * 0.95, 0.14, 0.04))),
-                MeshMaterial3d(wood_mat.clone()),
+                MeshMaterial3d(green_painted_wood.clone()),
                 Transform::from_xyz(0.0, 0.0, thickness * 0.55).with_rotation(Quat::from_rotation_z(-0.45)),
                 Name::new("DoorTopZBrace"),
             ));
@@ -310,7 +315,7 @@ pub fn stable_door_system(
     };
 
     const DOOR_HALF_WIDTH: f32 = 0.88;
-    const MAX_OPEN_ANGLE: f32 = 2.0;
+    const MAX_OPEN_ANGLE: f32 = 2.5;
 
     // Calculate how far Mr. Moose's head is poking forward through the doorway
     let moose_snout_z = match (q_moose.iter().next(), q_head.iter().next()) {
@@ -359,7 +364,7 @@ pub fn stable_door_system(
                 1.0
             };
 
-            top.target_angle = 1.57 * open_factor;
+            top.target_angle = 1.77 * open_factor;
             let speed = (1.0 - (-12.0 * dt).exp()).clamp(0.0, 1.0);
             top.current_angle += (top.target_angle - top.current_angle) * speed;
         } else if is_closed {

@@ -147,7 +147,7 @@ impl Default for VacuumTractorBeamCone {
             opening_center: Vec3::new(5.5, 4.0, -4.0),
             platform_radius: 1.45,
             opening_radius: 1.45,
-            gravity_draw_strength: 4.0,
+            gravity_draw_strength: 20.0,
             is_active: false,
         }
     }
@@ -160,7 +160,7 @@ impl VacuumTractorBeamCone {
             opening_center,
             platform_radius,
             opening_radius,
-            gravity_draw_strength: 4.0,
+            gravity_draw_strength: 20.0,
             is_active: false,
         }
     }
@@ -191,7 +191,7 @@ impl VacuumTractorBeamCone {
         }
         let dir = to_opening / dist;
         // Suction acceleration proportional to the distance between physics object and despawner
-        let suction_strength = self.gravity_draw_strength * dist;
+        let suction_strength = (self.gravity_draw_strength / dist).max(70.);
         // Directional suction towards vacuum opening + counter-gravity lift
         dir * suction_strength + Vec3::Y * 9.81
     }
@@ -1004,7 +1004,7 @@ pub fn setup_workshop_scene(
         materials.add(StandardMaterial {
             base_color: TRACTOR_BEAM_GLOW,
             alpha_mode: AlphaMode::Blend,
-            emissive: LinearRgba::new(0.08, 0.35, 0.55, 0.4),
+            emissive: LinearRgba::new(0.08, 0.35, 0.55, 0.2),
             perceptual_roughness: 0.1,
             ..default()
         })
@@ -1843,8 +1843,8 @@ pub fn present_sending_platform_system(
                 commands.spawn((
                     TubeTravellingLump {
                         progress: 0.0,
-                        speed: 1.25,
-                        mass: 2.0,
+                        speed: 0.65,
+                        mass: 5.0,
                         size: 0.6,
                     },
                     Name::new("VacuumTubeLump"),

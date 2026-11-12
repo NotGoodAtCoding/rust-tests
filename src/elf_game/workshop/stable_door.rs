@@ -69,7 +69,7 @@ pub fn spawn_stable_door(
     } else if let Some(mats) = materials.as_deref_mut() {
         (
             mats.add(StandardMaterial {
-                base_color: CABIN_LOG,
+                base_color: PINE_GREEN,
                 perceptual_roughness: 0.75,
                 ..default()
             }),
@@ -250,6 +250,16 @@ pub fn spawn_stable_door(
     let _ = bottom_half_e;
 }
 
+/// Applies hinge pivot transform around `hinge_pos` so positive `open_angle`
+/// swings the `+X` door leaf inward (`+Z`, into the workshop).
+fn apply_hinge_transform(tf: &mut Transform, hinge: Vec3, open_angle: f32, half_width: f32) {
+    let yaw = if open_angle == 0.0 { 0.0 } else { -open_angle };
+    let rot = Quat::from_rotation_y(yaw);
+    let offset = rot * Vec3::new(half_width, 0.0, 0.0);
+    tf.translation = hinge + offset;
+    tf.rotation = rot;
+}
+
 /// Controls the opening and physics movement of the Stable Door top and bottom halves.
 /// - During peeking / hunger agitation: Only the top half opens as Mr. Moose pokes his head in!
 /// - When Mr. Moose snaps back or retreats: The top half slams shut with high velocity and impact.
@@ -376,11 +386,7 @@ pub fn stable_door_system(
         }
 
         // Apply rotation around hinge pivot H
-        let hinge = top.hinge_pos;
-        let rot = Quat::from_rotation_y(top.current_angle);
-        let offset = rot * Vec3::new(DOOR_HALF_WIDTH, 0.0, 0.0);
-        tf.translation = hinge + offset;
-        tf.rotation = rot;
+        apply_hinge_transform(&mut tf, top.hinge_pos, top.current_angle, DOOR_HALF_WIDTH);
     }
 
     // 2. Process Bottom Half
@@ -416,11 +422,7 @@ pub fn stable_door_system(
         }
 
         // Apply rotation around hinge pivot H
-        let hinge = bottom.hinge_pos;
-        let rot = Quat::from_rotation_y(bottom.current_angle);
-        let offset = rot * Vec3::new(DOOR_HALF_WIDTH, 0.0, 0.0);
-        tf.translation = hinge + offset;
-        tf.rotation = rot;
+        apply_hinge_transform(&mut tf, bottom.hinge_pos, bottom.current_angle, DOOR_HALF_WIDTH);
     }
 }
 
@@ -734,5 +736,94 @@ mod tests {
             }
         }
         assert!(found_top && found_bottom, "Both door sections must be present and scaled");
+    }
+
+    #[test]
+    fn test_stable_door_swings_inward_into_workshop() {
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        app.insert_resource(MooseHunger {
+            value: 45.0,
+            max_value: 60.0,
+            stage: MooseHungerStage::PeekingThrough,
+            ..default()
+        });
+        app.add_systems(Update, stable_door_system);
+
+        let top_hinge = Vec3::new(-2.9, 2.61, -13.0);
+        let bottom_hinge = Vec3::new(-2.9, 0.87, -13.0);
+
+        let top_door_e = app.world_mut().spawn((
+            StableDoorTopHalf {
+                hinge_pos: top_hinge,
+                ..default()
+            },
+            Transform::from_xyz(-2.02, 2.61, -13.0),
+        )).id();
+
+        let bottom_door_e = app.world_mut().spawn((
+            StableDoorBottomHalf {
+                hinge_pos: bottom_hinge,
+                ..default()
+            },
+            Transform::from_xyz(-2.02, 0.87, -13.0),
+        )).id();
+
+        // 1. Peeking stage: top half swings inward (+Z, into workshop), not outward (-Z, toward Moose)
+        for _ in 0..15 {
+            app.update();
+        }
+
+        let top_tf = *app.world().get::<Transform>(top_door_e).unwrap();
+        let top_hinge_edge = top_tf.transform_point(Vec3::new(-0.88, 0.0, 0.0));
+        let top_latch_edge = top_tf.transform_point(Vec3::new(0.88, 0.0, 0.0));
+        assert!(
+            top_hinge_edge.distance(top_hinge) < 0.01,
+            "Top door hinge edge must stay pinned at hinge_pos {:?}, got {:?}",
+            top_hinge,
+            top_hinge_edge
+        );
+        assert!(
+            top_tf.translation.z > -13.0 && top_latch_edge.z > -12.0,
+            "Top door must swing inward into +Z workshop interior when moose peeks, got center z={}, tip z={}",
+            top_tf.translation.z,
+            top_latch_edge.z
+        );
+
+        let bottom_tf = *app.world().get::<Transform>(bottom_door_e).unwrap();
+        assert!(
+            (bottom_tf.translation.z - (-13.0)).abs() < 0.01,
+            "Bottom door must stay closed at z = -13.0 during peeking, got {}",
+            bottom_tf.translation.z
+        );
+
+        // 2. Rampage breach: both halves swing inward (+Z, into workshop)
+        {
+            let mut h = app.world_mut().resource_mut::<MooseHunger>();
+            h.is_breached = true;
+            h.stage = MooseHungerStage::BreachedRampage;
+        }
+        for _ in 0..5 {
+            app.update();
+        }
+
+        let top_rampage_tf = *app.world().get::<Transform>(top_door_e).unwrap();
+        let bottom_rampage_tf = *app.world().get::<Transform>(bottom_door_e).unwrap();
+        let top_tip = top_rampage_tf.transform_point(Vec3::new(0.88, 0.0, 0.0));
+        let bottom_tip = bottom_rampage_tf.transform_point(Vec3::new(0.88, 0.0, 0.0));
+        let bottom_hinge_edge = bottom_rampage_tf.transform_point(Vec3::new(-0.88, 0.0, 0.0));
+
+        assert!(
+            bottom_hinge_edge.distance(bottom_hinge) < 0.01,
+            "Bottom door hinge edge must stay pinned at hinge_pos {:?}, got {:?}",
+            bottom_hinge,
+            bottom_hinge_edge
+        );
+        assert!(
+            top_tip.z > -12.0 && bottom_tip.z > -12.0,
+            "Both stable door halves must swing inward (+Z) during rampage breach, got top tip z={}, bottom tip z={}",
+            top_tip.z,
+            bottom_tip.z
+        );
     }
 }

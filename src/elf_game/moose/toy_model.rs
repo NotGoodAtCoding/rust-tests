@@ -196,7 +196,7 @@ pub fn spawn_mr_moose(
     let lower_leg_mesh = meshes.add(Cylinder::new(0.12, 0.8));
     let hoof_mesh = meshes.add(Cuboid::new(0.20, 0.14, 0.26));
 
-    let cranium_mesh = meshes.add(Cuboid::new(0.68, 0.62, 0.75));
+    let cranium_mesh = meshes.add(Cuboid::new(0.68, 0.67, 0.75));
     let roman_snout_mesh = meshes.add(Cuboid::new(0.52, 0.52, 0.95));
     let nose_pad_mesh = meshes.add(Cuboid::new(0.48, 0.38, 0.20));
     let nostril_mesh = meshes.add(Cylinder::new(0.035, 0.06));
@@ -321,7 +321,7 @@ pub fn spawn_mr_moose(
             parent.spawn((
                 Mesh3d(cranium_mesh),
                 MeshMaterial3d(moose_fur_primary.clone()),
-                Transform::from_xyz(0.0, 1.1, 1.6),
+                Transform::from_xyz(0.0, 1.05, 1.6),
                 Collider::cuboid(0.40, 0.35, 0.60),
                 CollisionGroups::new(crate::elf_game::player::hands::GROUP_MOOSE, Group::ALL),
                 MooseHead,
@@ -332,7 +332,7 @@ pub fn spawn_mr_moose(
                 head.spawn((
                     Mesh3d(roman_snout_mesh),
                     MeshMaterial3d(moose_fur_secondary.clone()),
-                    Transform::from_xyz(0.0, 0.05, 0.85),
+                    Transform::from_xyz(0.0, 0.02, 0.85),
                     MoosePart,
                     Name::new("MooseRomanSnout"),
                 ));
@@ -359,7 +359,7 @@ pub fn spawn_mr_moose(
                 //  Eyebrow ridges
                 for (ex, sign) in [(-0.35, -1.0), (0.35, 1.0)] {
                     head.spawn((
-                        Mesh3d(meshes.add(Cuboid::new(0.10, 0.05, 0.18))),
+                        Mesh3d(meshes.add(Cuboid::new(0.25, 0.05, 0.35))),
                         MeshMaterial3d(moose_fur_primary.clone()),
                         Transform::from_xyz(ex, 0.32, 0.45),
                         Name::new("MooseEyebrowRidge"),
@@ -370,7 +370,7 @@ pub fn spawn_mr_moose(
                     head.spawn((
                         Mesh3d(ear_mesh.clone()),
                         MeshMaterial3d(moose_fur_secondary.clone()),
-                        Transform::from_xyz(sign * 0.42, 0.50, -0.05).with_rotation(ear_rot),
+                        Transform::from_xyz(sign * 0.42, 0.15, -0.05).with_rotation(ear_rot),
                         Name::new("MooseEar"),
                     ));
                 }
@@ -548,7 +548,7 @@ pub fn spawn_mr_moose(
     commands.spawn((
         Mesh3d(meshes.add(Cylinder::new(0.06, 0.12))),
         MeshMaterial3d(mug_ceramic_mat),
-        Transform::from_xyz(-6.0, 2.10, -12.85),
+        Transform::from_xyz(-2.0, 2.10, -4.85),
         Collider::cylinder(0.06, 0.06),
         RigidBody::Dynamic,
         Velocity::default(),
@@ -653,7 +653,7 @@ pub fn spawn_mr_moose(
         .with_children(|plate| {
             // Raised outer rim mesh (festive gold / brass torus border)
             plate.spawn((
-                Mesh3d(meshes.add(Torus::new(0.03, 0.36))),
+                Mesh3d(meshes.add(Torus::new(0.33, 0.36))),
                 MeshMaterial3d(plate_rim_mat),
                 Transform::from_xyz(0.0, 0.02, 0.0),
                 Name::new("PlateRimMesh"),
@@ -751,7 +751,7 @@ pub fn spawn_mr_moose(
     }
 }
 
-const MAX_PEEK_SHUTTER_ANGLE: f32 = 1.35; // ~77 degrees inward
+const MAX_PEEK_SHUTTER_ANGLE: f32 = 1.55; // ~93 degrees inward
 const BREACHED_SHUTTER_ANGLE: f32 = 1.95; // ~112 degrees wide open
 
 /// Animates Mr. Moose's position, head posture, and hinged shutters with fast, snappy transitions between states.

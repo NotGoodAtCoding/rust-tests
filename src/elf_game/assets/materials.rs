@@ -552,8 +552,8 @@ mod tests {
         assert_eq!(UNWRAPPED_TOY_BLUE, Color::srgb(0.20, 0.50, 0.80));
 
         // 2. Verify palette.ron exists on disk and contains valid content
-        let ron_path = std::path::Path::new("assets/palette.ron");
-        assert!(ron_path.exists(), "assets/palette.ron must exist in repository root");
+        let ron_path = std::path::Path::new("src/elf_game/assets/palette.ron");
+        assert!(ron_path.exists(), "src/elf_game/assets/palette.ron must exist");
         let ron_contents = std::fs::read_to_string(ron_path).expect("Read palette.ron");
         assert!(ron_contents.contains("festive_red"), "palette.ron must contain festive_red");
         assert!(ron_contents.contains("cabin_log"), "palette.ron must contain cabin_log");

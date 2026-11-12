@@ -17,7 +17,7 @@ Feature: Let's make small modular physics objects in assets/objects that are sel
 
 The Pantry door is glitching and freaking out, likely due to it clipping into the wall. Fix the pantry door.
 
-All parts of the Moose should launch the player, and after contact with the moose have a short time of non-collision with the player after contact.
+All parts of the Moose should launch the player, and after contact with the moose have a short time of non-collision with the player.
 
 When the player is within interation distance of an interactive object, display a text name of the object. e.g. Oven, Present
 
